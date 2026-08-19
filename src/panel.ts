@@ -9,6 +9,7 @@
 import * as vscode from 'vscode'
 import { join } from 'node:path'
 import type { PanelMessage, PanelState } from './webview/protocol.js'
+import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export const PANEL_VIEW_TYPE = 'tokendex.panel'
 
@@ -19,6 +20,7 @@ export type PanelRequestKind =
   | { kind: 'setLanguage'; language: string }
   | { kind: 'exportSave' }
   | { kind: 'importSave' }
+  | { kind: 'dev'; id: string; value?: string }
 
 export class GamePanel {
   private static current: GamePanel | undefined
@@ -49,10 +51,7 @@ export class GamePanel {
     )
   }
 
-  static show(
-    extensionUri: vscode.Uri,
-    onRequest: (request: PanelRequestKind) => void,
-  ): GamePanel {
+  static show(extensionUri: vscode.Uri, onRequest: (request: PanelRequestKind) => void): GamePanel {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One
 
     if (GamePanel.current !== undefined) {
@@ -60,21 +59,29 @@ export class GamePanel {
       return GamePanel.current
     }
 
-    const panel = vscode.window.createWebviewPanel(
-      PANEL_VIEW_TYPE,
-      'Tokendex',
-      column,
-      {
-        enableScripts: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist')],
-      },
-    )
+    const panel = vscode.window.createWebviewPanel(PANEL_VIEW_TYPE, 'Tokendex', column, {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist')],
+    })
     GamePanel.current = new GamePanel(panel, extensionUri, onRequest)
     return GamePanel.current
   }
 
   static get isOpen(): boolean {
     return GamePanel.current !== undefined
+  }
+
+  /**
+   * Rebuilds the page so a freshly built `dist/webview.{js,css}` is picked up without
+   * restarting the extension host. The webview's own `setState` survives the reload, so the
+   * tab you were on is preserved, and the `ready` handshake replays the last state.
+   */
+  static reload(): void {
+    GamePanel.current?.rebuild()
+  }
+
+  private rebuild(): void {
+    this.panel.webview.html = this.html()
   }
 
   static update(state: PanelState): void {
@@ -113,13 +120,26 @@ export class GamePanel {
       case 'importSave':
         this.onRequest({ kind: 'importSave' })
         break
+      case 'dev': {
+        // Forwarded as-is; the host validates the id against the scenario table. The webview is
+        // a separate bundle and may be stale after an update, so it is never trusted.
+        const request: PanelRequestKind = { kind: 'dev', id: message.id }
+        if (message.value !== undefined) request.value = message.value
+        this.onRequest(request)
+        break
+      }
     }
   }
 
   private html(): string {
     const webview = this.panel.webview
-    const script = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.js'))
-    const styles = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview.css'))
+    // The query string is what makes a reload actually show new code: the webview caches
+    // resources by URI, so rebuilding the page with identical URIs serves the old bundle.
+    const version = `v=${Date.now().toString(36)}`
+    const asset = (name: string) =>
+      webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', name)).with({ query: version })
+    const script = asset('webview.js')
+    const styles = asset('webview.css')
     const nonce = makeNonce()
 
     // Strict CSP. Sprites are the single remote source, and they are fetched from PokéAPI at
@@ -132,7 +152,7 @@ export class GamePanel {
     ].join('; ')
 
     return `<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${csp}">
@@ -141,21 +161,7 @@ export class GamePanel {
   <title>Tokendex</title>
 </head>
 <body>
-  <nav class="tabs">
-    <button id="tab-home" data-tab="home" aria-selected="true">Inicio</button>
-    <button id="tab-shop" data-tab="shop" aria-selected="false">Tienda</button>
-    <button id="tab-bag" data-tab="bag" aria-selected="false">Bolsa</button>
-    <button id="tab-dex" data-tab="dex" aria-selected="false">Pokédex</button>
-    <button id="tab-settings" data-tab="settings" aria-selected="false">Ajustes</button>
-  </nav>
-  <main>
-    <div id="errors"></div>
-    <section id="home"></section>
-    <section id="shop" hidden></section>
-    <section id="bag" hidden></section>
-    <section id="dex" hidden></section>
-    <section id="settings" hidden></section>
-  </main>
+${PANEL_BODY_HTML}
   <script nonce="${nonce}" src="${script.toString()}"></script>
 </body>
 </html>`

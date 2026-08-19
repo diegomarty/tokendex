@@ -13,7 +13,8 @@ import type { UsageSnapshot } from './core/snapshot.js'
 import type { ScanResponse, WorkerAction, WorkerRequest } from './worker/scanWorker.js'
 import { GamePanel, type PanelRequestKind } from './panel.js'
 import { pickScenario } from './dev.js'
-import { promises as fs } from 'node:fs'
+import { devScenarioByID } from './core/dev/scenarios.js'
+import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import { hostname, homedir } from 'node:os'
 import { ourData } from './core/appPaths.js'
 import { decodeCompanionState } from './core/companion/persistence.js'
@@ -30,7 +31,7 @@ import {
 import type { AppLanguage, ItemKind, Rarity } from './core/companion/model.js'
 
 const DEFAULT_REFRESH_SECONDS = 120
-/** Matches `UsageStore.intervalPresets` in the Swift original. */
+/** Selectable refresh intervals, in seconds. */
 const REFRESH_PRESETS = [30, 60, 120, 300, 600]
 
 let statusBar: vscode.StatusBarItem | undefined
@@ -42,9 +43,12 @@ let scanInFlight = false
 let lastSnapshot: UsageSnapshot | undefined
 let output: vscode.LogOutputChannel | undefined
 let extensionContext: vscode.ExtensionContext | undefined
+/** Production until `activate` says otherwise, so a missing value never unlocks dev mode. */
+let extensionMode: vscode.ExtensionMode = vscode.ExtensionMode.Production
 
 export function activate(context: vscode.ExtensionContext): void {
   extensionContext = context
+  extensionMode = context.extensionMode
   output = vscode.window.createOutputChannel('Tokendex', { log: true })
   context.subscriptions.push(output)
 
@@ -52,7 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar.name = 'Tokendex'
   statusBar.command = 'tokendex.open'
   statusBar.text = '$(sync~spin) Tokendex'
-  statusBar.tooltip = 'Leyendo el uso local…'
+  statusBar.tooltip = 'Reading local usage…'
   statusBar.show()
   context.subscriptions.push(statusBar)
 
@@ -63,11 +67,20 @@ export function activate(context: vscode.ExtensionContext): void {
       GamePanel.show(context.extensionUri, (request) => void handlePanelRequest(request))
     }),
     vscode.commands.registerCommand('tokendex.dev', () => void runDevScenario()),
+    vscode.commands.registerCommand('tokendex.reloadWebview', () => GamePanel.reload()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('tokendex.refreshInterval')) scheduleTimer()
+      if (e.affectsConfiguration('tokendex.devMode')) {
+        watchBundles(context)
+        // The Dev tab exists only in a panel state built with devMode on, so the panel has to be
+        // rebuilt for the toggle to show. Without this it appears at the next timer tick, up to
+        // two minutes later, and the setting reads as having done nothing.
+        if (GamePanel.isOpen) void handlePanelRequest({ kind: 'refresh' })
+      }
     }),
   )
 
+  watchBundles(context)
   startWorker(context)
   scheduleTimer()
   void refresh(false)
@@ -77,6 +90,61 @@ export function deactivate(): void {
   stopTimer()
   void worker?.terminate()
   worker = undefined
+}
+
+// MARK: - Development bundle watcher
+
+let bundleWatcher: FSWatcher | undefined
+
+/**
+ * With `tokendex.devMode` on, a rebuilt `dist/webview.{js,css}` repaints an open panel by
+ * itself: UI work then iterates at esbuild speed with no keystroke and no host restart.
+ *
+ * The host's own bundles cannot be swapped under a running extension, so those only log a
+ * reminder — silently doing nothing is what makes you debug a change that was never loaded.
+ */
+function watchBundles(context: vscode.ExtensionContext): void {
+  if (!devModeOn() || bundleWatcher !== undefined) return
+
+  let timer: NodeJS.Timeout | undefined
+  let webviewChanged = false
+  let hostChanged = false
+
+  try {
+    bundleWatcher = watch(join(context.extensionPath, 'dist'), (_event, file) => {
+      const name = typeof file === 'string' ? file : ''
+      if (name === '' || name.endsWith('.map')) return
+      if (name.startsWith('webview.')) webviewChanged = true
+      else if (name === 'extension.js' || name === 'scanWorker.js') hostChanged = true
+      else return
+
+      // One rebuild writes several files; debouncing keeps it to a single repaint.
+      if (timer !== undefined) clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (webviewChanged) {
+          GamePanel.reload()
+          output?.info('dev: webview reloaded')
+        }
+        if (hostChanged) {
+          output?.warn(
+            'dev: dist/extension.js or scanWorker.js changed — "Developer: Restart Extension Host"',
+          )
+        }
+        webviewChanged = false
+        hostChanged = false
+      }, 150)
+    })
+  } catch {
+    return // no dist yet, or a filesystem without watch support
+  }
+
+  context.subscriptions.push({
+    dispose: () => {
+      if (timer !== undefined) clearTimeout(timer)
+      bundleWatcher?.close()
+      bundleWatcher = undefined
+    },
+  })
 }
 
 // MARK: - Worker
@@ -94,7 +162,7 @@ function startWorker(context: vscode.ExtensionContext): void {
 
   worker.on('error', (error) => {
     output?.error(`worker error: ${error.message}`)
-    showError('el worker falló')
+    showError('the worker failed')
     // Reject everything waiting rather than leaving callers hanging forever.
     for (const [id, resolve] of pending) resolve({ id, ok: false, error: error.message })
     pending.clear()
@@ -109,7 +177,7 @@ function startWorker(context: vscode.ExtensionContext): void {
 function send(build: (id: number) => WorkerRequest): Promise<ScanResponse> {
   const current = worker
   if (current === undefined) {
-    return Promise.resolve({ id: 0, ok: false, error: 'worker no disponible' })
+    return Promise.resolve({ id: 0, ok: false, error: 'worker unavailable' })
   }
   const id = nextRequestID++
   return new Promise<ScanResponse>((resolve) => {
@@ -121,11 +189,30 @@ function send(build: (id: number) => WorkerRequest): Promise<ScanResponse> {
 const requestScan = (): Promise<ScanResponse> =>
   send((id) => ({ id, type: 'scan', locale: vscode.env.language }))
 
+/**
+ * Whether the development surface (the panel's Dev tab, the scenario menu, the `dist` watcher)
+ * is available.
+ *
+ * On unless this is a released build: an Extension Development Host is, by definition, a place
+ * where you want the test controls, and asking every developer to flip a setting after every
+ * fresh profile is friction with no upside. `ExtensionMode` is VS Code's own signal for that, so
+ * nothing here depends on a build flag we would have to remember to set.
+ *
+ * An explicit setting always wins, in both directions — that is how a packaged install turns it
+ * on, and how you turn it off inside a dev host to see what a user sees.
+ */
+function devModeOn(): boolean {
+  const inspected = vscode.workspace.getConfiguration('tokendex').inspect<boolean>('devMode')
+  const explicit = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue
+  if (explicit !== undefined) return explicit
+  return extensionMode !== vscode.ExtensionMode.Production
+}
+
 const requestPanel = (): Promise<ScanResponse> =>
-  send((id) => ({ id, type: 'panel', locale: vscode.env.language }))
+  send((id) => ({ id, type: 'panel', locale: vscode.env.language, devMode: devModeOn() }))
 
 const requestAction = (payload: WorkerAction): Promise<ScanResponse> =>
-  send((id) => ({ id, type: 'action', locale: vscode.env.language, payload }))
+  send((id) => ({ id, type: 'action', locale: vscode.env.language, devMode: devModeOn(), payload }))
 
 /**
  * Translates an opaque panel id back into a typed action. Unknown ids are ignored rather than
@@ -161,9 +248,9 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       const confirm = await vscode.window.showWarningMessage(
         `${request.title} — ${request.priceText}`,
         { modal: true },
-        'Comprar',
+        'Buy',
       )
-      if (confirm !== 'Comprar') return
+      if (confirm !== 'Buy') return
       response = await requestAction(action)
       break
     }
@@ -183,6 +270,10 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       break
     }
 
+    case 'dev':
+      await runDevControl(request.id, request.value)
+      return
+
     case 'exportSave':
       await exportSave()
       return
@@ -193,10 +284,59 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
   }
 
   if (!response.ok) {
-    output?.error(`acción del panel fallida: ${response.error}`)
+    output?.error(`panel action failed: ${response.error}`)
     return
   }
   if ('panel' in response) GamePanel.update(response.panel)
+}
+
+/**
+ * Runs one control from the panel's Dev tab.
+ *
+ * The id is resolved against the scenario table rather than trusted: the webview is a separate
+ * bundle, so a stale one must fail closed instead of dispatching something that no longer exists.
+ * Anything destructive is confirmed with a native modal, which a stray click on the page cannot
+ * dismiss.
+ */
+async function runDevControl(id: string, value: string | undefined): Promise<void> {
+  if (!devModeOn()) return
+  const scenario = devScenarioByID(id)
+  if (scenario === undefined) {
+    output?.warn(`dev: unknown scenario "${id}" (stale webview?)`)
+    return
+  }
+
+  if (scenario.confirm !== undefined) {
+    const confirmed = await vscode.window.showWarningMessage(
+      scenario.label,
+      { modal: true, detail: scenario.confirm },
+      'Run',
+    )
+    if (confirmed !== 'Run') return
+  }
+
+  const action = scenario.build(value ?? '')
+  if (action === undefined) {
+    void vscode.window.showWarningMessage(
+      `Tokendex: "${value ?? ''}" is not a valid amount. Use 1500, 250M or 1.5B.`,
+    )
+    return
+  }
+
+  const steps = scenario.steps ?? 1
+  for (let step = 0; step < steps; step++) {
+    const response = await requestAction(action)
+    if (!response.ok) {
+      output?.error(`dev: ${scenario.id} failed — ${response.error}`)
+      void vscode.window.showErrorMessage(`Simulation failed: ${response.error}`)
+      return
+    }
+    if ('panel' in response) GamePanel.update(response.panel)
+    output?.info(`dev: ${scenario.id} (${step + 1}/${steps})`)
+    // A short gap so a multi-step scenario reads as progress rather than one jump.
+    if (step < steps - 1) await new Promise((resolve) => setTimeout(resolve, 450))
+  }
+  await refresh(true)
 }
 
 /**
@@ -211,12 +351,12 @@ async function exportSave(): Promise<void> {
   try {
     raw = await fs.readFile(source)
   } catch {
-    void vscode.window.showWarningMessage('Todavía no hay partida que exportar.')
+    void vscode.window.showWarningMessage('There is no save to export yet.')
     return
   }
 
   const target = await vscode.window.showSaveDialog({
-    saveLabel: 'Exportar',
+    saveLabel: 'Export',
     defaultUri: vscode.Uri.file(join(homedir(), suggestedFileName(Date.now()))),
     filters: { JSON: ['json'] },
   })
@@ -229,7 +369,7 @@ async function exportSave(): Promise<void> {
     Date.now(),
   )
   await fs.writeFile(target.fsPath, envelope, 'utf8')
-  void vscode.window.showInformationMessage(`Partida exportada a ${target.fsPath}`)
+  void vscode.window.showInformationMessage(`Save exported to ${target.fsPath}`)
 }
 
 /**
@@ -242,7 +382,7 @@ async function exportSave(): Promise<void> {
 async function importSave(): Promise<void> {
   const picked = await vscode.window.showOpenDialog({
     canSelectMany: false,
-    openLabel: 'Importar',
+    openLabel: 'Import',
     filters: { JSON: ['json'] },
   })
   const source = picked?.[0]
@@ -255,21 +395,24 @@ async function importSave(): Promise<void> {
     const detail = error instanceof SaveTransferFailure ? error.detail : undefined
     void vscode.window.showErrorMessage(
       detail?.kind === 'newerSchema'
-        ? 'Esa partida es de una versión más reciente. Actualiza la extensión.'
+        ? 'That save comes from a newer version. Update the extension.'
         : detail?.kind === 'fileTooLarge'
-          ? 'Ese fichero es demasiado grande para ser una partida.'
-          : 'Ese fichero no es una partida de Tokendex.',
+          ? 'That file is too large to be a save.'
+          : 'That file is not a Tokendex save.',
     )
     return
   }
 
   const summary = summarize(envelope.state)
   const confirmed = await vscode.window.showWarningMessage(
-    `Se reemplazará tu progreso actual por esta partida (${summary.dexCount} en la Pokédex).`,
-    { modal: true, detail: 'Se guardará una copia de seguridad de tu estado actual antes de reemplazarlo.' },
-    'Reemplazar',
+    `Your current progress will be replaced by this save (${summary.dexCount} in the Pokédex).`,
+    {
+      modal: true,
+      detail: 'A backup of your current state is saved before it is replaced.',
+    },
+    'Replace',
   )
-  if (confirmed !== 'Reemplazar') return
+  if (confirmed !== 'Replace') return
 
   const target = join(ourData(), 'companion-state.json')
   try {
@@ -278,9 +421,7 @@ async function importSave(): Promise<void> {
   } catch (error) {
     // No previous save is fine; a failed backup is not.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      void vscode.window.showErrorMessage(
-        'No se pudo guardar la copia de seguridad, así que no se ha importado nada.',
-      )
+      void vscode.window.showErrorMessage('The backup could not be written, so nothing was imported.')
       return
     }
   }
@@ -289,7 +430,7 @@ async function importSave(): Promise<void> {
   await fs.writeFile(target, JSON.stringify(envelope.state), 'utf8')
   // The worker holds the old state in memory, so it must be restarted to pick this up.
   await restartWorker()
-  void vscode.window.showInformationMessage('Partida importada.')
+  void vscode.window.showInformationMessage('Save imported.')
 }
 
 function version(): string {
@@ -313,12 +454,9 @@ async function restartWorker(): Promise<void> {
  * animated rather than collapsing into a single jump.
  */
 async function runDevScenario(): Promise<void> {
-  if (!vscode.workspace.getConfiguration('tokendex').get<boolean>('devMode', false)) {
-    const enable = await vscode.window.showWarningMessage(
-      'El modo desarrollo está desactivado.',
-      'Activarlo',
-    )
-    if (enable !== 'Activarlo') return
+  if (!devModeOn()) {
+    const enable = await vscode.window.showWarningMessage('Development mode is off.', 'Turn it on')
+    if (enable !== 'Turn it on') return
     await vscode.workspace
       .getConfiguration('tokendex')
       .update('devMode', true, vscode.ConfigurationTarget.Global)
@@ -330,8 +468,8 @@ async function runDevScenario(): Promise<void> {
   for (const [index, action] of actions.entries()) {
     const response = await requestAction(action)
     if (!response.ok) {
-      output?.error(`escenario dev fallido: ${response.error}`)
-      void vscode.window.showErrorMessage(`Simulación fallida: ${response.error}`)
+      output?.error(`dev scenario failed: ${response.error}`)
+      void vscode.window.showErrorMessage(`Simulation failed: ${response.error}`)
       return
     }
     if ('panel' in response) GamePanel.update(response.panel)
@@ -347,7 +485,7 @@ async function refresh(manual: boolean): Promise<void> {
   // Never two scans at once: the first cold scan takes ~30 seconds and overlapping them
   // would just multiply the I/O.
   if (scanInFlight) {
-    if (manual) output?.info('refresco ignorado: ya hay un escaneo en curso')
+    if (manual) output?.info('refresh skipped: a scan is already running')
     return
   }
   scanInFlight = true
@@ -357,14 +495,14 @@ async function refresh(manual: boolean): Promise<void> {
     const started = Date.now()
     const response = await requestScan()
     if (!response.ok) {
-      output?.error(`escaneo fallido: ${response.error}`)
+      output?.error(`scan failed: ${response.error}`)
       showError(response.error)
       return
     }
     if (!('snapshot' in response)) return // a panel reply, handled by the panel path
     lastSnapshot = response.snapshot
     render(response.snapshot)
-    output?.info(`escaneo completado en ${Date.now() - started} ms`)
+    output?.info(`scan finished in ${Date.now() - started} ms`)
     // Keep an open panel in step with the status bar without paying for it when it is closed.
     if (GamePanel.isOpen) void handlePanelRequest({ kind: 'refresh' })
   } finally {
@@ -381,7 +519,7 @@ function render(snapshot: UsageSnapshot): void {
   statusBar.backgroundColor = undefined
 
   if (snapshot.errors.length > 0) {
-    output?.warn(`escaneo con avisos: ${snapshot.errors.join(' · ')}`)
+    output?.warn(`scan with warnings: ${snapshot.errors.join(' · ')}`)
   }
 }
 
@@ -389,8 +527,9 @@ function render(snapshot: UsageSnapshot): void {
 function showError(message: string): void {
   if (statusBar === undefined) return
   // Keep the last good numbers on screen when we have them, but mark the state.
-  statusBar.text = lastSnapshot === undefined ? '$(warning) Tokendex' : `$(warning) ${lastSnapshot.statusText}`
-  statusBar.tooltip = `Tokendex: ${message}\nEjecuta "Tokendex: mostrar registro" para más detalle.`
+  statusBar.text =
+    lastSnapshot === undefined ? '$(warning) Tokendex' : `$(warning) ${lastSnapshot.statusText}`
+  statusBar.tooltip = `Tokendex: ${message}\nRun "Tokendex: Show log" for detail.`
   statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground')
 }
 
