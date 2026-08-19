@@ -3,11 +3,6 @@ MIT License
 Copyright (c) 2026 Diego Martín
 Copyright (c) 2026 chattymin
 
-This extension is a derivative work. Its usage-parsing engine and companion
-progression were ported to TypeScript from PokeTokenBar, a macOS menu-bar app
-by chattymin (https://github.com/chattymin/PokeTokenBar), released under the
-MIT License. The original copyright notice above is retained accordingly.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
