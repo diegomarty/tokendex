@@ -198,9 +198,11 @@ function base(options: BaseOptions = {}): PanelState {
   const spendable = options.spendable ?? 1_204_000_000
   return {
     totals: {
-      todayText: grouped(today, 'en-US'),
+      todayText: compact(today),
+      todayExactText: grouped(today, 'en-US'),
       todayCostText: cost(options.todayCost ?? 41.82),
-      monthText: grouped(month, 'en-US'),
+      monthText: compact(month),
+      monthExactText: grouped(month, 'en-US'),
       monthCostText: cost(options.monthCost ?? 812.4),
     },
     providers: [
@@ -214,6 +216,10 @@ function base(options: BaseOptions = {}): PanelState {
         todayText: compact(Math.round(today * 0.28)),
         monthText: compact(Math.round(month * 0.3)),
       },
+    ],
+    limits: [
+      { label: '5-hour session', value: '42%', percent: 42, severity: 'normal' },
+      { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' },
     ],
     spendableText: compact(spendable),
     shop: shop(lang, { spendable, hasActive: true }),
@@ -271,6 +277,11 @@ export interface Fixture {
 
 /** Every case worth eyeballing after a UI change. Add one rather than editing another. */
 export const FIXTURES: Fixture[] = [
+  {
+    id: 'no-limits',
+    label: 'Sin límites conocidos (sección ausente)',
+    state: { ...base(), limits: [] },
+  },
   {
     id: 'egg-early',
     label: 'Freshly laid egg (nothing to show)',
@@ -405,6 +416,32 @@ export const FIXTURES: Fixture[] = [
         { id: 39, days: 30 },
         { id: 10, days: 41 },
       ]),
+    },
+  },
+  {
+    id: 'limits-hot',
+    label: 'Límites al límite (aviso y crítico)',
+    state: {
+      ...base(),
+      limits: [
+        { label: '5-hour session', value: '97%', percent: 97, severity: 'crit' },
+        { label: 'Weekly', value: '84%', percent: 84, severity: 'warn' },
+        { label: 'Weekly Opus', value: '61%', percent: 61, severity: 'normal' },
+        { label: 'Codex · 5-hour session', value: '12%', percent: 12, severity: 'normal' },
+      ],
+      companion: {
+        name: 'Snorlax',
+        speciesID: 143,
+        isShiny: false,
+        progress: 0.42,
+        stageText: D.stage('es', 1, 1),
+        toNextText: '380M to graduate',
+        rarityText: D.rarityLabel('es', 'uncommon'),
+        natureText: 'Relaxed',
+        line: [{ speciesID: 143, state: 'current' }],
+      },
+      dexSpecies: species('es', [143], [], [143]),
+      dexLog: log('es', [{ id: 143, days: 0, active: true }]),
     },
   },
   {

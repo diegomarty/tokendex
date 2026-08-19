@@ -79,6 +79,7 @@ function frameDocument(theme: Exclude<ThemeID, 'split'>): string {
 <html lang="en" data-vscode-theme="${theme}">
 <head>
   <meta charset="UTF-8">
+  <link href="/dist/codicons/codicon.css" rel="stylesheet">
   <link href="/tools/bench/theme.css" rel="stylesheet">
   <link href="/dist/webview.css" rel="stylesheet">
 </head>

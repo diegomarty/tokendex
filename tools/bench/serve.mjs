@@ -26,6 +26,10 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.gif': 'image/gif',
+  // The codicon font: without a font MIME type the browser refuses it and every icon becomes a box.
+  '.ttf': 'font/ttf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
 }
 
 /** mtime + size of the built bundles: enough to notice a rebuild, cheap enough to poll. */

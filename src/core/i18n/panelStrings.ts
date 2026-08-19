@@ -25,6 +25,7 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     today: s(lang, 'todayTokens'),
     month: s(lang, 'thisMonth'),
     spendable: s(lang, 'spendableTokens'),
+    limits: s(lang, 'limitsOfficial'),
     provider: providerColumn(lang),
     buy: s(lang, 'buy'),
     owned: s(lang, 'ownedAlready'),

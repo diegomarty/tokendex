@@ -14,23 +14,28 @@ export const PANEL_TABS = ['home', 'shop', 'bag', 'dex', 'settings', 'dev'] as c
 export type PanelTabID = (typeof PANEL_TABS)[number]
 
 /**
- * Initial labels, replaced on the first render by `PanelState.strings.tabs` — which follows the
- * user's language like the rest of the chrome. They are English here because the skeleton is
- * rendered before any state arrives, and a blank tab bar for that instant looks broken.
+ * Codicon for each tab.
+ *
+ * Icons rather than words because the sidebar is ~300 px wide and six labels do not fit there;
+ * icons also make the strip read as part of the editor rather than as a web page. The accessible
+ * name is not lost: `main.ts` sets `title` and `aria-label` from the localised tab labels, so
+ * hovering and a screen reader both say the word.
  */
-const TAB_LABELS: Record<PanelTabID, string> = {
-  home: 'Home',
-  shop: 'Shop',
-  bag: 'Bag',
-  dex: 'Pokédex',
-  settings: 'Settings',
-  dev: 'Dev',
+const TAB_ICONS: Record<PanelTabID, string> = {
+  home: 'home',
+  shop: 'tag',
+  bag: 'package',
+  dex: 'book',
+  settings: 'settings-gear',
+  dev: 'beaker',
 }
 
 export const PANEL_BODY_HTML = `  <nav class="tabs">
 ${PANEL_TABS.map(
   (tab, index) =>
-    `    <button id="tab-${tab}" data-tab="${tab}" aria-selected="${index === 0}"${tab === 'dev' ? ' hidden' : ''}>${TAB_LABELS[tab]}</button>`,
+    `    <button id="tab-${tab}" class="tab" data-tab="${tab}" aria-selected="${index === 0}"${
+      tab === 'dev' ? ' hidden' : ''
+    }><i class="codicon codicon-${TAB_ICONS[tab]}"></i></button>`,
 ).join('\n')}
   </nav>
   <main>

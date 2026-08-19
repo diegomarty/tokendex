@@ -8,6 +8,7 @@
  */
 
 import type { PanelLineItem, PanelState } from './protocol.js'
+import { spriteURL } from './sprite.js'
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void
@@ -17,8 +18,6 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi()
 
-const SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon'
-
 type TabID = 'home' | 'shop' | 'bag' | 'dex' | 'settings' | 'dev'
 type DexSegment = 'species' | 'log'
 let current: PanelState | undefined
@@ -26,14 +25,6 @@ let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
-
-function spriteURL(speciesID: number, shiny: boolean, animated: boolean): string {
-  if (animated) {
-    const dir = shiny ? 'animated/shiny' : 'animated'
-    return `${SPRITE_BASE}/versions/generation-v/black-white/${dir}/${speciesID}.gif`
-  }
-  return `${SPRITE_BASE}/${shiny ? 'shiny/' : ''}${speciesID}.png`
-}
 
 function escapeHTML(value: string): string {
   return value.replace(
@@ -66,40 +57,75 @@ function renderCompanion(state: PanelState): string {
   const c = state.companion
   if (c === undefined) return ''
 
+  // The animated Gen-V sprite is 96px, and `image-rendering: pixelated` only looks right at whole
+  // multiples of that, so it is never scaled — it is *placed*, on a soft platform, which is what
+  // stops it reading as a broken image in the middle of a card.
   const art =
     c.speciesID === undefined
       ? '<div class="egg">🥚</div>'
-      : `<img class="bob" src="${spriteURL(c.speciesID, c.isShiny, true)}" alt="" onerror="this.src='${spriteURL(c.speciesID, c.isShiny, false)}';this.onerror=null">`
+      : `<img class="bob" src="${spriteURL(c.speciesID, c.isShiny, true)}" alt="" data-fallback="${spriteURL(c.speciesID, c.isShiny, false)}">`
 
   const name = c.name ?? state.strings.incubating
-  const chips = [
-    c.isShiny ? { text: '✨', shiny: true } : undefined,
-    c.stageText === undefined ? undefined : { text: c.stageText, shiny: false },
-    c.rarityText === undefined ? undefined : { text: c.rarityText, shiny: false },
-    c.natureText === undefined ? undefined : { text: c.natureText, shiny: false },
-  ]
-    .filter((chip): chip is { text: string; shiny: boolean } => chip !== undefined)
-    .map((chip) => `<span class="chip${chip.shiny ? ' shiny' : ''}">${escapeHTML(chip.text)}</span>`)
-    .join('')
+  // One dimmed line instead of three bordered pills: VS Code's own surfaces carry hierarchy with
+  // type and spacing, and every extra border makes an extension look like a web page in a panel.
+  const meta = [c.stageText, c.rarityText, c.natureText]
+    .filter((part): part is string => part !== undefined && part !== '')
+    .map(escapeHTML)
+    .join(' · ')
 
   const percent = Math.round(c.progress * 100)
 
   return `
-    <div class="companion">
-      <div class="sprite">${art}</div>
-      <div class="companion-info">
-        <div class="companion-name">${escapeHTML(name)}</div>
-        <div class="chips">${chips}</div>
-        <div class="progress">
-          <div class="meta">
-            <span>${escapeHTML(c.toNextText)}</span>
-            <span>${percent}%</span>
-          </div>
-          <div class="bar"><i style="width:${percent}%"></i></div>
+    <section class="hero">
+      <div class="stage">${art}</div>
+      <h1 class="hero-name">${escapeHTML(name)}${c.isShiny ? ' <span class="shiny-mark" title="shiny">✨</span>' : ''}</h1>
+      ${meta === '' ? '' : `<div class="hero-meta">${meta}</div>`}
+      <div class="progress">
+        <div class="meta">
+          <span>${escapeHTML(c.toNextText)}</span>
+          <span class="pct">${percent}%</span>
         </div>
-        ${renderLine(c.line)}
+        <div class="bar"><i data-fill="${percent}"></i></div>
       </div>
+      ${renderLine(c.line)}
+    </section>`
+}
+
+/** One usage row: label, value, and the cost trailing it dimmed on the same line. */
+function statRow(label: string, value: string, note?: string, exact?: string): string {
+  const title = exact === undefined ? '' : ` title="${escapeHTML(exact)}"`
+  return `<div class="row-stat">
+      <span class="label">${escapeHTML(label)}</span>
+      <span class="value"${title}>${escapeHTML(value)}</span>
+      ${note === undefined ? '' : `<span class="note">${escapeHTML(note)}</span>`}
     </div>`
+}
+
+/**
+ * The official limit windows.
+ *
+ * A bar per window rather than a list of numbers: the question these answer is "how much is left",
+ * which is a proportion, and a proportion is read faster as a length than as digits. The colour
+ * comes from the severity the core assigned, so it cannot disagree with the status bar's warning
+ * background.
+ *
+ * Absent entirely when nothing is known — an empty "Limits" heading would read as a provider that
+ * has stopped reporting, when the truth is that no limits have loaded yet.
+ */
+function renderLimits(state: PanelState): string {
+  if (state.limits.length === 0) return ''
+  const rows = state.limits
+    .map(
+      (limit) => `<div class="limit ${limit.severity}">
+        <div class="limit-head">
+          <span class="limit-label">${escapeHTML(limit.label)}</span>
+          <span class="limit-value">${escapeHTML(limit.value)}</span>
+        </div>
+        <div class="bar"><i data-fill="${Math.max(0, Math.min(100, Math.round(limit.percent)))}"></i></div>
+      </div>`,
+    )
+    .join('')
+  return `<h2 class="section">${escapeHTML(state.strings.limits)}</h2><div class="limits">${rows}</div>`
 }
 
 function renderHome(state: PanelState): string {
@@ -109,29 +135,27 @@ function renderHome(state: PanelState): string {
       (p) => `<tr>
         <td>${escapeHTML(p.displayName)}</td>
         <td class="num">${escapeHTML(p.todayText)}</td>
-        <td class="num">${escapeHTML(p.monthText)}</td>
+        <td class="num dim">${escapeHTML(p.monthText)}</td>
       </tr>`,
     )
     .join('')
 
+  // The spendable balance is currency, and a number with nothing to spend it on is a dead end —
+  // so it carries the way to the shop. `data-tab` reuses the tab handler, no round trip.
+  const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.buy)} →</button>`
+
   return `
     ${renderCompanion(state)}
     <div class="stats">
-      <div class="stat">
-        <div class="label">${escapeHTML(state.strings.today)}</div>
-        <div class="value">${escapeHTML(t.todayText)}</div>
-        <div class="note">${escapeHTML(t.todayCostText)}</div>
-      </div>
-      <div class="stat">
-        <div class="label">${escapeHTML(state.strings.month)}</div>
-        <div class="value">${escapeHTML(t.monthText)}</div>
-        <div class="note">${escapeHTML(t.monthCostText)}</div>
-      </div>
-      <div class="stat">
-        <div class="label">${escapeHTML(state.strings.spendable)}</div>
-        <div class="value">${escapeHTML(state.spendableText)}</div>
+      ${statRow(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
+      ${statRow(state.strings.month, t.monthText, t.monthCostText, t.monthExactText)}
+      <div class="row-stat">
+        <span class="label">${escapeHTML(state.strings.spendable)}</span>
+        <span class="value">${escapeHTML(state.spendableText)}</span>
+        <span class="note">${shopLink}</span>
       </div>
     </div>
+    ${renderLimits(state)}
     <table>
       <thead><tr>
         <th>${escapeHTML(state.strings.provider)}</th>
@@ -333,12 +357,23 @@ function render(): void {
   el('tab-dev').hidden = state.dev === undefined
   if (state.dev === undefined && tab === 'dev') tab = 'home'
 
+  // Bar widths are applied through the CSSOM, never as style attributes: the CSP's
+  // style-src has no 'unsafe-inline', so an inline style in the HTML string is silently
+  // dropped — the bars rendered at zero width for as long as they relied on one.
+  for (const bar of document.querySelectorAll<HTMLElement>('[data-fill]')) {
+    const fill = Math.max(0, Math.min(100, Number(bar.dataset['fill'])))
+    bar.style.width = `${Number.isFinite(fill) ? fill : 0}%`
+  }
+
   for (const id of ['home', 'shop', 'bag', 'dex', 'settings', 'dev'] as TabID[]) {
     el(id).hidden = id !== tab
     const button = el(`tab-${id}`)
     button.setAttribute('aria-selected', String(id === tab))
-    // Localised from the state, so a language change relabels the tabs with everything else.
-    button.textContent = state.strings.tabs[id]
+    // The label is localised in the core; here it becomes the hover text and the accessible
+    // name, because the visible tab is an icon.
+    const label = state.strings.tabs[id]
+    button.title = label
+    button.setAttribute('aria-label', label)
   }
   vscode.setState({ tab, dexSegment })
 }
@@ -404,6 +439,20 @@ document.addEventListener('visibilitychange', () => {
   document.body.classList.toggle('paused', document.hidden)
 })
 
+// CSP forbids inline handlers, so the animated-sprite fallback is delegated here. Without it a
+// species whose GIF is missing shows a broken image instead of its still sprite.
+document.addEventListener(
+  'error',
+  (event) => {
+    const img = event.target as HTMLImageElement | null
+    const fallback = img?.dataset?.['fallback']
+    if (img === null || img === undefined || fallback === undefined) return
+    delete img.dataset['fallback']
+    img.src = fallback
+  },
+  true,
+)
+
 window.addEventListener('message', (event: MessageEvent<{ type: string; state?: PanelState }>) => {
   if (event.data.type === 'state' && event.data.state !== undefined) {
     current = event.data.state
@@ -411,9 +460,11 @@ window.addEventListener('message', (event: MessageEvent<{ type: string; state?: 
   }
 })
 
-// Restore the tab the user was on when the panel was serialised.
+// Restore the tab the user was on when the panel was serialised. A compact surface (the
+// Explorer's mini card) has no tab strip, so it always renders Home.
 const saved = vscode.getState() as { tab?: TabID; dexSegment?: DexSegment } | undefined
 if (saved?.tab !== undefined) tab = saved.tab
 if (saved?.dexSegment !== undefined) dexSegment = saved.dexSegment
+if (document.body.classList.contains('compact')) tab = 'home'
 
 vscode.postMessage({ type: 'ready' })

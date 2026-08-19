@@ -11,14 +11,28 @@
  */
 
 import { parentPort, workerData } from 'node:worker_threads'
-import { type CompanionView, buildSnapshot } from '../core/snapshot.js'
+import { createDispatcher } from './dispatcher.js'
+import {
+  type CompanionView,
+  type LimitRow,
+  type ProviderReport,
+  aggregateProviders,
+  buildSnapshot,
+  totalsFor,
+} from '../core/snapshot.js'
 import { LocalUsageCache } from '../core/usage/cache.js'
 import { type Entry, enrichmentScanStart, todayKey } from '../core/usage/entry.js'
 import { claudeProjectRoots, codexSessionsDir } from '../core/usage/roots.js'
 import { CompanionStore } from '../core/companion/store.js'
-import { LimitsPoller, isLimitWarning } from '../core/limits/poller.js'
+import {
+  CRIT_THRESHOLD,
+  LimitsPoller,
+  WARN_THRESHOLD,
+  highestUtilization,
+  isLimitWarning,
+} from '../core/limits/poller.js'
 import { candyEligibleWindows } from '../core/limits/windows.js'
-import { eggProgress, eggTokensToHatch } from '../core/companion/display.js'
+import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
 import {
@@ -50,6 +64,7 @@ import { ourData } from '../core/appPaths.js'
 import { compact } from '../core/tokenFormatter.js'
 import { f } from '../core/i18n/strings.js'
 import { stage as stageLabel } from '../core/i18n/dispatch.js'
+import { type CelebrationEvent, celebrationText, openPanelLabel } from '../core/i18n/dispatch.js'
 import * as D from '../core/i18n/dispatch.js'
 import { s as str } from '../core/i18n/strings.js'
 import { panelStrings } from '../core/i18n/panelStrings.js'
@@ -115,7 +130,26 @@ export interface ActionRequest {
   payload: WorkerAction
 }
 
-export type WorkerRequest = ScanRequest | PanelRequest | ActionRequest
+/**
+ * Re-renders the panel from the last completed scan without scanning again. This is how an
+ * open panel stays in step with the status bar: the scan that just finished already holds
+ * everything the panel shows, so rebuilding it costs string formatting, not a disk pass.
+ * Before it existed, a panel kept open doubled every tick's scan work.
+ */
+export interface RenderRequest {
+  id: number
+  type: 'render'
+  locale?: string
+  devMode?: boolean
+}
+
+export type WorkerRequest = ScanRequest | PanelRequest | ActionRequest | RenderRequest
+
+/** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
+export interface CelebrateBroadcast {
+  celebrate: string[]
+  openLabel: string
+}
 
 export type ScanResponse =
   | { id: number; ok: true; snapshot: ReturnType<typeof buildSnapshot> }
@@ -232,19 +266,19 @@ async function scan(locale: string | undefined) {
     },
   ].filter((s) => s.entries.length > 0)
 
-  // Build once without the companion so the per-provider daily totals are available to feed
-  // the ledger, then rebuild with the resulting companion view.
-  const usage = buildSnapshot(sources, {
-    now,
-    ...(locale !== undefined ? { locale } : {}),
-    lang: companion.snapshot().language,
-    errors,
-  })
+  // Aggregate once. The same reports feed the ledger, the burn tier and the final snapshot:
+  // building a full snapshot here just to read them meant paying the three passes over every
+  // entry twice per scan (and its status text and tooltip were thrown away unread).
+  const providers = aggregateProviders(sources, now)
+  const totals = totalsFor(providers)
 
   let view: CompanionView | undefined
+  let limitWarning = false
+  let limitPercent: number | undefined
+  let limitRows: LimitRow[] = []
   try {
     const observed: Record<string, number> = {}
-    for (const p of usage.providers) {
+    for (const p of providers) {
       if (p.today !== undefined) observed[p.providerID] = p.today.totalTokens
     }
     await loadDev()
@@ -252,7 +286,7 @@ async function scan(locale: string | undefined) {
     await companion.update({
       todayTokensByProvider,
       todayDate: dev.dateOverride ?? todayKey(now),
-      hasUsageData: usage.providers.some((p) => p.entries > 0),
+      hasUsageData: providers.some((p) => p.entries > 0),
     })
     // After `update`, so the grant lands on the state that was just persisted rather than on
     // a copy `update` is about to overwrite.
@@ -268,22 +302,90 @@ async function scan(locale: string | undefined) {
       companion.replaceState(outcome.state)
       await companion.save()
     }
-    view = companionView(locale, isLimitWarning(known.sources))
+    // The game's peak moments — hatch, evolution, graduation, a candy grant — accumulate in
+    // the store and would otherwise happen in silence. They ride their own broadcast (not the
+    // response) so a panel request and a timer scan celebrate exactly once each.
+    const celebrations: CelebrationEvent[] = [
+      ...companion.drainEvents(),
+      ...outcome.grants.map((g): CelebrationEvent => ({
+        kind: 'candyGranted',
+        count: g.count,
+        windowName: g.windowName,
+      })),
+    ]
+    if (celebrations.length > 0) {
+      const lang = companion.snapshot().language
+      parentPort?.postMessage({
+        celebrate: celebrations.map((event) => celebrationText(lang, event)),
+        openLabel: openPanelLabel(lang),
+      })
+    }
+
+    limitWarning = isLimitWarning(known.sources)
+    // Only providers that actually logged something today: a limit window for a tool you have
+    // not touched says nothing about the session you are in.
+    const usedToday = new Set(
+      providers.filter((p) => (p.today?.totalTokens ?? 0) > 0).map((p) => p.providerID),
+    )
+    limitPercent = highestUtilization(known.sources, usedToday)
+    limitRows = candyEligibleWindows(known.sources, companion.snapshot().language).map((window) => ({
+      label: window.name,
+      value: `${Math.round(window.utilization)}%`,
+      percent: window.utilization,
+      severity: limitSeverity(window.utilization),
+    }))
+    view = companionView(locale, {
+      burnTier: burnTierFor(combinedBurnPerMinute(providers)),
+      limitWarning,
+      hasUsageData: providers.some((p) => p.entries > 0),
+      todayTokens: totals.todayTokens,
+    })
   } catch (e) {
     errors.push(`Companion: ${e instanceof Error ? e.message : String(e)}`)
   }
 
   return buildSnapshot(sources, {
     now,
+    providers,
     ...(locale !== undefined ? { locale } : {}),
     lang: companion.snapshot().language,
     errors,
     ...(view !== undefined ? { companion: view } : {}),
+    ...(limitPercent !== undefined ? { limitPercent } : {}),
+    limitWarning,
+    limitRows,
   })
 }
 
+/**
+ * How alarming a window is, from the same thresholds the status bar's warning background uses.
+ *
+ * TODO: `WARN_THRESHOLD`/`CRIT_THRESHOLD` live in `limits/poller.ts`, which cannot be imported by
+ * the pure `limits/windows.ts` (that would be circular), so this mapping sits in the worker and is
+ * outside the test suite. Moving the two constants to `windows.ts` would let the row builder move
+ * there with them and be covered.
+ */
+function limitSeverity(percent: number): LimitRow['severity'] {
+  if (percent >= CRIT_THRESHOLD) return 'crit'
+  if (percent >= WARN_THRESHOLD) return 'warn'
+  return 'normal'
+}
+
+/**
+ * Burn summed across providers, matching `UsageStore.combinedBurnPerMinute`.
+ *
+ * Summed rather than maxed: two tools at 60K/min each is one fast session, and tiering them
+ * apart would call it two normal ones.
+ */
+function combinedBurnPerMinute(providers: ProviderReport[]): number {
+  return providers.reduce((total, p) => total + (p.tokensPerMinute ?? 0), 0)
+}
+
 /** Everything the UI needs, already formatted — it must never re-derive a number. */
-function companionView(locale: string | undefined, limitWarning: boolean): CompanionView {
+function companionView(
+  locale: string | undefined,
+  display: { burnTier: BurnTier; limitWarning: boolean; hasUsageData: boolean; todayTokens: number },
+): CompanionView {
   const state = companion.snapshot()
   const lang = state.language
   const active = state.active
@@ -304,12 +406,7 @@ function companionView(locale: string | undefined, limitWarning: boolean): Compa
   const remaining = compact(tokensToNext(active))
   const isFinal = active.stageIndex >= active.totalForms - 1
   const view: CompanionView = {
-    state: companion.displayState({
-      burnTier: 'normal',
-      limitWarning: false,
-      hasUsageData: true,
-      todayTokens: 1,
-    }),
+    state: companion.displayState(display),
     speciesID: currentSpeciesID(active),
     isShiny: active.isShiny,
     rarity: active.rarity,
@@ -526,9 +623,11 @@ function buildPanel(
 
   const panel: PanelState = {
     totals: {
-      todayText: grouped(usage.totals.todayTokens, locale),
+      todayText: compact(usage.totals.todayTokens),
+      todayExactText: grouped(usage.totals.todayTokens, locale),
       todayCostText: cost(usage.totals.todayCost),
-      monthText: grouped(usage.totals.monthTokens, locale),
+      monthText: compact(usage.totals.monthTokens),
+      monthExactText: grouped(usage.totals.monthTokens, locale),
       monthCostText: cost(usage.totals.monthCost),
     },
     providers: usage.providers.map((p) => ({
@@ -543,6 +642,7 @@ function buildPanel(
     dexLog,
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
+    limits: usage.limits,
     strings: panelStrings(lang),
     errors: usage.errors,
   }
@@ -600,32 +700,16 @@ function buildDevPanel(): NonNullable<PanelState['dev']> {
   return { summary: devSummary(companion.snapshot(), dev), groups }
 }
 
-parentPort?.on('message', (message: WorkerRequest) => {
-  const wantsPanel = message.type === 'panel' || message.type === 'action'
-  const work =
-    message.type === 'action'
-      ? applyAction(message.payload).then(() => scan(message.locale))
-      : scan(message.locale)
-  void work
-    .then((snapshot) => {
-      const response: ScanResponse = wantsPanel
-        ? {
-            id: message.id,
-            ok: true,
-            panel: buildPanel(snapshot, message.locale, message.devMode ?? false),
-          }
-        : { id: message.id, ok: true, snapshot }
-      parentPort?.postMessage(response)
-    })
-    .catch((e: unknown) => {
-      const response: ScanResponse = {
-        id: message.id,
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-      }
-      parentPort?.postMessage(response)
-    })
+// Serialization and the render-from-last-scan shortcut live in `dispatcher.ts`, where they
+// are tested with stubs; this wiring is the only untested part.
+const dispatch = createDispatcher<WorkerAction, ReturnType<typeof buildSnapshot>, PanelState>({
+  scan,
+  applyAction,
+  buildPanel,
+  post: (response) => parentPort?.postMessage(response),
 })
+
+parentPort?.on('message', dispatch)
 
 // Keep the resolved roots warm so the first scan does not also pay for discovery.
 void claudeProjectRoots().catch(() => undefined)

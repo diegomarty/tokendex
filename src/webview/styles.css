@@ -4,6 +4,11 @@
  * Everything colour-related comes from VS Code's own CSS variables so the panel follows the
  * user's theme instead of imposing one. Hard-coding a palette here is the fastest way to make
  * an extension look broken in half the themes people use.
+ *
+ * **Narrow first.** The default surface is a sidebar view, which is ~300 px wide, and the webview
+ * viewport equals the view width — so the base rules target 300 px and the wider layouts are
+ * `min-width` additions. Designing the other way round is how a sidebar ends up with a table
+ * whose columns collide.
  */
 
 * {
@@ -12,7 +17,8 @@
 
 body {
   margin: 0;
-  padding: 16px;
+  /* 12px reads as generous at 300px and cramped at 900; the wide rule below relaxes it. */
+  padding: 12px;
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
   color: var(--vscode-foreground);
@@ -26,35 +32,57 @@ main {
   margin: 0 auto;
 }
 
+@media (min-width: 560px) {
+  body {
+    padding: 16px;
+  }
+}
+
 h2 {
   font-size: 1.05em;
   margin: 0 0 10px;
   font-weight: 600;
 }
 
-/* ---- tabs ---- */
+/* ---- tabs ----
+   Icons, not words: six labels do not fit in a sidebar, and the codicon font makes the strip look
+   like the editor's own UI. The accessible name lives in `title`/`aria-label`, set from the
+   localised labels in `main.ts`. */
 nav.tabs {
   display: flex;
   gap: 2px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  margin: 0 auto 16px;
+  margin: 0 auto 12px;
   max-width: 1040px;
 }
-nav button {
+nav button.tab {
   appearance: none;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--vscode-foreground);
-  opacity: 0.65;
-  padding: 7px 13px;
-  font: inherit;
+  opacity: 0.6;
+  /* Flexible width so the strip spreads across whatever the container gives it, and a 28px floor
+     so every tab stays a comfortable click target. */
+  flex: 1 1 auto;
+  min-width: 28px;
+  display: grid;
+  place-items: center;
+  padding: 7px 0;
   cursor: pointer;
 }
-nav button:hover {
+nav button.tab .codicon {
+  font-size: 16px;
+}
+nav button.tab:hover {
   opacity: 1;
 }
-nav button[aria-selected='true'] {
+nav button.tab:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+  opacity: 1;
+}
+nav button.tab[aria-selected='true'] {
   opacity: 1;
   border-bottom-color: var(--vscode-focusBorder);
 }
@@ -63,153 +91,182 @@ section[hidden] {
   display: none;
 }
 
-/* ---- companion ---- */
-.companion {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  padding: 18px 20px;
+/* ---- companion hero ----
+   The card is the one place with a border: it is the subject of the panel. Everything inside it
+   carries hierarchy with type and spacing instead of more boxes, which is how VS Code's own
+   surfaces are built — an extension that boxes every element reads as a web page in a panel. */
+.hero {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px 14px 14px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   background: var(--vscode-editorWidget-background, transparent);
 }
-.sprite {
-  width: 112px;
-  height: 112px;
+
+/* The sprite is placed, not framed: a soft elliptical shadow under it grounds it, where the old
+   dark square read as a broken-image placeholder. */
+.stage {
+  position: relative;
+  width: 96px;
+  height: 96px;
   display: grid;
   place-items: center;
-  flex: none;
-  border-radius: 10px;
-  background: var(--vscode-editor-background);
 }
-/* Rendered at the sprite's native 96px. `pixelated` is only correct when scaling by a whole
-   number — at an arbitrary size it turns pixel art into mush, which is what the 34px slots
-   were doing. */
-.sprite img {
+.stage::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 74px;
+  height: 12px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  /* Tied to the theme's foreground, so it stays a shadow in light themes instead of a smudge. */
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--vscode-foreground) 22%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+/* Native size only: `pixelated` is exact at whole multiples, and these sprites are 96px. */
+.stage img {
   width: 96px;
   height: 96px;
   image-rendering: pixelated;
+  position: relative;
 }
-.sprite .egg {
-  font-size: 62px;
-  line-height: 1;
-}
-
-/* Paused whenever the panel is hidden — an always-running animation was measured as the
-   single biggest idle-CPU cost. */
-.sprite img.bob {
+.stage img.bob {
   animation: bob 1.6s ease-in-out infinite;
 }
-body.paused .sprite img.bob {
+body.paused .stage img.bob {
   animation-play-state: paused;
 }
-@keyframes bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
-  .sprite img.bob {
+  .stage img.bob {
     animation: none;
   }
 }
-
-.companion-info {
-  flex: 1;
-  min-width: 0;
-  max-width: 620px;
+.egg {
+  font-size: 54px;
+  line-height: 1;
 }
-.companion-name {
-  font-size: 1.4em;
+
+.hero-name {
+  font-size: 1.5em;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.15;
+  margin: 0;
+  text-align: center;
+  /* A Japanese name or a long species name wraps rather than stretching the card. */
+  overflow-wrap: anywhere;
+}
+.shiny-mark {
+  font-size: 0.7em;
+  vertical-align: 0.25em;
+}
+.hero-meta {
+  opacity: 0.65;
+  font-size: 0.9em;
+  text-align: center;
 }
 
-/* Facts as chips instead of one long dot-separated line: at a glance you can find the stage
-   or the rarity without reading the whole sentence. */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 7px;
-}
-.chip {
-  font-size: 0.8em;
-  padding: 2px 9px;
-  border-radius: 11px;
-  border: 1px solid var(--vscode-panel-border);
-  opacity: 0.85;
-}
-.chip.shiny {
-  border-color: var(--vscode-charts-yellow, gold);
-  opacity: 1;
-}
-
+/* ---- progress ---- */
 .progress {
-  margin-top: 12px;
+  width: 100%;
+  margin-top: 2px;
 }
 .progress .meta {
   display: flex;
   justify-content: space-between;
-  font-size: 0.85em;
+  gap: 10px;
+  font-size: 0.9em;
   opacity: 0.75;
   margin-bottom: 5px;
 }
-.bar {
-  height: 9px;
-  border-radius: 5px;
-  /* An explicit track colour: `opacity` on the container faded the fill too, which is why
-     the bar was nearly invisible. */
-  background: var(--vscode-panel-border);
-  overflow: hidden;
+.progress .meta .pct {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
 }
-.bar > i {
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+.bar i {
   display: block;
   height: 100%;
-  min-width: 3px;
-  border-radius: 5px;
-  background: var(--vscode-charts-blue, var(--vscode-focusBorder));
-  transition: width 0.4s ease;
+  background: var(--vscode-charts-blue);
+  border-radius: 2px;
 }
 
-/* ---- stats ---- */
+/* ---- usage rows ----
+   Label, value and cost on one line. The previous three stacked cards spent 9 lines on 3 numbers
+   and pushed the breakdown below the fold, which in a sidebar means out of existence. */
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0;
+  margin-bottom: 2px;
+}
+.row-stat {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
   gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
 }
-.stat {
-  padding: 11px 13px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 7px;
-}
-.stat .label {
-  opacity: 0.65;
-  font-size: 0.82em;
+.row-stat .label {
+  opacity: 0.7;
+  font-size: 0.85em;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.stat .value {
-  font-size: 1.35em;
+.row-stat .value {
   font-weight: 600;
-  margin-top: 3px;
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
-.stat .note {
+.row-stat .note {
   opacity: 0.6;
-  font-size: 0.85em;
-  margin-top: 1px;
+  font-size: 0.88em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+}
+
+/* A link that switches tab, styled as VS Code styles its own inline links. */
+button.link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: var(--vscode-textLink-foreground, var(--vscode-charts-blue));
+  cursor: pointer;
+}
+button.link:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-charts-blue));
+  text-decoration: underline;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 18px;
+  margin-top: 16px;
+  /* The provider table keeps its three columns in a sidebar — hiding the month would be hiding
+     data — but it gives up a little type size to do it. */
+  font-size: 0.92em;
+}
+@media (min-width: 420px) {
+  table {
+    margin-top: 18px;
+    font-size: 1em;
+  }
 }
 th,
 td {
@@ -478,4 +535,254 @@ select.dev-input {
 .action.danger:hover {
   background: var(--vscode-editorError-foreground);
   color: var(--vscode-button-foreground);
+}
+
+/* The month is context, not the headline: dimming it lets the eye land on today's number. */
+td.dim {
+  opacity: 0.55;
+}
+
+/* ---- official limits ----
+   One bar per window. `.bar` is shared with the companion's progress, so both read as the same
+   kind of object; only the fill colour differs, and it comes from the severity the core decided. */
+h2.section {
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  margin: 16px 0 8px;
+}
+.limits {
+  display: grid;
+  gap: 9px;
+}
+.limit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.92em;
+  margin-bottom: 4px;
+}
+.limit-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.limit-value {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* Colour is the *second* signal: the number is always there, so a colour-blind reader loses
+   nothing. That is also why the crit bar is not just red but full. */
+.limit.warn .bar i {
+  background: var(--vscode-charts-yellow);
+}
+.limit.crit .bar i {
+  background: var(--vscode-editorError-foreground);
+}
+.limit.crit .limit-value {
+  color: var(--vscode-editorError-foreground);
+  opacity: 1;
+}
+
+/* ================================================================================
+   Responsive layers. The panel renders in three very different containers — the
+   activity-bar sidebar (~300 px, the narrow-first baseline above), the Explorer's
+   "Tokendex Companion" section (narrow AND often short), and the editor tab (wide).
+   The webview viewport equals the container, so plain media queries see all of it.
+   ================================================================================ */
+
+/* ---- wide: the editor tab (and the panel area). One column wastes a 900 px canvas:
+   the hero becomes a sticky left rail and the numbers read beside it, not under it. */
+@media (min-width: 640px) {
+  #home:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) 1fr;
+    column-gap: 24px;
+    row-gap: 0;
+    align-items: start;
+  }
+  #home .hero {
+    grid-column: 1;
+    /* Far more rows than the right column will ever produce; empty implicit rows
+       collapse to zero height, and row-gap is 0 so they cost nothing. */
+    grid-row: 1 / span 40;
+    position: sticky;
+    top: 12px;
+    margin-bottom: 0;
+  }
+  #home .stats,
+  #home h2.section,
+  #home .limits,
+  #home table {
+    grid-column: 2;
+  }
+  #home table {
+    margin-top: 12px;
+  }
+
+  /* Shop and bag rows pair up instead of stretching across the whole tab. */
+  #shop:not([hidden]),
+  #bag:not([hidden]) {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px 12px;
+  }
+  #shop .row,
+  #bag .row {
+    margin-bottom: 0;
+  }
+}
+
+/* ---- short: an Explorer section a few hundred pixels tall. The vertical hero pushes
+   everything below the fold, so it lies down: sprite left, identity and progress right. */
+@media (max-height: 480px) {
+  .hero {
+    grid-template-columns: auto 1fr;
+    justify-items: start;
+    align-items: center;
+    gap: 2px 16px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .stage {
+    grid-row: 1 / span 3;
+  }
+  .hero-name {
+    font-size: 1.2em;
+    text-align: left;
+  }
+  .hero-meta {
+    text-align: left;
+  }
+  .progress {
+    margin-top: 4px;
+  }
+  .evoline {
+    grid-column: 1 / -1;
+    margin-top: 6px;
+  }
+  .evoline .slot {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+/* Shorter still: the evolution strip is the first thing worth trading for the numbers. */
+@media (max-height: 380px) {
+  body {
+    padding: 8px;
+  }
+  .evoline {
+    display: none;
+  }
+}
+
+/* ---- very narrow: a squeezed sidebar. Everything keeps its data; it gives up air. */
+@media (max-width: 250px) {
+  body {
+    padding: 8px;
+  }
+  .hero {
+    padding: 12px 8px 10px;
+  }
+  .hero-name {
+    font-size: 1.25em;
+  }
+  .row-stat {
+    gap: 6px;
+  }
+  .row-stat .note {
+    min-width: 0;
+  }
+  table {
+    font-size: 0.85em;
+  }
+  th,
+  td {
+    padding: 5px 4px;
+  }
+  .dex {
+    grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+    gap: 6px;
+  }
+  .row {
+    gap: 8px;
+    padding: 8px 9px;
+  }
+  button.action {
+    padding: 4px 9px;
+  }
+  .evoline .slot {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+/* ================================================================================
+   Compact skin — the Explorer's "Tokendex Companion" view. A glanceable mini card:
+   Home only (no tab strip; the sidebar and the editor tab keep the full panel),
+   half-scale sprite, identity and progress beside it, and the three usage rows.
+   The table, the limits detail and the evolution strip belong to the full panel.
+   ================================================================================ */
+body.compact {
+  padding: 8px;
+}
+body.compact nav.tabs {
+  display: none;
+}
+body.compact .hero {
+  grid-template-columns: auto 1fr;
+  justify-items: start;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+body.compact .stage {
+  grid-row: 1 / span 3;
+  width: 48px;
+  height: 48px;
+}
+/* Exactly half the 96px source, so `pixelated` downscales cleanly — evoline precedent. */
+body.compact .stage img {
+  width: 48px;
+  height: 48px;
+}
+body.compact .stage::after {
+  width: 38px;
+  height: 7px;
+}
+body.compact .egg {
+  font-size: 30px;
+}
+body.compact .hero-name {
+  font-size: 1.05em;
+  text-align: left;
+}
+body.compact .hero-meta {
+  font-size: 0.8em;
+  text-align: left;
+}
+body.compact .progress {
+  margin-top: 2px;
+}
+body.compact .progress .meta {
+  font-size: 0.8em;
+  margin-bottom: 3px;
+}
+body.compact .evoline,
+body.compact #home table,
+body.compact #home h2.section,
+body.compact #home .limits,
+body.compact button.link {
+  display: none;
+}
+body.compact .row-stat {
+  padding: 4px 0;
+}
+body.compact .row-stat .label {
+  font-size: 0.75em;
 }

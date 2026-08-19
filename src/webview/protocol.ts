@@ -7,9 +7,15 @@
  */
 
 export interface PanelTotals {
+  /** Compact, for the layout: `687M`. The same form the breakdown uses, so one screen never
+   *  shows the same number two ways. */
   todayText: string
+  /** Grouped, for the hover title: `687,029,678`. Nobody reads nine digits at a glance, but the
+   *  exact value should still be one hover away. */
+  todayExactText: string
   todayCostText: string
   monthText: string
+  monthExactText: string
   monthCostText: string
 }
 
@@ -35,6 +41,14 @@ export interface PanelCompanion {
   rarityText?: string
   natureText?: string
   line: PanelLineItem[]
+}
+
+/** An official limit window as the panel draws it: a name, a percentage and a bar. */
+export interface PanelLimit {
+  label: string
+  value: string
+  percent: number
+  severity: 'normal' | 'warn' | 'crit'
 }
 
 export interface PanelShopItem {
@@ -95,6 +109,7 @@ export interface PanelStrings {
   today: string
   month: string
   spendable: string
+  limits: string
   provider: string
   buy: string
   owned: string
@@ -150,6 +165,8 @@ export interface PanelState {
   language: string
   languages: { id: string; label: string }[]
   strings: PanelStrings
+  /** Official limit windows, empty until a provider answers. */
+  limits: PanelLimit[]
   /** Development surface, only when devMode is on. */
   dev?: PanelDev
   errors: string[]
