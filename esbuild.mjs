@@ -21,7 +21,9 @@ const shared = {
   platform: 'node',
   target: 'node20',
   format: 'cjs',
-  sourcemap: true,
+  // No sourcemap in production: `.vscodeignore` excludes `**/*.map`, so shipping the comment
+  // would leave a dangling sourceMappingURL pointing at a file the `.vsix` does not contain.
+  sourcemap: !flag('production'),
   minify: flag('production'),
   logLevel: 'info',
 }
@@ -87,6 +89,26 @@ const development = [
  * Copied rather than declared `external` so `vsce package --no-dependencies` still produces a
  * self-contained `.vsix`.
  */
+/**
+ * VS Code's own icon font, so the webview can draw the same glyphs as the rest of the editor
+ * instead of emoji. It is not exposed to webviews automatically: the two files have to be served
+ * from the extension, which is why they are copied next to the bundle.
+ *
+ * A devDependency rather than a runtime one — the files are copied at build time, so
+ * `vsce package --no-dependencies` still produces a self-contained `.vsix`.
+ */
+async function copyCodicons() {
+  const base = 'node_modules/@vscode/codicons/dist'
+  try {
+    await mkdir('dist/codicons', { recursive: true })
+    for (const file of ['codicon.css', 'codicon.ttf']) {
+      await copyFile(`${base}/${file}`, `dist/codicons/${file}`, constants.COPYFILE_FICLONE)
+    }
+  } catch (error) {
+    console.warn(`  warning: could not copy the codicons (${error.code ?? error.message})`)
+  }
+}
+
 async function copyWasm() {
   const source = 'node_modules/sql.js/dist/sql-wasm.wasm'
   try {
@@ -102,6 +124,7 @@ async function copyWasm() {
 export async function buildAll({ dev = false, watch = false } = {}) {
   const configs = dev ? [...shipped, ...development] : shipped
   await copyWasm()
+  await copyCodicons()
   const contexts = await Promise.all(configs.map((config) => context(config)))
   if (watch) {
     await Promise.all(contexts.map((c) => c.watch()))

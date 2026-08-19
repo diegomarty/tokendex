@@ -1,0 +1,13 @@
+<!--
+  Activity bar / view icon. Original drawing on purpose: no Pokémon asset ships with this
+  extension (see the licence note in the README).
+
+  VS Code uses this file as a MASK tinted with the theme colour, so only the alpha matters —
+  and at 16-24px a single thin-stroke silhouette is what survives: one outlined egg with a
+  hatching crack. Anything busier (spots, a second object) melts into a blob at that size;
+  the richer egg-and-token art lives in media/icon.png, where 128px can afford it.
+-->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path stroke="currentColor" stroke-width="1.7" d="M12 2.85c1.95 0 3.6 1.45 4.7 3.5 1.1 2 1.75 4.5 1.75 6.5 0 3.85-2.85 6.8-6.45 6.8s-6.45-2.95-6.45-6.8c0-2 .65-4.5 1.75-6.5 1.1-2.05 2.75-3.5 4.7-3.5Z"/>
+  <path stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M7.7 10.6l2.1 1.6 2.1-2.3 2.1 2.1 2.2-1.7"/>
+</svg>

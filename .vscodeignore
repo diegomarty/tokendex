@@ -4,6 +4,7 @@ tools/**
 docs/**
 node_modules/**
 .vscode/**
+.claude/**
 .github/**
 tsconfig*.json
 vitest.config.ts

@@ -26,7 +26,8 @@
       },
       {
         "command": "tokendex.refresh",
-        "title": "Tokendex: Refresh now"
+        "title": "Tokendex: Refresh now",
+        "icon": "$(refresh)"
       },
       {
         "command": "tokendex.showOutput",
@@ -38,7 +39,13 @@
       },
       {
         "command": "tokendex.reloadWebview",
-        "title": "Tokendex: Reload the panel (development)"
+        "title": "Tokendex: Reload the panel (development)",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "tokendex.openInEditor",
+        "title": "Tokendex: Open in an editor tab",
+        "icon": "$(link-external)"
       }
     ],
     "configuration": {
@@ -63,6 +70,21 @@
           ],
           "description": "How often local usage is re-read."
         },
+        "tokendex.companionLocation": {
+          "type": "string",
+          "default": "explorer",
+          "enum": [
+            "explorer",
+            "sidebar",
+            "panel"
+          ],
+          "enumDescriptions": [
+            "As a section in the Explorer",
+            "Inside the Tokendex sidebar, above the full panel",
+            "In the panel area, next to the Terminal"
+          ],
+          "description": "Where the compact companion card lives. You can also drag the view anywhere by hand."
+        },
         "tokendex.devMode": {
           "type": "boolean",
           "default": false,
@@ -77,7 +99,97 @@
         "mac": "cmd+alt+r",
         "when": "config.tokendex.devMode"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tokendex",
+          "title": "Tokendex",
+          "icon": "media/tokendex.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "tokendex-companion",
+          "title": "Companion",
+          "icon": "media/tokendex.svg"
+        }
+      ]
+    },
+    "views": {
+      "tokendex": [
+        {
+          "id": "tokendex.companionBar",
+          "name": "Companion",
+          "type": "webview",
+          "icon": "media/tokendex.svg",
+          "when": "config.tokendex.companionLocation == 'sidebar'"
+        },
+        {
+          "id": "tokendex.view",
+          "name": "Tokendex",
+          "type": "webview",
+          "icon": "media/tokendex.svg"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "tokendex.ambient",
+          "name": "Tokendex Companion",
+          "type": "webview",
+          "icon": "media/tokendex.svg",
+          "when": "config.tokendex.companionLocation == 'explorer'"
+        }
+      ],
+      "tokendex-companion": [
+        {
+          "id": "tokendex.companionPanel",
+          "name": "Companion",
+          "type": "webview",
+          "icon": "media/tokendex.svg",
+          "when": "config.tokendex.companionLocation == 'panel'"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "tokendex.refresh",
+          "when": "view == tokendex.view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tokendex.openInEditor",
+          "when": "view == tokendex.view",
+          "group": "navigation@2"
+        },
+        {
+          "command": "tokendex.refresh",
+          "when": "view == tokendex.ambient || view == tokendex.companionBar || view == tokendex.companionPanel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tokendex.openInEditor",
+          "when": "view == tokendex.ambient || view == tokendex.companionBar || view == tokendex.companionPanel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "tokendex.reloadWebview",
+          "when": "view == tokendex.view && config.tokendex.devMode",
+          "group": "navigation@3"
+        },
+        {
+          "command": "tokendex.dev",
+          "when": "view == tokendex.view && config.tokendex.devMode",
+          "group": "1_dev"
+        },
+        {
+          "command": "tokendex.showOutput",
+          "when": "view == tokendex.view",
+          "group": "9_diagnostics"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -91,16 +203,18 @@
     "bench": "node tools/bench/serve.mjs",
     "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
     "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
-    "package": "npm run compile && npx --yes @vscode/vsce package --no-dependencies"
+    "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/codicons": "^0.0.46-24",
     "esbuild": "^0.25.0",
     "prettier": "^3.9.6",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   },
+  "icon": "media/icon.png",
   "publisher": "diegomarty",
   "repository": {
     "type": "git",
