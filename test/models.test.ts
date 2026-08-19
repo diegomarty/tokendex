@@ -18,13 +18,12 @@ import {
   type LimitStatus,
 } from '../src/core/models.js'
 
-// ---------------------------------------------------------------------------
-// Ported from `CodexLimitDerivationTests` in ModelLogicTests.swift
-// ---------------------------------------------------------------------------
-
 describe('codexWindowDisplayName', () => {
   const name = (mins: number | undefined) =>
-    codexWindowDisplayName({ usedPercent: 0, ...(mins === undefined ? {} : { windowDurationMins: mins }) })
+    codexWindowDisplayName({
+      usedPercent: 0,
+      ...(mins === undefined ? {} : { windowDurationMins: mins }),
+    })
 
   it('maps known and derived window durations', () => {
     expect(name(300)).toBe('5시간 세션')
@@ -126,7 +125,7 @@ describe('parseBlockUsage', () => {
     expect(parseBlockUsage({ burnRate: { tokensPerMinute: 12.5 } }).tokensPerMinute).toBe(12.5)
   })
 
-  it('tolerates a malformed burnRate rather than failing the block (Swift uses try?)', () => {
+  it('tolerates a malformed burnRate rather than failing the block', () => {
     expect(parseBlockUsage({ burnRate: 'nonsense', id: 'b' }).id).toBe('b')
     expect(parseBlockUsage({ burnRate: { tokensPerMinute: 'fast' } }).tokensPerMinute).toBeUndefined()
   })
@@ -175,8 +174,12 @@ describe('periodFromDaily', () => {
 
 describe('planDisplay', () => {
   it('appends the tier multiplier when the tier carries one', () => {
-    expect(planDisplay({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' })).toBe('Max 20x')
-    expect(planDisplay({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' })).toBe('Max 5x')
+    expect(planDisplay({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' })).toBe(
+      'Max 20x',
+    )
+    expect(planDisplay({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' })).toBe(
+      'Max 5x',
+    )
   })
 
   it('shows the plan name alone when the tier has no multiplier', () => {
@@ -274,7 +277,9 @@ describe('maxPrimaryUsedPercent', () => {
   it('takes the highest primary utilisation across visible buckets', () => {
     const status: CodexRateLimitStatus = {
       rateLimits: { limitId: 'codex', primary: { usedPercent: 42 } },
-      rateLimitsByLimitId: { codex_other: { limitId: 'codex_other', primary: { usedPercent: 77 } } },
+      rateLimitsByLimitId: {
+        codex_other: { limitId: 'codex_other', primary: { usedPercent: 77 } },
+      },
     }
     expect(maxPrimaryUsedPercent(status)).toBe(77)
   })

@@ -35,8 +35,16 @@ import {
 } from '../src/core/companion/model.js'
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
-  baseID: 1, pathIDs: [1], plannedPathIDs: [1], stageIndex: 0, usedAtStage: 0,
-  rarity: 'common', totalForms: 1, isShiny: false, dittoRevealed: false, ...over,
+  baseID: 1,
+  pathIDs: [1],
+  plannedPathIDs: [1],
+  stageIndex: 0,
+  usedAtStage: 0,
+  rarity: 'common',
+  totalForms: 1,
+  isShiny: false,
+  dittoRevealed: false,
+  ...over,
 })
 
 function state(over: Partial<CompanionState> = {}): CompanionState {
@@ -52,9 +60,7 @@ describe('shop listing', () => {
   })
 
   it('sorts by price', () => {
-    const prices = shopEntries(state({ active: mon() })).map((e) =>
-      e.kind === 'item' ? e.item : e.tier,
-    )
+    const prices = shopEntries(state({ active: mon() })).map((e) => (e.kind === 'item' ? e.item : e.tier))
     expect(prices[0]).toBe('mint') // cheapest at 100M
   })
 
@@ -91,10 +97,12 @@ describe('buying items', () => {
   })
 
   it('lists only owned items in the bag', () => {
-    expect(ownedItems(state({ inventory: { mint: 2, rareCandy: 0 } }))).toEqual([
-      { kind: 'rareCandy', count: 0 },
-      { kind: 'mint', count: 2 },
-    ].filter((i) => i.count > 0))
+    expect(ownedItems(state({ inventory: { mint: 2, rareCandy: 0 } }))).toEqual(
+      [
+        { kind: 'rareCandy', count: 0 },
+        { kind: 'mint', count: 2 },
+      ].filter((i) => i.count > 0),
+    )
   })
 })
 
@@ -114,7 +122,9 @@ describe('buying eggs', () => {
 
   it('discards the Pokémon without touching the dex or the odds', () => {
     const before = rich()
-    before.dex = [{ id: 'x', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false }]
+    before.dex = [
+      { id: 'x', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false },
+    ]
     before.collectedFinals = ['1:3']
     const after = buyEgg(before, undefined)!
     expect(after.active).toBeUndefined()
@@ -172,7 +182,11 @@ describe('using items', () => {
 
 describe('candy grants', () => {
   const window = (over: Partial<CandyWindow> = {}): CandyWindow => ({
-    key: 'w1', name: '5h', kind: 'session', utilization: 100, ...over,
+    key: 'w1',
+    name: '5h',
+    kind: 'session',
+    utilization: 100,
+    ...over,
   })
 
   it('grants once when a window newly crosses 100%', () => {
@@ -228,8 +242,11 @@ describe('candy grants', () => {
 
 describe('display state', () => {
   const inputs = {
-    burnTier: 'normal' as const, limitWarning: false, hasUsageData: true,
-    todayTokens: 100, eventActive: false,
+    burnTier: 'normal' as const,
+    limitWarning: false,
+    hasUsageData: true,
+    todayTokens: 100,
+    eventActive: false,
   }
 
   it('shows an egg when there is no Pokémon', () => {
@@ -237,7 +254,13 @@ describe('display state', () => {
   })
 
   it('prioritises a celebration over everything else', () => {
-    expect(computeDisplayState(state({ active: mon() }), { ...inputs, eventActive: true, limitWarning: true })).toBe('levelUp')
+    expect(
+      computeDisplayState(state({ active: mon() }), {
+        ...inputs,
+        eventActive: true,
+        limitWarning: true,
+      }),
+    ).toBe('levelUp')
   })
 
   it('shows tired on a limit warning', () => {
@@ -245,7 +268,9 @@ describe('display state', () => {
   })
 
   it('sleeps with no data or no usage today', () => {
-    expect(computeDisplayState(state({ active: mon() }), { ...inputs, hasUsageData: false })).toBe('sleep')
+    expect(computeDisplayState(state({ active: mon() }), { ...inputs, hasUsageData: false })).toBe(
+      'sleep',
+    )
     expect(computeDisplayState(state({ active: mon() }), { ...inputs, todayTokens: 0 })).toBe('sleep')
   })
 
