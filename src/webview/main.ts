@@ -4,7 +4,7 @@
  * snapshot, and every action is a message.
  *
  * That is the same rule the status bar follows: the UI never re-derives a number. A second
- * formatting path would be a second source of truth that drifts from upstream.
+ * formatting path would be a second source of truth that drifts.
  */
 
 import type { PanelLineItem, PanelState } from './protocol.js'
@@ -17,10 +17,9 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi()
 
-const SPRITE_BASE =
-  'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon'
+const SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon'
 
-type TabID = 'home' | 'shop' | 'bag' | 'dex' | 'settings'
+type TabID = 'home' | 'shop' | 'bag' | 'dex' | 'settings' | 'dev'
 type DexSegment = 'species' | 'log'
 let current: PanelState | undefined
 let tab: TabID = 'home'
@@ -37,8 +36,9 @@ function spriteURL(speciesID: number, shiny: boolean, animated: boolean): string
 }
 
 function escapeHTML(value: string): string {
-  return value.replace(/[&<>"']/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
   )
 }
 
@@ -253,6 +253,66 @@ function renderSettings(state: PanelState): string {
     <p class="desc">${escapeHTML(state.strings.settingsHint)}</p>`
 }
 
+/**
+ * The Dev tab: every scenario as a control, driven entirely by `state.dev`.
+ *
+ * The webview does not know what any of these do — it echoes the control id (and the value of
+ * its input) back to the host, which validates it against the scenario table. That is the same
+ * contract the shop uses, and it is what lets a stale webview fail closed after an update.
+ */
+function renderDev(state: PanelState): string {
+  const dev = state.dev
+  if (dev === undefined) return ''
+
+  const summary = dev.summary
+    .map(
+      (row) => `<div class="dev-row">
+        <span class="label">${escapeHTML(row.label)}</span>
+        <span class="value">${escapeHTML(row.value)}</span>
+      </div>`,
+    )
+    .join('')
+
+  const groups = dev.groups
+    .map((group) => {
+      const controls = group.controls
+        .map((control) => {
+          const field =
+            control.input === 'amount'
+              ? `<input class="dev-input" type="text" data-dev-input="${escapeHTML(control.id)}"
+                        value="${escapeHTML(control.defaultValue ?? '')}"
+                        placeholder="${escapeHTML(control.prompt ?? '')}"
+                        aria-label="${escapeHTML(control.prompt ?? control.label)}">`
+              : control.input === 'choice'
+                ? `<select class="dev-input" data-dev-input="${escapeHTML(control.id)}"
+                           aria-label="${escapeHTML(control.prompt ?? control.label)}">
+                     ${(control.options ?? [])
+                       .map(
+                         (option) =>
+                           `<option value="${escapeHTML(option.value)}"${option.value === control.defaultValue ? ' selected' : ''}>${escapeHTML(option.label)}</option>`,
+                       )
+                       .join('')}
+                   </select>`
+                : ''
+          return `<div class="row">
+            <div class="body">
+              <div class="title">${escapeHTML(control.label)}</div>
+              ${control.description === '' ? '' : `<div class="desc">${escapeHTML(control.description)}</div>`}
+            </div>
+            ${field}
+            <button class="action${control.destructive ? ' danger' : ''}" data-dev="${escapeHTML(control.id)}">
+              Run
+            </button>
+          </div>`
+        })
+        .join('')
+      return `<h2>${escapeHTML(group.title)}</h2>${controls}`
+    })
+    .join('')
+
+  return `<div class="dev-summary">${summary}</div>${groups}`
+}
+
 function render(): void {
   const state = current
   if (state === undefined) return
@@ -267,10 +327,18 @@ function render(): void {
   el('bag').innerHTML = renderBag(state)
   el('dex').innerHTML = renderDex(state)
   el('settings').innerHTML = renderSettings(state)
+  el('dev').innerHTML = renderDev(state)
+  // The tab button ships hidden: without a dev section there is nothing behind it, and a
+  // visible-but-empty tab reads as a broken panel.
+  el('tab-dev').hidden = state.dev === undefined
+  if (state.dev === undefined && tab === 'dev') tab = 'home'
 
-  for (const id of ['home', 'shop', 'bag', 'dex', 'settings'] as TabID[]) {
+  for (const id of ['home', 'shop', 'bag', 'dex', 'settings', 'dev'] as TabID[]) {
     el(id).hidden = id !== tab
-    el(`tab-${id}`).setAttribute('aria-selected', String(id === tab))
+    const button = el(`tab-${id}`)
+    button.setAttribute('aria-selected', String(id === tab))
+    // Localised from the state, so a language change relabels the tabs with everything else.
+    button.textContent = state.strings.tabs[id]
   }
   vscode.setState({ tab, dexSegment })
 }
@@ -309,6 +377,16 @@ document.addEventListener('click', (event) => {
     vscode.postMessage({ type: 'use', id: (use as HTMLElement).dataset['use'] })
     return
   }
+  const devControl = target.closest('[data-dev]')
+  if (devControl !== null) {
+    const id = (devControl as HTMLElement).dataset['dev'] ?? ''
+    // The value is read from the control's own row, so two amount fields cannot cross wires.
+    const field = (devControl as HTMLElement)
+      .closest('.row')
+      ?.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-dev-input="${id}"]`)
+    vscode.postMessage({ type: 'dev', id, value: field?.value })
+    return
+  }
   if (target.id === 'export') vscode.postMessage({ type: 'exportSave' })
   if (target.id === 'import') vscode.postMessage({ type: 'importSave' })
 })
@@ -321,7 +399,7 @@ document.addEventListener('change', (event) => {
 })
 
 // The panel keeps rendering while hidden unless told otherwise, and an always-running sprite
-// animation was measured as the biggest idle cost in the macOS original. Same lesson here.
+// animation was measured as the single biggest idle cost.
 document.addEventListener('visibilitychange', () => {
   document.body.classList.toggle('paused', document.hidden)
 })
