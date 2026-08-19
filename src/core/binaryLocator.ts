@@ -11,8 +11,13 @@ import { join } from 'node:path'
 import * as AppPaths from './appPaths.js'
 import { searchPath, shellResolveBinary } from './shellEnvironment.js'
 
-/** A miss is cached too, but only briefly: the tool may be installed while the host runs. */
-const NOT_FOUND_TTL_MS = 10 * 60_000
+/**
+ * A miss is cached too — the tool may be installed while the host runs, so it must expire.
+ * Strictly longer than the 10-minute limits poll on purpose: when the two were equal, every
+ * poll arrived just as the miss expired, so a user without the tool paid the full lookup —
+ * including the ~580 ms login-shell spawn — every 10 minutes, forever.
+ */
+const NOT_FOUND_TTL_MS = 60 * 60_000
 
 interface Cached {
   path?: string

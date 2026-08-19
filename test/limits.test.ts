@@ -597,21 +597,26 @@ describe('limits poller', () => {
     await poller.refreshNow()
     expect(calls).toBe(1)
 
-    // Due by the normal interval, but not by the backoff the server asked for.
-    // The background refresh is fire-and-forget by design, so give its promise chain — file
-    // reads included — real turns of the loop before reading the counter.
-    const settle = async () => {
-      for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r))
+    // The background refresh is fire-and-forget and its chain includes a real file read
+    // (the credential), which completes on the libuv threadpool after a *wall-clock* delay.
+    // Event-loop turns are not time: a settle loop of setImmediate finishes in microseconds
+    // and flaked whenever the read landed later (measured: the fetch arrived 1 ms after 20
+    // turns). Positive expectations wait for the condition with a deadline; the negative one
+    // gets a real grace period that a threadpool read cannot outlast.
+    const waitFor = async (condition: () => boolean) => {
+      const deadline = Date.now() + 5_000
+      while (!condition() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
     }
 
+    // Due by the normal interval, but not by the backoff the server asked for.
     now += LIMITS_INTERVAL_MS + 1
     poller.refresh()
-    await settle()
+    await new Promise((r) => setTimeout(r, 150))
     expect(calls).toBe(1)
 
     now += 1_800_000
     poller.refresh()
-    await settle()
+    await waitFor(() => calls >= 2)
     expect(calls).toBe(2)
   })
 })
