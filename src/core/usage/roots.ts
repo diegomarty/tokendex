@@ -1,6 +1,5 @@
 /**
- * Discovery of every directory that may hold Claude usage logs, ported from the paths
- * section of `Core/LocalUsageReader.swift`.
+ * Discovery of every directory that may hold Claude usage logs.
  *
  * New location to support? Add it here only — the scan, the cache and the tests all share
  * this single source.
@@ -9,7 +8,7 @@
 import { promises as fs } from 'node:fs'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import * as AppPaths from '../appPaths.js'
-import { claudeConfigDir } from '../usageEnvironment.js'
+import { claudeConfigDir, grokHome } from '../usageEnvironment.js'
 
 /**
  * Home-relative default locations. `claudeProjectsDir` and the root list share these
@@ -142,10 +141,9 @@ export interface ComputeRootsOptions {
   /**
    * The `CLAUDE_CONFIG_DIR` value, or undefined for "not configured".
    *
-   * Deliberately NOT a lookup trigger: Swift's default-argument form made `nil` mean "no
-   * value", and a port where undefined means "go and find it" turns every caller — tests
-   * included — into a login-shell spawn. `claudeProjectRoots` does the lookup and passes
-   * the result in.
+   * Deliberately NOT a lookup trigger: `undefined` means "no value", never "go and find
+   * one". The other reading turns every caller — tests included — into a login-shell spawn.
+   * `claudeProjectRoots` does the lookup and passes the result in.
    */
   configDirValue?: string | undefined
   home?: string
@@ -159,9 +157,7 @@ export interface ComputeRootsOptions {
  *  - Claude Desktop embedded sessions — work done in Desktop lives only there, so omitting
  *    it silently loses that usage.
  */
-export async function computeClaudeProjectRoots(
-  options: ComputeRootsOptions = {},
-): Promise<string[]> {
+export async function computeClaudeProjectRoots(options: ComputeRootsOptions = {}): Promise<string[]> {
   const home = options.home ?? AppPaths.home()
   const appSupport = options.appSupport ?? AppPaths.appSupport()
   const configDirValue = options.configDirValue
@@ -217,6 +213,18 @@ export function codexSessionsDir(home: string = AppPaths.home()): string {
 
 export function geminiTmpDir(home: string = AppPaths.home()): string {
   return join(home, '.gemini', 'tmp')
+}
+
+/**
+ * Grok CLI session root, honouring `$GROK_HOME` the same way the CLI does.
+ *
+ * Read through `usageEnvironment` rather than `process.env`: a GUI-launched host does not
+ * inherit the login shell, so a user who exported it in `~/.zshrc` would silently see zero.
+ */
+export async function grokSessionsDir(home: string = AppPaths.home()): Promise<string> {
+  const configured = (await grokHome())?.trim()
+  if (configured !== undefined && configured !== '') return join(configured, 'sessions')
+  return join(home, '.grok', 'sessions')
 }
 
 export { dirname }

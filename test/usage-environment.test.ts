@@ -8,7 +8,6 @@ import {
 } from '../src/core/shellEnvironment.js'
 import { USAGE_ENVIRONMENT_NAMES, resolve } from '../src/core/usageEnvironment.js'
 
-// Ported from Tests/PokeTokenBarTests/UsageEnvironmentTests.swift.
 // A GUI-launched app does not inherit the login shell's environment. Reading the override
 // variables only from the process environment makes a user who exported them in ~/.zshrc
 // silently report zero in the app while the CLI is fine — irreproducible in tests unless
@@ -88,12 +87,9 @@ describe('isShellSafeEnvironmentName', () => {
   })
 
   // Lowercase, Unicode "uppercase", metacharacters and the empty string are all rejected.
-  it.each(['', 'grok_home', 'A-B', 'A B', 'A;rm -rf /', 'Σ', 'А', '٣', 'A$B'])(
-    'rejects %s',
-    (name) => {
-      expect(isShellSafeEnvironmentName(name)).toBe(false)
-    },
-  )
+  it.each(['', 'grok_home', 'A-B', 'A B', 'A;rm -rf /', 'Σ', 'А', '٣', 'A$B'])('rejects %s', (name) => {
+    expect(isShellSafeEnvironmentName(name)).toBe(false)
+  })
 })
 
 describe('shellEnvironmentValues', () => {
@@ -125,9 +121,9 @@ describe('registry integrity', () => {
 })
 
 /**
- * Mechanical guard against the whole class of defect, ported from
- * `testNoProviderReadsUsageLocationEnvDirectly`. Reading a usage-location variable straight
- * from `process.env` bypasses the login-shell fallback and reintroduces the silent-zero bug.
+ * Mechanical guard against the whole class of defect. Reading a usage-location variable
+ * straight from `process.env` bypasses the login-shell fallback and reintroduces the
+ * silent-zero bug.
  *
  * The allowlist holds only files whose env access is NOT a user-exported override:
  *  - usageEnvironment.ts — the one legitimate reader of the process environment
@@ -153,7 +149,7 @@ describe('no provider reads the environment directly', () => {
       if (existsSync(nested)) return nested
       dir = parent
     }
-    throw new Error('no se encontró src/core — la guarda no puede verificar nada')
+    throw new Error('src/core not found — the guard cannot verify anything')
   })()
 
   function walk(dir: string): string[] {
@@ -164,12 +160,16 @@ describe('no provider reads the environment directly', () => {
     })
   }
 
+  const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+
   it('routes every usage-location variable through usageEnvironment', () => {
     const offenders: string[] = []
     for (const file of walk(coreDir)) {
       const name = file.split('/').pop() ?? ''
       if (ALLOWED.has(name)) continue
-      readFileSync(file, 'utf8')
+      // Comments are stripped first, exactly as in the check below: prose explaining why a
+      // module does NOT read the environment must not be flagged for saying so.
+      stripComments(readFileSync(file, 'utf8'))
         .split('\n')
         .forEach((line, index) => {
           if (line.includes('process.env')) offenders.push(`${name}:${index + 1}`)
@@ -177,10 +177,6 @@ describe('no provider reads the environment directly', () => {
     }
     expect(offenders).toEqual([])
   })
-
-  // Comments are stripped first: prose explaining the rule must not trip it.
-  const stripComments = (text: string) =>
-    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
 
   it('keeps every registered override name inside usageEnvironment', () => {
     const offenders: string[] = []
