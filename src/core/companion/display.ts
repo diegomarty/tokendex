@@ -13,6 +13,21 @@ import { ownsShinyCharm } from './shop.js'
 /** Burn-rate tier. */
 export type BurnTier = 'idle' | 'normal' | 'fast' | 'blazing'
 
+/**
+ * Tier for a burn rate, ported verbatim from `UsageStore.burnTier`.
+ *
+ * The input is the burn **summed across providers**, the way the original combines them: two
+ * tools at 60K/min each is one fast session, and tiering them apart would call it two normal
+ * ones. The 1K floor matters because a finished session keeps reporting a trickle for the rest
+ * of its 5-hour window, and counting that as work leaves the companion permanently awake.
+ */
+export function burnTierFor(combinedTokensPerMinute: number): BurnTier {
+  if (!(combinedTokensPerMinute > 1_000)) return 'idle'
+  if (combinedTokensPerMinute < 100_000) return 'normal'
+  if (combinedTokensPerMinute < 400_000) return 'fast'
+  return 'blazing'
+}
+
 export interface DisplayInputs {
   burnTier: BurnTier
   limitWarning: boolean

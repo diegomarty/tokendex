@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SNAPSHOT_SCHEMA, buildSnapshot } from '../src/core/snapshot.js'
+import { SNAPSHOT_SCHEMA, aggregateProviders, buildSnapshot } from '../src/core/snapshot.js'
 import type { Entry } from '../src/core/usage/entry.js'
 import { localDayKey } from '../src/core/usage/entry.js'
 
@@ -106,20 +106,115 @@ describe('buildSnapshot', () => {
     expect(snapshot.totals.todayTokens).toBe(10) // the other provider still reports
   })
 
-  it('shows egg progress in the status bar, since an egg has no name yet', () => {
-    const withEgg = buildSnapshot([claude([entry(NOW, 10)])], {
-      now: NOW,
-      companion: {
-        state: 'egg',
-        isShiny: false,
-        progress: 0.42,
-        toNextText: '3M to hatch',
-        dexCount: 0,
-        spendableTokens: 0,
-      },
-    })
-    expect(withEgg.statusText).toContain('42%')
+  const egg = {
+    state: 'egg' as const,
+    isShiny: false,
+    progress: 0.42,
+    toNextText: '3M to hatch',
+    dexCount: 0,
+    spendableTokens: 0,
+  }
+
+  it('names the egg in the status bar instead of a placeholder', () => {
+    const withEgg = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion: egg })
+    // The bar's percentage means "limit used", so incubation progress cannot share that slot:
+    // two different percentages behind one glyph is unreadable. The word carries the identity and
+    // the progress stays in the tooltip.
+    expect(withEgg.statusText).toContain('Egg')
     expect(withEgg.statusText).not.toContain('···')
+    expect(withEgg.statusText).not.toContain('42%')
+    expect(withEgg.tooltipMarkdown).toContain('3M to hatch')
+  })
+
+  describe('the primary number', () => {
+    // [trigger branch] The whole point of the limit-first shape: the number answers "how much
+    // have I got left", which a token total cannot. Without limits it must fall back rather than
+    // show an empty slot.
+    it('prefers the limit percentage when one is known', () => {
+      const snapshot = buildSnapshot([claude([entry(NOW, 12_345)])], {
+        now: NOW,
+        companion: egg,
+        limitPercent: 42.4,
+      })
+      expect(snapshot.statusText).toContain('42%')
+      expect(snapshot.statusText).not.toContain('12.3K')
+    })
+
+    it('rounds it, so the item does not change width every refresh', () => {
+      const shape = (percent: number) =>
+        buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion: egg, limitPercent: percent })
+          .statusText
+      expect(shape(42.4)).toBe(shape(41.6))
+      expect(shape(42.4)).toContain('42%')
+    })
+
+    it("falls back to today's tokens when no limit is known", () => {
+      const snapshot = buildSnapshot([claude([entry(NOW, 12_345)])], { now: NOW, companion: egg })
+      expect(snapshot.statusText).toContain('12.3K')
+    })
+  })
+
+  describe('severity', () => {
+    it('stays normal by default', () => {
+      expect(buildSnapshot([claude([entry(NOW, 10)])], { now: NOW }).severity).toBe('normal')
+      expect(buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, limitPercent: 42 }).severity).toBe(
+        'normal',
+      )
+    })
+
+    // Decided in the core so the host only maps it to a ThemeColor: a threshold repeated in the
+    // UI would drift from the one the tooltip explains.
+    it('turns to warning when the caller reports an exhausted window', () => {
+      expect(
+        buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, limitPercent: 96, limitWarning: true })
+          .severity,
+      ).toBe('warning')
+    })
+  })
+
+  describe('tooltip', () => {
+    it('lists the limit windows it was given', () => {
+      const snapshot = buildSnapshot([claude([entry(NOW, 10)])], {
+        now: NOW,
+        limitPercent: 91,
+        limitRows: [
+          { label: '5-hour session', value: '91%', percent: 91, severity: 'warn' as const },
+          { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' as const },
+        ],
+      })
+      expect(snapshot.tooltipMarkdown).toContain('5-hour session — 91%')
+      expect(snapshot.tooltipMarkdown).toContain('Weekly — 37%')
+    })
+
+    it('carries the rows on the snapshot, so a re-render keeps them', () => {
+      // The worker rebuilds the panel from the last scan without scanning again; rows held in a
+      // worker variable instead of the snapshot would vanish on every such repaint.
+      const snapshot = buildSnapshot([claude([entry(NOW, 10)])], {
+        now: NOW,
+        limitRows: [{ label: 'Weekly', value: '37%', percent: 37, severity: 'normal' }],
+      })
+      expect(snapshot.limits).toEqual([
+        { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' },
+      ])
+    })
+
+    it('reports no windows when none were given', () => {
+      expect(buildSnapshot([claude([entry(NOW, 10)])], { now: NOW }).limits).toEqual([])
+    })
+
+    it('omits the section entirely when no window is known', () => {
+      const snapshot = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW })
+      expect(snapshot.tooltipMarkdown).not.toContain('Limits')
+    })
+
+    // The tooltip is the item's menu: a status bar item has ~20 characters, so everything else
+    // lives behind these links. They only render if the host allowlists the commands.
+    it('offers the three command links', () => {
+      const tooltip = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW }).tooltipMarkdown
+      expect(tooltip).toContain('(command:tokendex.refresh)')
+      expect(tooltip).toContain('(command:tokendex.open)')
+      expect(tooltip).toContain('(command:tokendex.showOutput)')
+    })
   })
 
   it('shows the species name once there is one', () => {
@@ -144,5 +239,21 @@ describe('buildSnapshot', () => {
     expect(snapshot.totals.todayTokens).toBe(0)
     expect(snapshot.providers[0]?.today).toBeUndefined()
     expect(snapshot.statusText).toBeTruthy()
+  })
+})
+
+describe('aggregateProviders', () => {
+  // The worker aggregates once and hands the reports back via `options.providers`; if that
+  // path ever diverged from the internal one, the ledger would be fed different numbers than
+  // the snapshot displays — the exact "second source of truth" the module header bans.
+  it('feeds buildSnapshot identically to letting it aggregate itself', () => {
+    const sources = [claude([entry(NOW - 1000, 500), entry(NOW - 86_400_000 * 3, 900)])]
+    const direct = buildSnapshot(sources, { now: NOW, locale: 'en-US' })
+    const precomputed = buildSnapshot(sources, {
+      now: NOW,
+      locale: 'en-US',
+      providers: aggregateProviders(sources, NOW),
+    })
+    expect(precomputed).toEqual(direct)
   })
 })

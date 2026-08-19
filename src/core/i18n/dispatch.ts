@@ -234,3 +234,82 @@ export function tooltipToday(lang: AppLanguage): string {
 export function tooltipMonth(lang: AppLanguage): string {
   return t(lang, '이번 달', 'Month', '今月', 'Mes')
 }
+
+/**
+ * Status bar label for an egg. The panel's `eggIncubating` carries a 🥚 emoji, which would sit
+ * next to the egg codicon and read as two eggs, so the bar gets its own plain word.
+ */
+export const statusEgg = (lang: AppLanguage): string => t(lang, '알', 'Egg', 'タマゴ', 'Huevo')
+
+/** Tooltip command links. New to the extension: the macOS original has no tooltip. */
+export const statusOpenPanel = (lang: AppLanguage): string =>
+  t(lang, '패널 열기', 'Open panel', 'パネルを開く', 'Abrir el panel')
+
+// MARK: - Celebrations
+
+/**
+ * Structural mirror of `CompanionEvent` (plus the worker-emitted candy grant), so this module
+ * needs no import from the companion store. The store's variants carry extra fields
+ * (speciesID) and stay assignable.
+ */
+export type CelebrationEvent =
+  | { kind: 'hatched'; name: string; isShiny: boolean }
+  | { kind: 'evolved'; name: string }
+  | { kind: 'graduated'; name: string }
+  | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
+  | { kind: 'candyGranted'; count: number; windowName: string }
+
+/** Toast copy for the game's peak moments — the events `drainEvents` accumulates. */
+export function celebrationText(lang: AppLanguage, event: CelebrationEvent): string {
+  switch (event.kind) {
+    case 'hatched': {
+      const text = t(
+        lang,
+        `알에서 ${event.name}이(가) 태어났어요!`,
+        `${event.name} hatched from the egg!`,
+        `タマゴから${event.name}がうまれた！`,
+        `¡${event.name} ha salido del huevo!`,
+      )
+      return event.isShiny ? `${text} ✨` : text
+    }
+    case 'evolved':
+      return t(
+        lang,
+        `${event.name}(으)로 진화했어요!`,
+        `Evolved into ${event.name}!`,
+        `${event.name}にしんかした！`,
+        `¡Ha evolucionado a ${event.name}!`,
+      )
+    case 'graduated':
+      return t(
+        lang,
+        `${event.name}이(가) 도감에 등록되었어요!`,
+        `${event.name} graduated into the Pokédex!`,
+        `${event.name}がずかんにとうろくされた！`,
+        `¡${event.name} se ha graduado a la Pokédex!`,
+      )
+    case 'dittoRevealed': {
+      const text = t(
+        lang,
+        `${event.disguisedAs}은(는) 사실 메타몽이었어요!`,
+        `It was Ditto all along, disguised as ${event.disguisedAs}!`,
+        `${event.disguisedAs}はメタモンだった！`,
+        `¡Era Ditto disfrazado de ${event.disguisedAs}!`,
+      )
+      return event.isShiny ? `${text} ✨` : text
+    }
+    case 'candyGranted':
+      return t(
+        lang,
+        `${itemName(lang, 'rareCandy')} ×${event.count} 획득 — ${event.windowName}`,
+        `${itemName(lang, 'rareCandy')} ×${event.count} earned — ${event.windowName}`,
+        `${itemName(lang, 'rareCandy')} ×${event.count} かくとく — ${event.windowName}`,
+        `${itemName(lang, 'rareCandy')} ×${event.count} — ${event.windowName}`,
+      )
+  }
+}
+
+/** The celebration toast's single button. */
+export function openPanelLabel(lang: AppLanguage): string {
+  return t(lang, '패널 열기', 'Open panel', 'パネルをひらく', 'Abrir panel')
+}

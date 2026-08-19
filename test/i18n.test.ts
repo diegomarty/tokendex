@@ -143,3 +143,30 @@ describe('switch-dispatched entries', () => {
     }
   })
 })
+
+describe('celebration toasts', () => {
+  it.each(APP_LANGUAGES)('says every peak moment in %s and carries the name into it', (lang) => {
+    expect(d.celebrationText(lang, { kind: 'hatched', name: 'Pidove', isShiny: false })).toContain(
+      'Pidove',
+    )
+    expect(d.celebrationText(lang, { kind: 'evolved', name: 'Tranquill' })).toContain('Tranquill')
+    expect(d.celebrationText(lang, { kind: 'graduated', name: 'Unfezant' })).toContain('Unfezant')
+    expect(
+      d.celebrationText(lang, { kind: 'dittoRevealed', disguisedAs: 'Pidove', isShiny: false }),
+    ).toContain('Pidove')
+    const candy = d.celebrationText(lang, { kind: 'candyGranted', count: 2, windowName: '5h' })
+    expect(candy).toContain('2')
+    expect(candy).toContain('5h')
+    expect(d.openPanelLabel(lang)).not.toBe('')
+  })
+
+  it('marks a shiny hatch and keeps the event kinds distinguishable', () => {
+    expect(d.celebrationText('en', { kind: 'hatched', name: 'Pidove', isShiny: true })).toContain('✨')
+    const kinds = [
+      d.celebrationText('en', { kind: 'hatched', name: 'X', isShiny: false }),
+      d.celebrationText('en', { kind: 'evolved', name: 'X' }),
+      d.celebrationText('en', { kind: 'graduated', name: 'X' }),
+    ]
+    expect(new Set(kinds).size).toBe(kinds.length)
+  })
+})

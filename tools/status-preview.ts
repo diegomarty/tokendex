@@ -1,12 +1,13 @@
 /**
- * Prints the status bar text and the tooltip for a set of synthetic snapshots.
+ * Prints the status bar line and the tooltip for the combinations that decide their shape.
  *
- * The status bar is the part of this extension most people see most of the time, and it is
- * produced by a pure function (`buildSnapshot`), so iterating on it needs no editor at all:
- * `npm run status` renders every case in a terminal in milliseconds.
+ * Both come out of `buildSnapshot`, a pure function, so iterating on the wording needs no editor
+ * at all: `npm run status` renders everything in a terminal in milliseconds.
  *
- * The character count is printed because status bar real estate is the actual constraint — a
- * string that reads well on its own can push everything else off a laptop's status bar.
+ * The width column is the point of the first table. A status bar item whose width changes between
+ * refreshes shoves its neighbours around, which is the most visible way one of these looks
+ * amateurish — so the shape is checked against an empty state, a nine-figure total and a Japanese
+ * species name, not just the happy case.
  */
 
 import { type CompanionView, type ProviderEntries, buildSnapshot } from '../src/core/snapshot.js'
@@ -36,6 +37,7 @@ function entries(model: string, count: number, tokensEach: number, minutesAgo = 
 }
 
 function sources(scale: number): ProviderEntries[] {
+  if (scale === 0) return []
   return [
     {
       providerID: 'claude_code',
@@ -47,9 +49,9 @@ function sources(scale: number): ProviderEntries[] {
 }
 
 const COMPANIONS: { label: string; companion?: CompanionView }[] = [
-  { label: 'no companion (still loading)' },
+  { label: 'no companion' },
   {
-    label: 'egg at 6 %',
+    label: 'egg',
     companion: {
       state: 'egg',
       isShiny: false,
@@ -60,7 +62,7 @@ const COMPANIONS: { label: string; companion?: CompanionView }[] = [
     },
   },
   {
-    label: 'working · Bulbasaur',
+    label: 'working',
     companion: {
       state: 'working',
       name: 'Bulbasaur',
@@ -68,14 +70,14 @@ const COMPANIONS: { label: string; companion?: CompanionView }[] = [
       isShiny: false,
       rarity: 'common',
       progress: 0.34,
-      toNextText: '82.5M to next evolution',
+      toNextText: '82.5M to evolve',
       stageText: 'Stage 1 / 3',
       dexCount: 4,
       spendableTokens: 1_204_000_000,
     },
   },
   {
-    label: 'shiny in its final stage',
+    label: 'focus, shiny',
     companion: {
       state: 'focus',
       name: 'Charizard',
@@ -83,14 +85,29 @@ const COMPANIONS: { label: string; companion?: CompanionView }[] = [
       isShiny: true,
       rarity: 'rare',
       progress: 0.88,
-      toNextText: '45M to graduation',
+      toNextText: '45M to graduate',
       stageText: 'Stage 3 / 3',
       dexCount: 24,
       spendableTokens: 6_400_000_000,
     },
   },
   {
-    label: 'long Japanese name',
+    label: 'asleep',
+    companion: {
+      state: 'sleep',
+      name: 'Snorlax',
+      speciesID: 143,
+      isShiny: false,
+      rarity: 'uncommon',
+      progress: 0.12,
+      toNextText: '660M to graduate',
+      stageText: 'Stage 1 / 1',
+      dexCount: 9,
+      spendableTokens: 200_000_000,
+    },
+  },
+  {
+    label: 'japanese name',
     companion: {
       state: 'levelUp',
       name: 'ドラゴナイト',
@@ -106,31 +123,57 @@ const COMPANIONS: { label: string; companion?: CompanionView }[] = [
   },
 ]
 
-const CASES: { label: string; scale: number }[] = [
-  { label: 'quiet day', scale: 40_000 },
-  { label: 'normal day', scale: 6_300_000 },
-  { label: 'monster day', scale: 30_000_000 },
+const LIMITS: { label: string; limitPercent?: number; limitWarning?: boolean }[] = [
+  { label: 'no limits' },
+  { label: 'limit 42%', limitPercent: 42 },
+  { label: 'limit 91%', limitPercent: 91.4, limitWarning: true },
 ]
 
-for (const usage of CASES) {
-  for (const { label, companion } of COMPANIONS) {
-    const snapshot = buildSnapshot(sources(usage.scale), {
-      now: NOW,
-      locale: LOCALE,
-      ...(companion !== undefined ? { companion } : {}),
-    })
-    console.log(`\n${BOLD}${usage.label} · ${label}${OFF}`)
-    console.log(`  bar     ${snapshot.statusText}`)
-    console.log(
-      `  ${DIM}width   ${snapshot.statusText.length} characters (codicons counted as text)${OFF}`,
-    )
-    console.log(`  ${DIM}tooltip${OFF}`)
-    for (const line of snapshot.tooltipMarkdown.split('\n')) console.log(`    ${line}`)
+const USAGE: { label: string; scale: number }[] = [
+  { label: 'no data', scale: 0 },
+  { label: 'ordinary day', scale: 6_300_000 },
+  { label: 'heavy day', scale: 30_000_000 },
+]
+
+function snapshotFor(usageScale: number, limit: (typeof LIMITS)[number], companion?: CompanionView) {
+  return buildSnapshot(sources(usageScale), {
+    now: NOW,
+    locale: LOCALE,
+    lang: 'en',
+    ...(companion !== undefined ? { companion } : {}),
+    ...(limit.limitPercent !== undefined ? { limitPercent: limit.limitPercent } : {}),
+    ...(limit.limitWarning !== undefined ? { limitWarning: limit.limitWarning } : {}),
+    limitRows:
+      limit.limitPercent === undefined
+        ? []
+        : [
+            { label: '5-hour session', value: `${Math.round(limit.limitPercent)}%` },
+            { label: 'Weekly', value: '37%' },
+          ],
+  })
+}
+
+console.log(`\n${BOLD}STATUS BAR${OFF}  ${DIM}(width in characters, codicon markup included)${OFF}`)
+for (const usage of USAGE) {
+  console.log(`\n  ${BOLD}${usage.label}${OFF}`)
+  for (const limit of LIMITS) {
+    for (const { label, companion } of COMPANIONS) {
+      const snapshot = snapshotFor(usage.scale, limit, companion)
+      const width = String(snapshot.statusText.length).padStart(2)
+      const flag = snapshot.severity === 'warning' ? ' ⚠ warning background' : ''
+      console.log(
+        `    ${DIM}${limit.label.padEnd(11)}${label.padEnd(15)}${OFF}${snapshot.statusText.padEnd(32)} ${DIM}${width}${OFF}${flag}`,
+      )
+    }
   }
 }
 
-// The error state is not part of the snapshot — `extension.ts` composes it — so it is printed
-// verbatim to keep both strings visible side by side while iterating.
-console.log(`\n${BOLD}error state (composed in extension.ts)${OFF}`)
-console.log('  bar     $(warning) $(pulse) 253.4M · $(zap) Bulbasaur')
+// One full tooltip, for the case that carries every section at once.
+const representative = snapshotFor(6_300_000, LIMITS[2]!, COMPANIONS[3]!.companion)
+console.log(`\n${BOLD}TOOLTIP${OFF}  ${DIM}(ordinary day · limit 91% · focus)${OFF}`)
+for (const row of representative.tooltipMarkdown.split('\n')) console.log(`    ${row}`)
+
+// Composed by `extension.ts`, not by the snapshot, so it is shown here to keep both in view.
+console.log(`\n${BOLD}ERROR STATE${OFF} ${DIM}(composed in extension.ts)${OFF}`)
+console.log('    $(warning) $(zap) 42% · Charizard')
 console.log('')

@@ -16,6 +16,7 @@ import {
   useMint,
 } from '../src/core/companion/shop.js'
 import {
+  burnTierFor,
   computeDisplayState,
   eggProgress,
   eggReadyToHatch,
@@ -306,5 +307,28 @@ describe('egg and hatch rolls', () => {
     expect(rollDittoDisguise('common', 1, true, () => 0)).toBe(false)
     expect(rollDittoDisguise('rare', 3, true, () => 0)).toBe(false)
     expect(rollDittoDisguise('common', 2, false, () => 0)).toBe(false)
+  })
+})
+
+describe('burnTierFor', () => {
+  // Ported thresholds, pinned at their boundaries: these decide which of the seven status bar
+  // icons the user sees, and an off-by-one here shows up as a companion that never wakes up.
+  it.each([
+    [0, 'idle'],
+    [1_000, 'idle'],
+    [1_001, 'normal'],
+    [99_999, 'normal'],
+    [100_000, 'fast'],
+    [399_999, 'fast'],
+    [400_000, 'blazing'],
+    [5_000_000, 'blazing'],
+  ])('tiers %i tokens/min as %s', (burn, tier) => {
+    expect(burnTierFor(burn as number)).toBe(tier)
+  })
+
+  // [trigger branch] A finished session keeps reporting a trickle for the rest of its 5-hour
+  // window. Without the floor that reads as work, and the companion never sleeps.
+  it('treats a trailing trickle as idle', () => {
+    expect(burnTierFor(600)).toBe('idle')
   })
 })
