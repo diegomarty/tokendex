@@ -1,8 +1,5 @@
 /**
- * NOT YET VERIFIED — ported but deliberately untested and not wired into the provider list.
- * Scope was cut to Claude + Codex; this file waits for its own test port before being used.
- *
- * Gemini CLI session parsing, ported from the Gemini section of `Core/LocalUsageReader.swift`.
+ * Gemini CLI session parsing.
  *
  * Sources: `~/.gemini/tmp/<hash>/chats/session-*.jsonl` and the legacy `.json` form.
  *  - New `.jsonl`: one record per line — inline tokens on `type=="gemini"` messages, or
