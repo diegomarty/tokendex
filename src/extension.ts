@@ -71,6 +71,19 @@ export function activate(context: vscode.ExtensionContext): void {
   output = vscode.window.createOutputChannel('Tokendex', { log: true })
   context.subscriptions.push(output)
 
+  // Logged because it is the one thing that cannot be checked by reading the code: whether an
+  // installed `.vsix` really reports Production, which is what keeps the Dev tab and the scenario
+  // menu out of a released build. Verify it once per release in a clean profile.
+  const modeName =
+    extensionMode === vscode.ExtensionMode.Production
+      ? 'production'
+      : extensionMode === vscode.ExtensionMode.Development
+        ? 'development'
+        : 'test'
+  output.info(
+    `Tokendex ${version()} · extension mode: ${modeName} · dev surface: ${devModeOn() ? 'on' : 'off'}`,
+  )
+
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
   statusBar.name = 'Tokendex'
   statusBar.command = 'tokendex.open'

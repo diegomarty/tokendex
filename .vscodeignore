@@ -14,3 +14,8 @@ PORTED-THROUGH
 **/*.map
 dist/bench/**
 dist/tools/**
+.dev-state/**
+image.png
+.gitignore
+.prettierignore
+media/make_icon.py

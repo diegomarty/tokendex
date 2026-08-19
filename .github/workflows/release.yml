@@ -1,0 +1,70 @@
+# Publishes a tagged release to both marketplaces.
+#
+# Two of them on purpose: the VS Code Marketplace serves VS Code itself, and Open VSX serves
+# everything else people actually run this in — VSCodium, Cursor, Windsurf, Gitpod. Publishing to
+# only the first leaves those users installing a `.vsix` by hand.
+#
+# Secrets required (Settings → Secrets and variables → Actions):
+#   VSCE_PAT  Azure DevOps token, scope "Marketplace: Manage", org "All accessible organizations".
+#   OVSX_PAT  open-vsx.org access token. The `diegomarty` namespace must exist first:
+#             `npx ovsx create-namespace diegomarty -p $OVSX_PAT` (one-off, after signing the
+#             Eclipse Foundation Publisher Agreement).
+#
+# Run it by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # The tag is the version of record. A tag that disagrees with package.json publishes a
+      # number nobody can reproduce from the repository, so it stops here instead.
+      - name: Check the tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $PKG" >&2
+            exit 1
+          fi
+
+      # The same gates as CI: a release must not be the first place they run.
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Package
+        run: npm run package
+
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --no-dependencies --packagePath *.vsix
+
+      # Never blocks the release: Open VSX rejecting a duplicate or a pending agreement must not
+      # undo a successful publish on the other side.
+      - name: Publish to Open VSX
+        continue-on-error: true
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx publish *.vsix -p "$OVSX_PAT"
+
+      - name: Attach the .vsix to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.vsix'
+          generate_release_notes: true

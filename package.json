@@ -2,13 +2,14 @@
   "name": "tokendex",
   "displayName": "Tokendex",
   "description": "Track your local AI-CLI token usage as a creature that grows in the status bar.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=20"
   },
   "categories": [
+    "Visualization",
     "Other"
   ],
   "extensionKind": [
@@ -223,8 +224,14 @@
   "keywords": [
     "claude",
     "codex",
+    "gemini",
+    "copilot",
+    "cursor",
+    "ai",
     "tokens",
     "usage",
+    "status bar",
+    "gamification",
     "pokemon",
     "tokendex"
   ],
