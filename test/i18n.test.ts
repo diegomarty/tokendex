@@ -15,9 +15,23 @@ const STRING_KEYS = Object.keys(
 describe('flat strings', () => {
   // Enumerate via a representative key set pulled from the module's own type surface.
   const sampleKeys = [
-    'home', 'collection', 'todayTokens', 'thisWeek', 'thisMonth', 'weekly',
-    'fiveHourSession', 'rarityCommon', 'rarityUncommon', 'rarityRare', 'rarityLegendary',
-    'shop', 'buy', 'notEnoughTokens', 'statusGrew', 'statusIdle', 'statusWorking',
+    'home',
+    'collection',
+    'todayTokens',
+    'thisWeek',
+    'thisMonth',
+    'weekly',
+    'fiveHourSession',
+    'rarityCommon',
+    'rarityUncommon',
+    'rarityRare',
+    'rarityLegendary',
+    'shop',
+    'buy',
+    'notEnoughTokens',
+    'statusGrew',
+    'statusIdle',
+    'statusWorking',
   ] as const
 
   it.each(APP_LANGUAGES)('resolves every sampled key in %s', (lang) => {
@@ -117,7 +131,14 @@ describe('switch-dispatched entries', () => {
   })
 
   it.each(APP_LANGUAGES)('labels every provider status in %s', (lang) => {
-    for (const indicator of ['operational', 'minor', 'major', 'critical', 'maintenance', 'unknown'] as const) {
+    for (const indicator of [
+      'operational',
+      'minor',
+      'major',
+      'critical',
+      'maintenance',
+      'unknown',
+    ] as const) {
       expect(d.providerStatusLabel(lang, indicator).trim()).not.toBe('')
     }
   })

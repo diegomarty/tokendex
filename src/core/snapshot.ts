@@ -3,7 +3,7 @@
  *
  * Design rule carried over from the plan: **the core emits text that is already formatted**.
  * The status bar and the webview must never re-derive a number or re-format one, because a
- * second formatting path is a second source of truth that drifts from upstream.
+ * second formatting path is a second source of truth that drifts.
  *
  * `schema` is versioned from day one: the worker and the UI are separate bundles and can be
  * updated independently.
@@ -11,16 +11,10 @@
 
 import { compact, cost, grouped } from './tokenFormatter.js'
 import type { DailyUsage, PeriodUsage, ProviderSnapshot } from './models.js'
-import type { CompanionStateKind } from './companion/model.js'
-import {
-  type Entry,
-  activeBlock,
-  daily,
-  entryTotal,
-  monthKey,
-  period,
-  todayKey,
-} from './usage/entry.js'
+import type { AppLanguage, CompanionStateKind } from './companion/model.js'
+import { s } from './i18n/strings.js'
+import { tooltipMonth, tooltipToday } from './i18n/dispatch.js'
+import { type Entry, activeBlock, daily, entryTotal, monthKey, period, todayKey } from './usage/entry.js'
 
 export const SNAPSHOT_SCHEMA = 1
 
@@ -95,10 +89,18 @@ function reportFor(source: ProviderEntries, now: number): ProviderReport {
 
 export function buildSnapshot(
   sources: ProviderEntries[],
-  options: { now?: number; locale?: string; errors?: string[]; companion?: CompanionView } = {},
+  options: {
+    now?: number
+    locale?: string
+    errors?: string[]
+    companion?: CompanionView
+    /** The player's chosen language. Separate from `locale`, which only formats numbers. */
+    lang?: AppLanguage
+  } = {},
 ): UsageSnapshot {
   const now = options.now ?? Date.now()
   const locale = options.locale
+  const lang = options.lang ?? 'en'
   const providers = sources.map((s) => reportFor(s, now))
 
   const totals = {
@@ -114,7 +116,7 @@ export function buildSnapshot(
     providers,
     totals,
     statusText: statusTextFor(totals, options.companion),
-    tooltipMarkdown: tooltipFor(providers, totals, now, locale, options.companion),
+    tooltipMarkdown: tooltipFor(providers, totals, now, locale, lang, options.companion),
     errors: options.errors ?? [],
   }
   if (options.companion !== undefined) snapshot.companion = options.companion
@@ -130,8 +132,7 @@ function statusTextFor(totals: UsageSnapshot['totals'], companion: CompanionView
   // An egg has no species name yet, and a bare placeholder tells the user nothing. Showing
   // incubation progress answers the real question: "why is nothing happening?"
   const label =
-    companion.name ??
-    (companion.state === 'egg' ? `${Math.round(companion.progress * 100)}%` : '···')
+    companion.name ?? (companion.state === 'egg' ? `${Math.round(companion.progress * 100)}%` : '···')
   return `${usage} · ${mood} ${label}`
 }
 
@@ -151,11 +152,18 @@ function tooltipFor(
   totals: UsageSnapshot['totals'],
   now: number,
   locale: string | undefined,
+  lang: AppLanguage,
   companion: CompanionView | undefined,
 ): string {
   const lines: string[] = ['**Tokendex**', '']
-  lines.push(`Hoy · **${grouped(totals.todayTokens, locale)}** tokens · ${cost(totals.todayCost)}`)
-  lines.push(`Mes  · **${grouped(totals.monthTokens, locale)}** tokens · ${cost(totals.monthCost)}`)
+  // Localised rather than hard-coded: the companion's own lines arrive translated, so a fixed
+  // language here would put two languages inside one tooltip.
+  lines.push(
+    `${tooltipToday(lang)} · **${grouped(totals.todayTokens, locale)}** tokens · ${cost(totals.todayCost)}`,
+  )
+  lines.push(
+    `${tooltipMonth(lang)} · **${grouped(totals.monthTokens, locale)}** tokens · ${cost(totals.monthCost)}`,
+  )
   lines.push('')
 
   for (const p of providers) {
@@ -164,7 +172,9 @@ function tooltipFor(
       p.tokensPerMinute !== undefined && p.tokensPerMinute > 0
         ? ` · ${compact(Math.round(p.tokensPerMinute))}/min`
         : ''
-    lines.push(`- **${p.displayName}** — hoy ${compact(todayTokens)}${burn}`)
+    lines.push(
+      `- **${p.displayName}** — ${tooltipToday(lang).toLowerCase()} ${compact(todayTokens)}${burn}`,
+    )
   }
 
   if (companion !== undefined) {
@@ -175,11 +185,13 @@ function tooltipFor(
         ? `🥚 ${companion.toNextText}`
         : `**${label}**${companion.isShiny ? ' ✨' : ''} — ${companion.stageText ?? ''} · ${companion.toNextText}`,
     )
-    lines.push(`Pokédex ${companion.dexCount} · ${compact(companion.spendableTokens)} por gastar`)
+    lines.push(
+      `${s(lang, 'dexTitle')} ${companion.dexCount} · ${compact(companion.spendableTokens)} ${s(lang, 'spendableTokens').toLowerCase()}`,
+    )
   }
 
   lines.push('')
-  lines.push(`_actualizado ${new Date(now).toLocaleTimeString(locale)}_`)
+  lines.push(`_${s(lang, 'updated').toLowerCase()} ${new Date(now).toLocaleTimeString(locale)}_`)
   return lines.join('\n')
 }
 

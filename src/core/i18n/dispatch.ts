@@ -1,8 +1,8 @@
 /**
  * Localisation entries whose value is chosen by a switch rather than looked up.
  *
- * Hand-ported from `Core/Localization.swift` because the mechanical extractor that produced
- * `strings.ts` only handles flat four-way tables.
+ * Written by hand because the mechanical extractor that produced `strings.ts` only handles
+ * flat four-way tables.
  */
 
 import type { AppLanguage, ItemKind, Rarity } from '../companion/model.js'
@@ -15,16 +15,22 @@ const t = (lang: AppLanguage, ko: string, en: string, ja: string, es: string): s
   [ko, en, ja, es][INDEX[lang]]!
 
 export type ProviderStatusIndicator =
-  | 'operational' | 'minor' | 'major' | 'critical' | 'maintenance' | 'unknown'
+  'operational' | 'minor' | 'major' | 'critical' | 'maintenance' | 'unknown'
 
 export function providerStatusLabel(lang: AppLanguage, indicator: ProviderStatusIndicator): string {
   switch (indicator) {
-    case 'operational': return t(lang, '정상', 'Operational', '正常', 'Operativo')
-    case 'minor': return t(lang, '일부 장애', 'Minor issues', '一部障害', 'Problemas menores')
-    case 'major': return t(lang, '장애', 'Major outage', '障害', 'Interrupción grave')
-    case 'critical': return t(lang, '심각한 장애', 'Critical outage', '重大障害', 'Interrupción crítica')
-    case 'maintenance': return t(lang, '점검 중', 'Maintenance', 'メンテナンス', 'Mantenimiento')
-    case 'unknown': return t(lang, '상태 불명', 'Status unknown', '状態不明', 'Estado desconocido')
+    case 'operational':
+      return t(lang, '정상', 'Operational', '正常', 'Operativo')
+    case 'minor':
+      return t(lang, '일부 장애', 'Minor issues', '一部障害', 'Problemas menores')
+    case 'major':
+      return t(lang, '장애', 'Major outage', '障害', 'Interrupción grave')
+    case 'critical':
+      return t(lang, '심각한 장애', 'Critical outage', '重大障害', 'Interrupción crítica')
+    case 'maintenance':
+      return t(lang, '점검 중', 'Maintenance', 'メンテナンス', 'Mantenimiento')
+    case 'unknown':
+      return t(lang, '상태 불명', 'Status unknown', '状態不明', 'Estado desconocido')
   }
 }
 
@@ -38,7 +44,13 @@ export const stage = (lang: AppLanguage, i: number, k: number): string =>
   t(lang, `진화 단계 ${i} / ${k}`, `Stage ${i} / ${k}`, `進化段階 ${i} / ${k}`, `Etapa ${i} / ${k}`)
 
 export const statusEvolved = (lang: AppLanguage, name: string): string =>
-  t(lang, `${name}(으)로 진화했어요!`, `Evolved into ${name}!`, `${name} に進化しました！`, `¡Evolucionó a ${name}!`)
+  t(
+    lang,
+    `${name}(으)로 진화했어요!`,
+    `Evolved into ${name}!`,
+    `${name} に進化しました！`,
+    `¡Evolucionó a ${name}!`,
+  )
 
 export const buyConfirm = (lang: AppLanguage, name: string): string =>
   t(lang, `${name} 구매할까요?`, `Buy ${name}?`, `${name} を購入しますか？`, `¿Comprar ${name}?`)
@@ -89,18 +101,25 @@ export function intervalLabel(lang: AppLanguage, seconds: number): string {
 
 export function rarityLabel(lang: AppLanguage, rarity: Rarity): string {
   switch (rarity) {
-    case 'common': return s(lang, 'rarityCommon')
-    case 'uncommon': return s(lang, 'rarityUncommon')
-    case 'rare': return s(lang, 'rarityRare')
-    case 'legendary': return s(lang, 'rarityLegendary')
+    case 'common':
+      return s(lang, 'rarityCommon')
+    case 'uncommon':
+      return s(lang, 'rarityUncommon')
+    case 'rare':
+      return s(lang, 'rarityRare')
+    case 'legendary':
+      return s(lang, 'rarityLegendary')
   }
 }
 
 export function itemName(lang: AppLanguage, kind: ItemKind): string {
   switch (kind) {
-    case 'rareCandy': return t(lang, '이상한 사탕', 'Rare Candy', 'ふしぎなアメ', 'Caramelo Raro')
-    case 'mint': return t(lang, '민트', 'Mint', 'ミント', 'Menta')
-    case 'shinyCharm': return t(lang, '이로치 부적', 'Shiny Charm', 'ひかるおまもり', 'Amuleto Iris')
+    case 'rareCandy':
+      return t(lang, '이상한 사탕', 'Rare Candy', 'ふしぎなアメ', 'Caramelo Raro')
+    case 'mint':
+      return t(lang, '민트', 'Mint', 'ミント', 'Menta')
+    case 'shinyCharm':
+      return t(lang, '이로치 부적', 'Shiny Charm', 'ひかるおまもり', 'Amuleto Iris')
   }
 }
 
@@ -194,9 +213,24 @@ export const eggConfirm = (lang: AppLanguage, monName: string, egg: string): str
 /**
  * Column header for the per-provider table.
  *
- * Not extracted from Swift: the macOS UI has no such column (it uses a tab per provider), so
- * this string is new to the extension. Hand-written strings live here rather than in
- * `strings.ts`, which is generated and would overwrite them.
+ * This string is new to the extension, so it is hand-written rather than generated.
+ * Hand-written strings live here rather than in `strings.ts`, which is generated and would
+ * overwrite them.
  */
 export const providerColumn = (lang: AppLanguage): string =>
   t(lang, '도구', 'Tool', 'ツール', 'Herramienta')
+
+/**
+ * The two row labels in the status-bar tooltip.
+ *
+ * They live here rather than in `strings.ts` because that file is generated. The tooltip's
+ * other lines already arrive localised, so hard-coding these would put two languages inside
+ * one tooltip — which is exactly what it used to do.
+ */
+export function tooltipToday(lang: AppLanguage): string {
+  return t(lang, '오늘', 'Today', '今日', 'Hoy')
+}
+
+export function tooltipMonth(lang: AppLanguage): string {
+  return t(lang, '이번 달', 'Month', '今月', 'Mes')
+}

@@ -60,10 +60,33 @@ describe('buildSnapshot', () => {
   })
 
   it('groups tooltip numbers by the requested locale, not the runner default', () => {
-    const snapshot = buildSnapshot([claude([entry(NOW, 253_412_890)])], { now: NOW, locale: 'es-ES' })
+    const snapshot = buildSnapshot([claude([entry(NOW, 253_412_890)])], {
+      now: NOW,
+      locale: 'es-ES',
+    })
     expect(snapshot.tooltipMarkdown).toContain('253.412.890')
     const enUS = buildSnapshot([claude([entry(NOW, 253_412_890)])], { now: NOW, locale: 'en-US' })
     expect(enUS.tooltipMarkdown).toContain('253,412,890')
+  })
+
+  // `locale` and `lang` are different axes and used to be confused: the tooltip formatted its
+  // numbers by locale while its own labels were hard-coded, so a Japanese player got a
+  // Japanese companion line under a label in another language, inside one tooltip.
+  it('localises its own labels by language, independently of the number locale', () => {
+    const of = (lang: 'en' | 'ja' | 'ko' | 'es' | undefined) =>
+      buildSnapshot([claude([entry(NOW, 1_000)])], {
+        now: NOW,
+        locale: 'en-US',
+        ...(lang !== undefined ? { lang } : {}),
+      }).tooltipMarkdown
+
+    expect(of('en')).toContain('Today')
+    expect(of('es')).toContain('Hoy')
+    expect(of('ja')).toContain('今日')
+    expect(of('ko')).toContain('오늘')
+    // English is the fallback, so a caller that forgets to pass a language still gets one
+    // consistent tooltip rather than a mixed one.
+    expect(of(undefined)).toContain('Today')
   })
 
   it('reports a burn rate only when there is recent activity', () => {
@@ -75,7 +98,10 @@ describe('buildSnapshot', () => {
   })
 
   it('surfaces per-provider errors without losing the snapshot', () => {
-    const snapshot = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, errors: ['Codex: EACCES'] })
+    const snapshot = buildSnapshot([claude([entry(NOW, 10)])], {
+      now: NOW,
+      errors: ['Codex: EACCES'],
+    })
     expect(snapshot.errors).toEqual(['Codex: EACCES'])
     expect(snapshot.totals.todayTokens).toBe(10) // the other provider still reports
   })
@@ -84,8 +110,12 @@ describe('buildSnapshot', () => {
     const withEgg = buildSnapshot([claude([entry(NOW, 10)])], {
       now: NOW,
       companion: {
-        state: 'egg', isShiny: false, progress: 0.42, toNextText: '3M to hatch',
-        dexCount: 0, spendableTokens: 0,
+        state: 'egg',
+        isShiny: false,
+        progress: 0.42,
+        toNextText: '3M to hatch',
+        dexCount: 0,
+        spendableTokens: 0,
       },
     })
     expect(withEgg.statusText).toContain('42%')
@@ -96,8 +126,13 @@ describe('buildSnapshot', () => {
     const withMon = buildSnapshot([claude([entry(NOW, 10)])], {
       now: NOW,
       companion: {
-        state: 'working', name: 'Charmander', isShiny: false, progress: 0.5,
-        toNextText: '1M to next', dexCount: 2, spendableTokens: 100,
+        state: 'working',
+        name: 'Charmander',
+        isShiny: false,
+        progress: 0.5,
+        toNextText: '1M to next',
+        dexCount: 2,
+        spendableTokens: 100,
       },
     })
     expect(withMon.statusText).toContain('Charmander')
