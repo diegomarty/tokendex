@@ -39,6 +39,11 @@ specific cases, and a missing guard on the Codex subagent exemption.
 Reproduce the exact branch that triggers a bug. For an `A || B` gate, test **B alone** (A
 false, B true) — a test that passes through a different path gives false confidence.
 
+**Event-loop turns are not time.** Settling a fire-and-forget chain with `setImmediate` loops
+flakes as soon as the chain contains real I/O (threadpool fs reads, subprocesses): 20 turns
+finish in microseconds while the read lands on the wall clock. Wait for the condition with a
+deadline; give negative assertions a real grace period.
+
 When you fix a defect, sweep the codebase for the same _class_ of mistake and leave the
 prevention behind as a test, a guard or a note — a mechanism, not a memory.
 
