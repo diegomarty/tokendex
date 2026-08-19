@@ -10,7 +10,16 @@ export function compact(value: number): string {
   if (v < 1_000) return `${value}` // the signed original value, unscaled
   if (v < 1_000_000) return sign + trim(v / 1_000, 1) + 'K'
   if (v < 1_000_000_000) return sign + trim(v / 1_000_000, 1) + 'M'
-  return sign + trim(v / 1_000_000_000, 2) + 'B'
+  /**
+   * DIVERGENCE from `TokenFormatter.compact` upstream, which stops at B.
+   *
+   * Lifetime totals cross a trillion in a few months at real usage (measured here: ~690M/day),
+   * and the upstream ceiling renders that as `4997.38B` — a number nobody can read at a glance,
+   * and one that looks like a formatting bug rather than a big total. Everything below 1T is
+   * byte-identical to upstream, so the ported expectations still hold.
+   */
+  if (v < 1_000_000_000_000) return sign + trim(v / 1_000_000_000, 2) + 'B'
+  return sign + trim(v / 1_000_000_000_000, 2) + 'T'
 }
 
 /**

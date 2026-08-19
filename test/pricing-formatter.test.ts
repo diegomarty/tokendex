@@ -98,6 +98,12 @@ describe('compact', () => {
     expect(compact(12_345)).toBe('12.3K')
     expect(compact(190_612_940)).toBe('190.6M')
     expect(compact(1_240_000_000)).toBe('1.24B')
+    // Deliberate divergence from upstream, which has no T tier: at ~690M/day a lifetime total
+    // crosses a trillion within months, and `4997.38B` reads as a broken number.
+    expect(compact(999_000_000_000)).toBe('999B')
+    expect(compact(1_000_000_000_000)).toBe('1T')
+    expect(compact(4_997_380_000_000)).toBe('5T')
+    expect(compact(-4_997_380_000_000)).toBe('-5T')
     expect(compact(1_000_000)).toBe('1M')
   })
 
@@ -125,5 +131,17 @@ describe('cost / costCompact / percent', () => {
     expect(costCompact(12_340)).toBe('$12.3K') // >= 10K -> K
     expect(percent(88)).toBe('88%')
     expect(percent(88.35)).toBe('88.3%')
+  })
+})
+
+describe('rateFor memoization', () => {
+  // The cache is keyed by the full model string; a bug that collapsed distinct strings into
+  // one bucket would price every model like the first one asked about.
+  it('returns the same rate object for a repeated string and distinct rates for distinct ones', () => {
+    const dated = 'claude-opus-4-8-20260101'
+    expect(rateFor(dated)).toBe(rateFor(dated))
+    expect(rateFor(dated)).not.toEqual(rateFor('claude-haiku-4-5-20260101'))
+    expect(rateFor('grok-4-fast')).toEqual(ZERO_RATE)
+    expect(rateFor('antigravity/claude-sonnet-4-6')).toEqual(ZERO_RATE)
   })
 })
