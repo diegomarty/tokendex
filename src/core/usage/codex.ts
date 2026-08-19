@@ -17,7 +17,7 @@ import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { parseISO8601 } from '../iso8601.js'
 import type { Json } from '../models.js'
-import { type Entry, intOrNil, intValue, localDayKey } from './entry.js'
+import { type Entry, appendAll, intOrNil, intValue, localDayKey } from './entry.js'
 import { codexSessionsDir } from './roots.js'
 
 /** Fork replay is written milliseconds apart; the first longer gap starts real child turns. */
@@ -481,7 +481,7 @@ export function resolveCodexRollouts(
   for (const path of [...includedPaths].sort()) {
     const rollout = byPath.get(path)
     if (rollout === undefined) continue
-    result.push(...resolve(rollout, new Set()).ownedEntries)
+    appendAll(result, resolve(rollout, new Set()).ownedEntries)
   }
   return dedupCodexCanonicalEntries(result)
 }

@@ -11,7 +11,7 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { parseISO8601 } from '../iso8601.js'
 import type { Json } from '../models.js'
-import { type Entry, dedupKeepMax, localDayKey } from './entry.js'
+import { type Entry, appendAll, dedupKeepMax, localDayKey } from './entry.js'
 import * as AppPaths from '../appPaths.js'
 import { copilotHome, hermesHome, opencodeDataDir } from '../usageEnvironment.js'
 import { queryRows, queryScalar, withDatabase } from './sqlite.js'
@@ -214,7 +214,7 @@ export async function openCodeEntries(modifiedSince: number, roots?: string[]): 
   const entries: Entry[] = []
   for (const root of sourceRoots) {
     const database = await preferredOpenCodeDatabase(root)
-    if (database !== undefined) entries.push(...(await openCodeDatabaseEntries(database, modifiedSince)))
+    if (database !== undefined) appendAll(entries, await openCodeDatabaseEntries(database, modifiedSince))
 
     // Older installs kept one JSON file per message.
     const legacyRoot = join(root, 'storage', 'message')
@@ -388,7 +388,7 @@ async function scanIncrementalRoots(
   for (const root of spec.roots) {
     const database = spec.databaseFor(root)
     const loaded = await loadIncrementalDatabase(database, spec, marks[database] ?? 0)
-    entries.push(...loaded.entries)
+    appendAll(entries, loaded.entries)
     highWaterByPath[database] = loaded.highWaterRowID
     if (loaded.didReset) didReset = true
   }
@@ -692,7 +692,7 @@ export async function kiroEntries(modifiedSince: number, roots?: string[]): Prom
         if (!isObject(object)) continue
         const id =
           stringValue(row['conversation_id']) ?? stringValue(object['conversation_id']) ?? database
-        entries.push(...kiroTurnEntries(id, object, modifiedSince))
+        appendAll(entries, kiroTurnEntries(id, object, modifiedSince))
       } catch {
         continue
       }
@@ -706,7 +706,7 @@ export async function kiroEntries(modifiedSince: number, roots?: string[]): Prom
         if (!isObject(object)) continue
         const id = stringValue(object['conversation_id'])
         if (id === undefined) continue
-        entries.push(...kiroTurnEntries(id, object, modifiedSince))
+        appendAll(entries, kiroTurnEntries(id, object, modifiedSince))
       } catch {
         continue
       }

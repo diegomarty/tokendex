@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import initSqlJs from 'sql.js'
 import { LocalUsageCache } from '../src/core/usage/cache.js'
-import { entryTotal } from '../src/core/usage/entry.js'
+import { appendAll, entryTotal } from '../src/core/usage/entry.js'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'ptb-cache-'))
@@ -335,5 +336,86 @@ describe('persistence', () => {
     touchWithNewContent(path, [claudeLine('A', 10), claudeLine('B', 20), claudeLine('C', 30)])
     await cache.claudeEntries(0)
     expect(statSync(file).mtimeMs).toBeGreaterThanOrEqual(firstWrite)
+  })
+})
+
+describe('save behaviour', () => {
+  /** A real SQLite file, because the idle-scan gate must be judged on the actual query path. */
+  async function cursorDB(root: string, bubbles: number): Promise<void> {
+    const SQL = await initSqlJs()
+    const db = new SQL.Database()
+    db.run('CREATE TABLE cursorDiskKV (key TEXT UNIQUE, value BLOB)')
+    for (let i = 0; i < bubbles; i++) {
+      const bubble = JSON.stringify({
+        tokenCount: { inputTokens: 300, outputTokens: 40 },
+        createdAt: new Date().toISOString(),
+        modelType: 'claude-4-sonnet',
+      })
+      db.run(`INSERT INTO cursorDiskKV VALUES ('bubbleId:${'b' + String(i)}','${bubble}')`)
+    }
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'state.vscdb'), Buffer.from(db.export()))
+    db.close()
+  }
+
+  // [trigger branch] Before the gate, `incrementalEntries` forced `dirty` on every call, so
+  // every idle scan re-gzipped and rewrote the whole snapshot even though nothing moved.
+  it('does not rewrite the cache when an idle incremental scan changed nothing', async () => {
+    const root = tempDir()
+    await cursorDB(root, 1)
+    const file = join(tempDir(), 'c.gz')
+    let clock = 1_000_000
+    const cache = new LocalUsageCache({ cursorRoots: [root], filePath: file, now: () => clock })
+
+    const fs = await import('node:fs')
+    const writes = vi.spyOn(fs.promises, 'writeFile')
+    try {
+      expect((await cache.cursorEntries(0)).length).toBe(1)
+      expect(writes).toHaveBeenCalledTimes(1) // first pass parsed something and persisted it
+
+      clock += 120_000 // well past the save throttle, so only the dirty gate can stop a write
+      expect((await cache.cursorEntries(0)).length).toBe(1)
+      expect(writes).toHaveBeenCalledTimes(1) // idle: same rows, same watermark, no write
+
+      // The gate must not overshoot: a genuinely new row still reaches disk.
+      await cursorDB(root, 2)
+      clock += 120_000
+      expect((await cache.cursorEntries(0)).length).toBe(2)
+      expect(writes).toHaveBeenCalledTimes(2)
+    } finally {
+      writes.mockRestore()
+    }
+  })
+
+  // The ten providers finish a scan close together and each calls saveIfNeeded; without
+  // single-flighting they gzip the same snapshot concurrently and race on one `.tmp` file.
+  it('single-flights concurrent saves into one write', async () => {
+    const root = tempDir()
+    write(root, 'a.jsonl', [claudeLine('A', 10)])
+    const file = join(tempDir(), 'c.gz')
+    const cache = new LocalUsageCache({ claudeRoots: [root], filePath: file })
+    await cache.claudeEntries(0) // loads and parses; also performs the first save
+
+    const fs = await import('node:fs')
+    const writes = vi.spyOn(fs.promises, 'writeFile')
+    try {
+      await Promise.all([cache.save(), cache.save(), cache.save()])
+      expect(writes).toHaveBeenCalledTimes(1)
+    } finally {
+      writes.mockRestore()
+    }
+  })
+})
+
+describe('appendAll', () => {
+  // `push(...arr)` passes one stack argument per element and overflows somewhere past ~150k,
+  // a size a single cold Cursor or Claude scan genuinely reaches. The helper must not.
+  it('appends 300k entries without overflowing the stack', () => {
+    const source = Array.from({ length: 300_000 }, (_, i) => i)
+    const target: number[] = [-1]
+    appendAll(target, source)
+    expect(target.length).toBe(300_001)
+    expect(target[0]).toBe(-1)
+    expect(target[300_000]).toBe(299_999)
   })
 })

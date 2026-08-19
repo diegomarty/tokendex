@@ -17,6 +17,7 @@ import { parseISO8601 } from '../iso8601.js'
 import type { Json } from '../models.js'
 import {
   type Entry,
+  appendAll,
   boolValue,
   dedupKeepMax,
   doubleOrNil,
@@ -268,7 +269,7 @@ export async function grokEntries(modifiedSince: number, root?: string): Promise
   const entries: Entry[] = []
   for (const file of await jsonlFiles(root ?? (await grokSessionsDir()), modifiedSince)) {
     if (!(await isGrokUsageFile(file.path))) continue
-    entries.push(...(await parseGrokFile(file.path)))
+    appendAll(entries, await parseGrokFile(file.path))
   }
   // A fork copying its parent's updates keeps the same turn ids, so the global pass counts
   // each turn once.

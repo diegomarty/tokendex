@@ -10,7 +10,7 @@
 import { promises as fs } from 'node:fs'
 import { parseISO8601 } from '../iso8601.js'
 import type { Json } from '../models.js'
-import { type Entry, dedupKeepMax, intValue, localDayKey } from './entry.js'
+import { type Entry, appendAll, dedupKeepMax, intValue, localDayKey } from './entry.js'
 import { claudeProjectRoots } from './roots.js'
 import { jsonlFiles } from './scan.js'
 
@@ -88,7 +88,7 @@ export async function claudeEntries(modifiedSince: number, roots?: string[]): Pr
   const all: Entry[] = []
   for (const root of targets) {
     for (const file of await jsonlFiles(root, modifiedSince)) {
-      all.push(...(await parseClaudeFile(file.path)))
+      appendAll(all, await parseClaudeFile(file.path))
     }
   }
   return dedupKeepMax(all)

@@ -229,6 +229,16 @@ export function nonEmpty(v: string | undefined | null): string | undefined {
 }
 
 /**
+ * `target.push(...source)` passes one stack argument per element and V8 throws a
+ * `RangeError` somewhere past ~150k of them — a size a single cold Cursor or Claude scan can
+ * genuinely reach. The failure would be silent: the per-provider catch turns it into a
+ * permanent zero. A plain loop has no such cliff.
+ */
+export function appendAll<T>(target: T[], source: readonly T[]): void {
+  for (const item of source) target.push(item)
+}
+
+/**
  * Session resume and sidechains write the same message into several files. Keeping the
  * highest-token copy per id is what de-duplicates them.
  */

@@ -29,7 +29,7 @@
 import { promises as fs } from 'node:fs'
 import { basename, join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
-import { type Entry, localDayKey } from './entry.js'
+import { type Entry, appendAll, localDayKey } from './entry.js'
 import { queryRows, withDatabase } from './sqlite.js'
 
 // MARK: - Protobuf wire format
@@ -289,7 +289,10 @@ export async function antigravityScan(modifiedSince: number, root?: string): Pro
     discarded += read.discardedCounters
     // The window is applied here rather than in the query: `created_at` lives inside the
     // protobuf, so it cannot be filtered in SQL.
-    entries.push(...read.entries.filter((e) => e.date >= modifiedSince))
+    appendAll(
+      entries,
+      read.entries.filter((e) => e.date >= modifiedSince),
+    )
   }
 
   if (unreadable > 0) notes.push(`antigravity: ${unreadable} conversation store(s) unreadable`)

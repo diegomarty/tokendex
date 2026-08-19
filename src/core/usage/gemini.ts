@@ -15,7 +15,7 @@ import { promises as fs } from 'node:fs'
 import { basename, extname } from 'node:path'
 import { parseISO8601 } from '../iso8601.js'
 import type { Json } from '../models.js'
-import { type Entry, intValue, localDayKey } from './entry.js'
+import { type Entry, appendAll, intValue, localDayKey } from './entry.js'
 import { geminiTmpDir } from './roots.js'
 import { jsonlFiles } from './scan.js'
 
@@ -100,7 +100,7 @@ export async function parseGeminiFile(path: string): Promise<Entry[]> {
 export async function geminiEntries(modifiedSince: number, root?: string): Promise<Entry[]> {
   const entries: Entry[] = []
   for (const file of await jsonlFiles(root ?? geminiTmpDir(), modifiedSince, { allowJSON: true })) {
-    entries.push(...(await parseGeminiFile(file.path)))
+    appendAll(entries, await parseGeminiFile(file.path))
   }
   return entries
 }

@@ -46,10 +46,27 @@ export const PRICING_TABLE: Readonly<Record<string, ModelRate>> = {
 }
 
 /**
+ * A scan asks for the same handful of model strings hundreds of thousands of times (once per
+ * entry per aggregation pass), and almost every real string is dated, so it misses the exact
+ * table and walks the whole fallback chain. The function is pure and `ModelRate` is never
+ * mutated, so caching the answer per string is free. Unbounded on purpose: the key space is
+ * the set of distinct model names in the user's own logs.
+ */
+const rateCache = new Map<string, ModelRate>()
+
+/**
  * Exact match first, then a family fallback (guards against version drift), then 0 —
  * matching how ccusage treats unpriced models.
  */
 export function rateFor(model: string): ModelRate {
+  const cached = rateCache.get(model)
+  if (cached !== undefined) return cached
+  const rate = uncachedRateFor(model)
+  rateCache.set(model, rate)
+  return rate
+}
+
+function uncachedRateFor(model: string): ModelRate {
   const exact = PRICING_TABLE[model]
   if (exact) return exact
 

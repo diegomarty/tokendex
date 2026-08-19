@@ -16,7 +16,8 @@
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import { gunzipSync, gzipSync } from 'node:zlib'
+import { gunzipSync, gzip } from 'node:zlib'
+import { promisify } from 'node:util'
 import * as AppPaths from '../appPaths.js'
 import {
   type CodexParsedRollout,
@@ -28,7 +29,7 @@ import {
   probeCodexRolloutSessionID,
   resolveCodexRollouts,
 } from './codex.js'
-import { type Entry, dedupKeepMax } from './entry.js'
+import { type Entry, appendAll, dedupKeepMax } from './entry.js'
 import { parseClaudeFile } from './claude.js'
 import { parseGeminiFile } from './gemini.js'
 import { isGrokUsageFile, parseGrokFile } from './grok.js'
@@ -131,6 +132,7 @@ export class LocalUsageCache {
   private loaded = false
   private dirty = false
   private lastSave: number | undefined
+  private saving: Promise<void> | undefined
 
   private readonly options: CacheOptions
 
@@ -159,7 +161,7 @@ export class LocalUsageCache {
     const roots = this.options.claudeRoots ?? (await claudeProjectRoots())
     const all: Entry[] = []
     for (const root of roots) {
-      all.push(...(await this.collect(root, modifiedSince, this.claude, parseClaudeFile)))
+      appendAll(all, await this.collect(root, modifiedSince, this.claude, parseClaudeFile))
     }
     await this.saveIfNeeded()
     return dedupKeepMax(all)
@@ -229,11 +231,21 @@ export class LocalUsageCache {
     const result = await scan(held.highWaterByPath)
     const merged = result.didReset ? result.entries : dedupKeepMax([...held.entries, ...result.entries])
 
+    // Dirty only when something moved. New entries and a reset are obvious; a watermark that
+    // advanced with zero in-window entries still must be persisted, or the next launch
+    // re-reads the same rows from disk. An idle store marks nothing, so an idle scan writes
+    // nothing — before this check, every scan re-gzipped the whole snapshot.
+    if (
+      result.didReset ||
+      result.entries.length > 0 ||
+      !sameMarks(held.highWaterByPath, result.highWaterByPath)
+    ) {
+      this.dirty = true
+    }
     this.incremental[key] = {
       entries: merged,
       highWaterByPath: result.highWaterByPath,
     }
-    this.dirty = true
     await this.saveIfNeeded()
     return merged
   }
@@ -306,13 +318,13 @@ export class LocalUsageCache {
       if (options.include !== undefined && !(await options.include(file.path))) continue
       const blob = cache[file.path]
       if (blob !== undefined && blob.mtime === file.mtime && blob.size === file.size) {
-        result.push(...blob.entries) // unchanged -> not re-parsed
+        appendAll(result, blob.entries) // unchanged -> not re-parsed
         continue
       }
       const entries = await parse(file.path)
       cache[file.path] = { mtime: file.mtime, size: file.size, entries }
       this.dirty = true
-      result.push(...entries)
+      appendAll(result, entries)
     }
     return result
   }
@@ -487,9 +499,25 @@ export class LocalUsageCache {
     await this.save()
   }
 
-  /** Unconditional write — call before shutdown so a cold parse is not repeated. */
+  /**
+   * Unconditional write — call before shutdown so a cold parse is not repeated.
+   *
+   * Single-flighted: the ten providers finish a scan close together and each one calls
+   * `saveIfNeeded`, so without this they would gzip the same snapshot concurrently and race
+   * their writes on one `.tmp` file.
+   */
   async save(): Promise<void> {
+    this.saving ??= this.writeSnapshot().finally(() => {
+      this.saving = undefined
+    })
+    return this.saving
+  }
+
+  private async writeSnapshot(): Promise<void> {
     this.prune()
+    // Cleared before the write and restored on failure: dirt arriving *during* the await
+    // must survive to the next `saveIfNeeded` instead of being wiped by this write landing.
+    this.dirty = false
     const snapshot: Snapshot = {
       claude: this.claude,
       codex: this.codex,
@@ -503,16 +531,27 @@ export class LocalUsageCache {
     try {
       const path = this.filePath
       await fs.mkdir(join(path, '..'), { recursive: true })
-      // Compresses hard (megabytes of JSON down to hundreds of kilobytes). Written to a
+      // Level 1 on purpose: megabytes of JSON still shrink to about a megabyte at a quarter
+      // of the CPU of the default level, and this runs after every scan that parsed something
+      // new. Async so the compression leaves the worker's event loop free. Written to a
       // temporary file and renamed so an interrupted write cannot leave a torn cache.
-      const payload = gzipSync(Buffer.from(JSON.stringify(snapshot), 'utf8'))
+      const payload = await gzipAsync(Buffer.from(JSON.stringify(snapshot), 'utf8'), { level: 1 })
       const temp = `${path}.tmp`
       await fs.writeFile(temp, payload)
       await fs.rename(temp, path)
-      this.dirty = false
       this.lastSave = this.now
     } catch {
+      this.dirty = true
       // A cache write failure must never break a refresh; the next pass retries.
     }
   }
+}
+
+const gzipAsync = promisify(gzip)
+
+/** Shallow equality of two watermark maps — the "did anything move" test for an idle store. */
+function sameMarks(a: Record<string, number>, b: Record<string, number>): boolean {
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every((k) => a[k] === b[k])
 }
