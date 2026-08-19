@@ -99,6 +99,42 @@ describe('update flow', () => {
     expect(s.snapshot().eggUsage).toBeGreaterThanOrEqual(PokemonBalance.eggHatchThreshold)
   })
 
+  // [trigger branch] Without the backoff, an offline user re-attempted the full sequential
+  // PokéAPI chain inside every update() — with 8 s timeouts per request, long enough to
+  // stall the scan the status bar is waiting on.
+  it('backs off PokéAPI retries after a failure and recovers after the window', async () => {
+    let clock = 1_700_000_000_000
+    let attempts = 0
+    const failing = stubProvider({
+      line: async () => {
+        attempts += 1
+        throw new Error('offline')
+      },
+      baseSpeciesIndex: async () => {
+        attempts += 1
+        throw new Error('offline')
+      },
+      baseSpecies: async () => {
+        attempts += 1
+        throw new Error('offline')
+      },
+    })
+    const s = store({ provider: failing, now: () => clock })
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold)) // first attempt fails
+    expect(s.snapshot().active).toBeUndefined() // the egg survives, as before
+    const afterFirst = attempts
+    expect(afterFirst).toBeGreaterThan(0)
+
+    clock += 30_000 // inside the 60 s backoff window
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    expect(attempts).toBe(afterFirst) // no retry: the network is not hammered every tick
+
+    clock += 31_000 // past the window
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    expect(attempts).toBeGreaterThan(afterFirst) // the retry does come back
+  })
+
   it('consumes the egg guarantee exactly at hatch', async () => {
     const s = store()
     await s.update(obs(0))

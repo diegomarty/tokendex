@@ -66,6 +66,15 @@ export class CompanionStore {
   private line: EvoLine | undefined
   private eventUntil = 0
   private hatching = false
+  /**
+   * PokéAPI failure backoff, in-memory only. Without it, an offline user re-attempted the
+   * full sequential fetch chain on every scan — worst case minutes of hanging requests
+   * *inside* `update()`, which the whole scan awaits before the totals reach the status bar.
+   * Backoff changes only *when* the retry happens; the egg/Pokémon is preserved exactly as
+   * before, and a success resets it so recovery is immediate.
+   */
+  private networkBackoffMs = 0
+  private nextNetworkAttempt = 0
   private pendingEvents: CompanionEvent[] = []
   private loaded = false
 
@@ -215,8 +224,9 @@ export class CompanionStore {
       if (this.state.active !== undefined) this.grow(0)
     }
 
-    if (eggReadyToHatch(this.state) && !this.hatching) await this.hatchIfNeeded()
-    if (this.state.active !== undefined && this.line === undefined && !this.hatching) {
+    const networkAllowed = this.now >= this.nextNetworkAttempt
+    if (eggReadyToHatch(this.state) && !this.hatching && networkAllowed) await this.hatchIfNeeded()
+    if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
       await this.loadCurrentLine()
     }
     await this.save()
@@ -310,16 +320,34 @@ export class CompanionStore {
       }
       // A threshold may already have been passed while the line was unavailable.
       this.grow(0)
+      this.noteNetworkSuccess()
     } catch {
-      // Offline: keep the Pokémon and retry on the next tick.
+      // Offline: keep the Pokémon and retry once the backoff allows.
+      this.noteNetworkFailure()
     }
+  }
+
+  private noteNetworkSuccess(): void {
+    this.networkBackoffMs = 0
+    this.nextNetworkAttempt = 0
+  }
+
+  private noteNetworkFailure(): void {
+    const doubled = this.networkBackoffMs === 0 ? 60_000 : this.networkBackoffMs * 2
+    this.networkBackoffMs = Math.min(doubled, 30 * 60_000)
+    this.nextNetworkAttempt = this.now + this.networkBackoffMs
   }
 
   private async hatchIfNeeded(): Promise<void> {
     this.hatching = true
     try {
       const baseID = this.state.pendingHatchID ?? (await this.chooseBase())
-      if (baseID === undefined) return // keep the egg, retry next tick
+      if (baseID === undefined) {
+        // Keep the egg. The pick only comes back empty when the network let it down, so it
+        // shares the fetch backoff rather than hammering the API again next tick.
+        this.noteNetworkFailure()
+        return
+      }
 
       const line = await this.options.provider.line(baseID)
       const forms = totalForms(line)
@@ -360,8 +388,10 @@ export class CompanionStore {
         isShiny,
       })
       this.eventUntil = this.now + EVENT_WINDOW_MS
+      this.noteNetworkSuccess()
     } catch {
-      // Network trouble: the egg survives and the next tick tries again.
+      // Network trouble: the egg survives and the retry waits out the backoff.
+      this.noteNetworkFailure()
     } finally {
       this.hatching = false
     }

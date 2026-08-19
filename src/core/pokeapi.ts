@@ -39,7 +39,9 @@ const REST_BASE = 'https://pokeapi.co/api/v2'
 const GRAPHQL_URL = 'https://graphql.pokeapi.co/v1beta2'
 const LANG_CODES = ['ko', 'en', 'ja-Hrkt', 'ja', 'es']
 const INDEX_TTL_MS = 30 * 86_400_000
-const REQUEST_TIMEOUT_MS = 15_000
+// 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
+// timeout is what bounds how long a sick network can hold `update()` — and with it the scan.
+const REQUEST_TIMEOUT_MS = 8_000
 /** Below this, a REST-built index is too thin to persist; retry next session instead. */
 const MIN_REST_INDEX_SIZE = 150
 
@@ -107,14 +109,17 @@ export class PokeAPIClient implements PokeProviding {
     const rarity = rarityFrom(base.capture_rate, base.is_legendary, base.is_mythical)
 
     // Names for every species in the line, restricted to the languages the app supports.
+    // Fetched in parallel: the ids are distinct (a chain never repeats a species), so this
+    // costs one round-trip instead of one per form.
     const names: Record<number, Record<string, string>> = {}
-    for (const id of allIDs(tree)) {
-      const dto = await this.species(id)
+    const ids = allIDs(tree)
+    const dtos = await Promise.all(ids.map((id) => this.species(id)))
+    for (const [index, dto] of dtos.entries()) {
       const byLang: Record<string, string> = {}
       for (const entry of dto.names ?? []) {
         if (LANG_CODES.includes(entry.language.name)) byLang[entry.language.name] = entry.name
       }
-      names[id] = byLang
+      names[ids[index]!] = byLang
     }
 
     const line = makeEvoLine(baseSpeciesID, tree, rarity, names)
