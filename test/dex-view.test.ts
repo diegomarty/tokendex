@@ -21,16 +21,31 @@ import {
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
-  baseID: 1, pathIDs: [1], plannedPathIDs: [1, 2, 3], stageIndex: 0, usedAtStage: 0,
-  rarity: 'common', totalForms: 3, isShiny: false, dittoRevealed: false, ...over,
+  baseID: 1,
+  pathIDs: [1],
+  plannedPathIDs: [1, 2, 3],
+  stageIndex: 0,
+  usedAtStage: 0,
+  rarity: 'common',
+  totalForms: 3,
+  isShiny: false,
+  dittoRevealed: false,
+  ...over,
 })
 
 const state = (over: Partial<CompanionState> = {}): CompanionState => ({
-  ...freshCompanionState('en'), ...over,
+  ...freshCompanionState('en'),
+  ...over,
 })
 
 const dexEntry = (over: Partial<DexEntry> = {}): DexEntry => ({
-  id: 'g1', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false, ...over,
+  id: 'g1',
+  baseID: 1,
+  finalID: 3,
+  chainOrder: [1, 2, 3],
+  rarity: 'rare',
+  isShiny: false,
+  ...over,
 })
 
 describe('currentIsShiny', () => {
@@ -66,7 +81,11 @@ describe('evolution line strip', () => {
     // 1 -> 2 -> {3, 5}: step 2 is certain, what follows is not.
     const line = makeEvoLine(1, node(1, [node(2, [node(3), node(5)])]), 'common', {})
     const items = lineItems(mon({ pathIDs: [1], stageIndex: 0 }), line)
-    expect(items.map((i) => (i.content.kind === 'species' ? i.content.id : 'mystery'))).toEqual([1, 2, 'mystery'])
+    expect(items.map((i) => (i.content.kind === 'species' ? i.content.id : 'mystery'))).toEqual([
+      1,
+      2,
+      'mystery',
+    ])
   })
 
   it('adds nothing beyond a final form', () => {
@@ -100,10 +119,7 @@ describe('catch log', () => {
   it('pins the active Pokémon first, then graduates newest-first', () => {
     const s = state({
       active: mon(),
-      dex: [
-        dexEntry({ id: 'old', caughtAt: 1000 }),
-        dexEntry({ id: 'new', caughtAt: 5000 }),
-      ],
+      dex: [dexEntry({ id: 'old', caughtAt: 1000 }), dexEntry({ id: 'new', caughtAt: 5000 })],
     })
     expect(dexEntriesSorted(s, line).map((e) => e.id)).toEqual(['active-1-1', 'new', 'old'])
   })
@@ -133,7 +149,9 @@ describe('catch log', () => {
 
 describe('species pokédex', () => {
   const line = makeEvoLine(1, node(1, [node(2, [node(3)])]), 'common', {
-    1: { en: 'Base' }, 2: { en: 'Mid' }, 3: { en: 'Final' },
+    1: { en: 'Base' },
+    2: { en: 'Mid' },
+    3: { en: 'Final' },
   })
 
   it('lists every species of a graduated chain, in number order', () => {

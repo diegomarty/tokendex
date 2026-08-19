@@ -23,8 +23,6 @@ import {
   startOfWeek,
 } from '../src/core/usage/entry.js'
 
-// Ported from Tests/PokeTokenBarTests/LocalUsageReaderTests.swift.
-
 const roots: string[] = []
 function tempDir(): string {
   const d = mkdtempSync(join(tmpdir(), 'ptb-local-'))
@@ -78,8 +76,24 @@ describe('claude parsing', () => {
     // Keeping the first occurrence would capture partial output and badly under-report cost.
     write(
       [
-        claudeLine({ id: 'A', req: 'R1', model: 'claude-opus-4-8', ts: TS, i: 100, o: 5, cr: 1000 }),
-        claudeLine({ id: 'A', req: 'R1', model: 'claude-opus-4-8', ts: TS, i: 100, o: 200, cr: 1000 }),
+        claudeLine({
+          id: 'A',
+          req: 'R1',
+          model: 'claude-opus-4-8',
+          ts: TS,
+          i: 100,
+          o: 5,
+          cr: 1000,
+        }),
+        claudeLine({
+          id: 'A',
+          req: 'R1',
+          model: 'claude-opus-4-8',
+          ts: TS,
+          i: 100,
+          o: 200,
+          cr: 1000,
+        }),
         claudeLine({ id: 'B', req: 'R2', model: 'claude-sonnet-4-6', ts: TS, i: 50, o: 10 }),
       ],
       dir,
@@ -246,7 +260,10 @@ describe('computeClaudeProjectRoots', () => {
   })
 
   it('keeps only the CLI defaults when nothing is configured', async () => {
-    const paths = await computeClaudeProjectRoots({ configDirValue: undefined, home: '/Users/testhome' })
+    const paths = await computeClaudeProjectRoots({
+      configDirValue: undefined,
+      home: '/Users/testhome',
+    })
     expect(paths.some((p) => p.startsWith('/a/one'))).toBe(false)
     expect(paths).toContain(join('/Users/testhome', DEFAULT_RELATIVE_PROJECTS_PATH))
     expect(new Set(paths).size).toBe(paths.length) // no duplicates
@@ -312,7 +329,7 @@ describe('aggregation windows', () => {
     expect(block?.totalTokens).toBe(600) // the older entry is outside the window
     expect(block?.isActive).toBe(true)
     expect(block?.tokensPerMinute).toBeCloseTo(10, 5) // 600 tokens over 60 minutes
-    expect(block?.startTime).not.toContain('.') // no fractional seconds, like Swift
+    expect(block?.startTime).not.toContain('.') // block times carry no fractional seconds
   })
 
   it('returns no block when nothing is recent', () => {

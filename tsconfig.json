@@ -1,9 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022"
-    ],
+    "lib": ["ES2022"],
     "module": "Node16",
     "moduleResolution": "Node16",
     "strict": true,
@@ -15,15 +13,8 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "outDir": "out",
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "src/**/*.ts",
-    "test/**/*.ts"
-  ],
-  "exclude": [
-    "src/webview/**/*.ts"
-  ]
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["src/webview/**/*.ts"]
 }

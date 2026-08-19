@@ -176,7 +176,12 @@ describe('persistence', () => {
 describe('display', () => {
   it('reports an egg before hatching and a mood after', async () => {
     const s = store()
-    const inputs = { burnTier: 'normal' as const, limitWarning: false, hasUsageData: true, todayTokens: 10 }
+    const inputs = {
+      burnTier: 'normal' as const,
+      limitWarning: false,
+      hasUsageData: true,
+      todayTokens: 10,
+    }
     await s.update(obs(0))
     expect(s.displayState(inputs)).toBe('egg')
 

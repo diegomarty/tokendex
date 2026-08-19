@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { applyProviderLedger, creditDelta, spendableBalance } from '../src/core/companion/ledger.js'
 import { freshCompanionState, type CompanionState } from '../src/core/companion/model.js'
 
-// Ported from the ledger branches of `CompanionStore.update` in CompanionStore.swift.
 // Every branch here exists because a specific way of getting it wrong either lost usage or
 // granted it twice.
 
@@ -82,7 +81,10 @@ describe('empty or stale refreshes', () => {
   // Letting an empty map move the date would make the next healthy snapshot look like a whole
   // day of brand-new usage.
   it('ignores a refresh with no provider data', () => {
-    const state = seeded({ claimedTodayTokensByProvider: { claude_code: 100 }, lastDate: '2026-08-18' })
+    const state = seeded({
+      claimedTodayTokensByProvider: { claude_code: 100 },
+      lastDate: '2026-08-18',
+    })
     const result = applyProviderLedger(state, obs({}, '2026-08-19'))
     expect(result.delta).toBe(0)
     expect(result.state.lastDate).toBe('2026-08-18')
@@ -96,7 +98,10 @@ describe('empty or stale refreshes', () => {
 
 describe('day rollover', () => {
   it('counts the whole of the new day rather than diffing against yesterday', () => {
-    const state = seeded({ claimedTodayTokensByProvider: { claude_code: 9_000 }, lastDate: '2026-08-18' })
+    const state = seeded({
+      claimedTodayTokensByProvider: { claude_code: 9_000 },
+      lastDate: '2026-08-18',
+    })
     const result = applyProviderLedger(state, obs({ claude_code: 300 }, '2026-08-19'))
     expect(result.delta).toBe(300)
     expect(result.state.lastDate).toBe('2026-08-19')
@@ -113,7 +118,10 @@ describe('day rollover', () => {
     const rollover = applyProviderLedger(state, obs({ claude_code: 300 }, '2026-08-19'))
     expect(rollover.state.claimedTodayTokensByProvider?.['codex']).toBe(0)
 
-    const recovered = applyProviderLedger(rollover.state, obs({ claude_code: 300, codex: 120 }, '2026-08-19'))
+    const recovered = applyProviderLedger(
+      rollover.state,
+      obs({ claude_code: 300, codex: 120 }, '2026-08-19'),
+    )
     expect(recovered.delta).toBe(120) // not lost
   })
 
@@ -154,8 +162,15 @@ describe('crediting a delta', () => {
   it('feeds the active Pokémon when there is one', () => {
     const withMon = seeded({
       active: {
-        baseID: 1, pathIDs: [1], plannedPathIDs: [1], stageIndex: 0, usedAtStage: 5,
-        rarity: 'common', totalForms: 1, isShiny: false, dittoRevealed: false,
+        baseID: 1,
+        pathIDs: [1],
+        plannedPathIDs: [1],
+        stageIndex: 0,
+        usedAtStage: 5,
+        rarity: 'common',
+        totalForms: 1,
+        isShiny: false,
+        dittoRevealed: false,
       },
     })
     const state = creditDelta(withMon, 95)

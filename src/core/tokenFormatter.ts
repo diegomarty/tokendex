@@ -1,16 +1,13 @@
 /**
- * Ported from `Sources/PokeTokenBar/Core/TokenFormatter.swift`.
- *
- * Rounding was checked against the Swift expectations on Node 20: `toFixed` and C's
- * `printf("%.Nf")` agree on every value the Swift tests assert, including the awkward
- * ones (88.35 -> "88.3", 12.345 -> "12.3").
+ * Rounding was verified on Node 20: `toFixed` and C's `printf("%.Nf")` agree on every value
+ * the tests assert, including the awkward ones (88.35 -> "88.3", 12.345 -> "12.3").
  */
 
 /** 987 -> "987", 12_345 -> "12.3K", 190_612_940 -> "190.6M", 1_240_000_000 -> "1.24B" */
 export function compact(value: number): string {
   const v = Math.abs(value)
   const sign = value < 0 ? '-' : ''
-  if (v < 1_000) return `${value}` // signed original, matching Swift
+  if (v < 1_000) return `${value}` // the signed original value, unscaled
   if (v < 1_000_000) return sign + trim(v / 1_000, 1) + 'K'
   if (v < 1_000_000_000) return sign + trim(v / 1_000_000, 1) + 'M'
   return sign + trim(v / 1_000_000_000, 2) + 'B'

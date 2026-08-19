@@ -1,5 +1,5 @@
 /**
- * Codex rollout parsing, ported from the Codex section of `Core/LocalUsageReader.swift`.
+ * Codex rollout parsing.
  *
  * Source: `~/.codex/sessions/**\/rollout-*.jsonl`, `event_msg.payload.type:"token_count"`
  * records carrying `info.last_token_usage` (the per-turn delta).
@@ -48,8 +48,8 @@ export interface CodexUsageVector {
 }
 
 /**
- * Cumulative usage is read with `intOrNil`: the Swift original's `Int(d)` trapped on values
- * like `1e30`, and the offending file stays on disk, so it killed every relaunch.
+ * Cumulative usage is read with `intOrNil`: values like `1e30` turn up in these files, and
+ * the offending file stays on disk, so an unguarded read would break every relaunch.
  */
 export function usageVector(raw: Json): CodexUsageVector {
   return {
@@ -250,7 +250,7 @@ export async function parseCodexRollout(path: string): Promise<CodexParsedRollou
     if (line === '') continue
 
     // NOTE: adding a `line.includes('session_meta')` pre-filter here makes this *slower*.
-    // Measured in Swift (57 real rollouts, release build): 1.80s without vs 2.17s with. The
+    // Measured over 57 real rollouts (release build): 1.80s without vs 2.17s with. The
     // intuition that "parsing fewer lines is faster" is wrong at this spot.
     const meta = codexSessionMeta(line)
     if (meta !== undefined) {
@@ -366,9 +366,7 @@ function resolveOwnedEvents(
     // embedded parent meta. In a non-fork file, a genuine session switch follows the
     // event's own session id.
     const owner =
-      rollout.parentSessionID === undefined
-        ? (event.sessionID ?? rollout.sessionID)
-        : rollout.sessionID
+      rollout.parentSessionID === undefined ? (event.sessionID ?? rollout.sessionID) : rollout.sessionID
 
     if (!ownerSeen || owner !== previousOwner) {
       epoch = 0
@@ -463,11 +461,7 @@ export function resolveCodexRollouts(
 
       let resolved: CodexResolvedRollout
       if (best !== undefined) {
-        resolved = resolveOwnedEvents(
-          rollout,
-          best.replayCount,
-          best.history.slice(0, best.replayCount),
-        )
+        resolved = resolveOwnedEvents(rollout, best.replayCount, best.history.slice(0, best.replayCount))
       } else if (rollout.parentSessionID !== undefined) {
         // Parent missing, or an older record has no cumulative state so structural
         // comparison is impossible. Real subagents are preserved by fallbackReplayCount;
@@ -615,7 +609,8 @@ function probeOutcome(line: Buffer): ProbeOutcome {
     return { kind: 'invalid' }
   }
   const meta = codexSessionMeta(text)
-  if (meta !== undefined) return meta.id === undefined ? { kind: 'sessionID' } : { kind: 'sessionID', id: meta.id }
+  if (meta !== undefined)
+    return meta.id === undefined ? { kind: 'sessionID' } : { kind: 'sessionID', id: meta.id }
   if (text.includes('token_count')) return { kind: 'stop' }
   return { kind: 'keepScanning' }
 }
@@ -625,8 +620,8 @@ function probeOutcome(line: Buffer): ProbeOutcome {
  * rollout in full.
  *
  * **A fixed-size prefix must not be decoded whole.** If the cut lands mid-character, strict
- * decoding fails for the entire buffer (measured in Swift: 14 of 109 local rollouts failed at
- * the 64KB boundary), which would be reported as "no session id". So chunks are read but only
+ * decoding fails for the entire buffer (measured: 14 of 109 local rollouts failed at the 64KB
+ * boundary), which would be reported as "no session id". So chunks are read but only
  * newline-terminated lines are decoded.
  *
  * `undefined` means the file was read fine but carries no usable metadata — a deterministic

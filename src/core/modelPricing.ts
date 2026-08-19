@@ -1,9 +1,7 @@
 /**
- * Ported from `Sources/PokeTokenBar/Core/ModelPricing.swift`.
- *
- * Per-token USD rates, bundled to match ccusage (--offline, LiteLLM snapshot). The Swift
- * original derived these by linear back-solving several days of `ccusage --breakdown`
- * output against (4 token kinds, cost); fit error 0.000%.
+ * Per-token USD rates, bundled to match ccusage (--offline, LiteLLM snapshot). They were
+ * derived by linear back-solving several days of `ccusage --breakdown` output against
+ * (4 token kinds, cost); fit error 0.000%.
  */
 
 export interface ModelRate {

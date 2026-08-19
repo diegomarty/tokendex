@@ -1,5 +1,5 @@
 /**
- * PokéAPI client, ported from `Core/PokeAPIClient.swift`.
+ * PokéAPI client.
  *
  * Pokémon data is fetched at runtime and never bundled in the repository — that is a licence
  * obligation, not a size optimisation.

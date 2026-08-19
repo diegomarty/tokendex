@@ -1,6 +1,6 @@
 /**
- * Normalised usage record and aggregation, ported from `Core/LocalUsageReader.swift`
- * (the Entry/Bucket types, the aggregation section and the date utilities).
+ * Normalised usage record and aggregation: the Entry/Bucket types, the aggregation helpers
+ * and the date utilities.
  *
  * Dates are epoch milliseconds rather than `Date` objects: the scan builds hundreds of
  * thousands of these and allocating a Date per entry is pure overhead.
@@ -76,20 +76,15 @@ export function daily(entries: Entry[], localDay: string): DailyUsage | undefine
 }
 
 /** Totals across the inclusive local-day range [fromDay, toDay]. */
-export function period(
-  entries: Entry[],
-  periodKey: string,
-  fromDay: string,
-  toDay: string,
-): PeriodUsage {
+export function period(entries: Entry[], periodKey: string, fromDay: string, toDay: string): PeriodUsage {
   const b = new Bucket()
   for (const e of entries) if (e.localDay >= fromDay && e.localDay <= toDay) b.add(e)
   return { period: periodKey, totalTokens: b.total, totalCost: b.cost }
 }
 
 /**
- * Swift's default `ISO8601DateFormatter` emits no fractional seconds, while
- * `Date.toISOString()` always does. Stripping them keeps block ids and times identical.
+ * Block ids and start/end times carry no fractional seconds, but `Date.toISOString()` always
+ * emits them. Stripping them here keeps every such value in one canonical form.
  */
 function iso8601NoFraction(millis: number): string {
   return new Date(millis).toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -159,8 +154,10 @@ export function startOfWeek(millis: number, locale?: string): number {
 /** Locale's first weekday as `getDay()` numbers this file uses (0 = Sunday). */
 function firstWeekday(locale?: string): number {
   try {
-    const l = new Intl.Locale(locale ?? Intl.DateTimeFormat().resolvedOptions().locale) as
-      Intl.Locale & { getWeekInfo?: () => { firstDay: number }; weekInfo?: { firstDay: number } }
+    const l = new Intl.Locale(locale ?? Intl.DateTimeFormat().resolvedOptions().locale) as Intl.Locale & {
+      getWeekInfo?: () => { firstDay: number }
+      weekInfo?: { firstDay: number }
+    }
     const info = typeof l.getWeekInfo === 'function' ? l.getWeekInfo() : l.weekInfo
     return info === undefined ? 0 : info.firstDay % 7
   } catch {
@@ -185,9 +182,9 @@ export function enrichmentScanStart(now: number, locale?: string): number {
 
 /**
  * Parsing ceiling — 100,000x real-world usage (billions), so it never clips a legitimate
- * value. Not `Number.MAX_SAFE_INTEGER`: the Swift original noted that clamping to the type
- * maximum still overflows where values are *added right after parsing* (`output + thoughts`).
- * The bound must survive repeated addition.
+ * value. Not `Number.MAX_SAFE_INTEGER`: clamping to the type maximum still overflows where
+ * values are *added right after parsing* (`output + thoughts`). The bound must survive
+ * repeated addition.
  */
 export const MAX_PARSED_TOKEN_VALUE = 1_000_000_000_000_000
 
@@ -202,10 +199,10 @@ export function doubleOrNil(v: unknown): number | undefined {
 }
 
 /**
- * Safe integer coercion. The Swift original used to call `Int(d)` directly and **trapped**
- * (crashed) on values like `1e30`. Usage logs come from outside the app (hand edits, transfer
- * corruption, upstream bugs) and stay on disk, so one bad value crashed every refresh and
- * every relaunch until the user deleted the file by hand. Clamping is the safer degradation.
+ * Safe integer coercion. Values like `1e30` really do turn up: usage logs come from outside
+ * the app (hand edits, transfer corruption, upstream bugs) and stay on disk, so letting one
+ * through would poison every refresh and every relaunch until the user deleted the file by
+ * hand. Clamping is the safer degradation.
  */
 export function intOrNil(v: unknown): number | undefined {
   const d = doubleOrNil(v)

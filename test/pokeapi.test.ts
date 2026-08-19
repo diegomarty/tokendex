@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { chooseBaseFromIndex, chooseBaseViaREST, type BaseSpecies } from '../src/core/pokeapi.js'
 
-// Selection logic ported from `CompanionStore.chooseBase` / `chooseBaseViaREST`.
-
 const index: BaseSpecies[] = [
   { id: 1, captureRate: 45 }, // rare
   { id: 10, captureRate: 255 }, // common
@@ -41,7 +39,10 @@ describe('chooseBaseFromIndex', () => {
   })
 
   it('halves the weight of an already-collected line without excluding it', () => {
-    const two: BaseSpecies[] = [{ id: 1, captureRate: 100 }, { id: 2, captureRate: 100 }]
+    const two: BaseSpecies[] = [
+      { id: 1, captureRate: 100 },
+      { id: 2, captureRate: 100 },
+    ]
     const collected = new Set(['1:3'])
     // Weights become 50 and 100, total 150: r<50 picks 1, r>=50 picks 2.
     expect(chooseBaseFromIndex(two, undefined, collected, rng(49))).toBe(1)

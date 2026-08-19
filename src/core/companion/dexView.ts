@@ -1,6 +1,5 @@
 /**
- * Derived views for the Pokédex, the catch log and the evolution-line strip, ported from the
- * corresponding computed properties in `Core/CompanionStore.swift`.
+ * Derived views for the Pokédex, the catch log and the evolution-line strip.
  *
  * Pure, so every rule below is reachable from a test — including the ones that are easy to
  * get subtly wrong (planned versus reached species, hidden shininess while a Ditto is
@@ -50,10 +49,7 @@ export function realizedLineItems(pathIDs: number[], stageIndex: number): EvoLin
  * a branch appears, the candidates collapse into **one** mystery slot — the branch was chosen
  * at hatch, but revealing it before the evolution happens would spoil it.
  */
-export function lineItems(
-  mon: MonState | undefined,
-  line: EvoLine | undefined,
-): EvoLineItem[] {
+export function lineItems(mon: MonState | undefined, line: EvoLine | undefined): EvoLineItem[] {
   if (mon === undefined || line === undefined) return []
   const out = realizedLineItems(mon.pathIDs, mon.stageIndex)
 
@@ -83,10 +79,7 @@ export function lineItems(
  * rather than written into the persisted dex. On graduation the active one disappears and a
  * real entry appears, so the list length never jumps.
  */
-export function activeDexEntry(
-  state: CompanionState,
-  line: EvoLine | undefined,
-): DexEntry | undefined {
+export function activeDexEntry(state: CompanionState, line: EvoLine | undefined): DexEntry | undefined {
   const active = state.active
   if (active === undefined) return undefined
   const finalID = currentSpeciesID(active)
@@ -208,11 +201,7 @@ export function dexCount(state: CompanionState, line: EvoLine | undefined, rarit
 }
 
 /** Resolves a catch-log entry's display name without a network call when possible. */
-export function entryName(
-  entry: DexEntry,
-  lang: AppLanguage,
-  line: EvoLine | undefined,
-): string {
+export function entryName(entry: DexEntry, lang: AppLanguage, line: EvoLine | undefined): string {
   const stored = entry.names?.[entry.finalID]
   const resolved = stored === undefined ? undefined : resolveName(lang, stored)
   if (resolved !== undefined) return resolved

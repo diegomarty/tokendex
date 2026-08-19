@@ -1,5 +1,5 @@
 /**
- * Save transfer between machines, ported from `Core/SaveTransfer.swift`.
+ * Save transfer between machines.
  *
  * The state is wrapped in an envelope rather than written out directly, because state
  * decoding is deliberately lenient (one broken field must not destroy a Pokédex) — which
@@ -9,11 +9,7 @@
  * so they catch that first.
  */
 
-import {
-  type CompanionState,
-  captureRateCeiling,
-  freshCompanionState,
-} from './model.js'
+import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
 import { decodeCompanionState } from './persistence.js'
 
 export const SAVE_FORMAT_ID = 'tokendex.save'
@@ -21,8 +17,8 @@ export const SAVE_SCHEMA_VERSION = 1
 
 /**
  * Normal saves are a few kilobytes and a full Pokédex stays under a few hundred. Without a
- * ceiling a huge JSON blocks parsing for seconds (measured in Swift: 39MB froze the main
- * thread ~1.8s).
+ * ceiling a huge JSON blocks parsing for seconds (measured: 39MB froze the main thread
+ * ~1.8s).
  */
 export const MAX_SAVE_BYTES = 8 * 1024 * 1024
 
@@ -170,7 +166,7 @@ export function decodeSave(text: string, hostLanguage?: string): SaveEnvelope {
       typeof exportedAtRaw === 'number'
         ? exportedAtRaw
         : typeof exportedAtRaw === 'string'
-          ? (Date.parse(exportedAtRaw) || 0)
+          ? Date.parse(exportedAtRaw) || 0
           : 0,
     sourceDevice: typeof outer['sourceDevice'] === 'string' ? outer['sourceDevice'] : '',
     state: sanitized(state),
@@ -182,9 +178,10 @@ export function decodeSave(text: string, hostLanguage?: string): SaveEnvelope {
  * edits, transfer corruption, a different build).
  *
  * State decoding is deliberately lenient, so nonsensical values get through. Persisting them
- * would then make later arithmetic overflow — and in Swift that killed the process, which
- * restarted, read the same file and died again, leaving the app unusable until the file was
- * deleted by hand. Automatic corruption recovery never fires, because decoding *succeeded*.
+ * would then make later arithmetic overflow, and an overflow on load fails in the worst
+ * possible way: the app restarts, reads the same file and fails again, leaving it unusable
+ * until the file is deleted by hand. Automatic corruption recovery never fires, because
+ * decoding *succeeded*.
  *
  * Guarding at each arithmetic site would just reopen the hole every time a new site appears,
  * so normalisation happens once, at the boundary. Only fields that actually feed arithmetic

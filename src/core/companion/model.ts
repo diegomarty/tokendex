@@ -1,5 +1,5 @@
 /**
- * Companion domain model, ported from `Core/CompanionModel.swift`.
+ * Companion domain model.
  *
  * Balance constants are calibrated against measured real usage (~253M tokens/day), so they
  * are copied verbatim rather than re-derived. The comments explaining *why* a number is what
@@ -222,8 +222,7 @@ export const FreshEgg = {
    */
   price_(tier: Rarity | undefined): number {
     if (tier === undefined) return FreshEgg.price
-    const multiplier =
-      PokemonBalance.graduationTotal(tier) / PokemonBalance.graduationTotal('common')
+    const multiplier = PokemonBalance.graduationTotal(tier) / PokemonBalance.graduationTotal('common')
     return Math.round(FreshEgg.price * multiplier)
   },
 } as const
@@ -337,9 +336,7 @@ export function keepingAnimatedSprites(node: EvoNode): EvoNode | undefined {
   if (!hasAnimatedSprite(node.speciesID)) return undefined
   return {
     speciesID: node.speciesID,
-    children: node.children
-      .map(keepingAnimatedSprites)
-      .filter((n): n is EvoNode => n !== undefined),
+    children: node.children.map(keepingAnimatedSprites).filter((n): n is EvoNode => n !== undefined),
   }
 }
 
@@ -384,11 +381,31 @@ export function localizedName(line: EvoLine, id: number, lang: AppLanguage): str
 // MARK: - Nature
 
 export const NATURES = [
-  'hardy', 'lonely', 'brave', 'adamant', 'naughty',
-  'bold', 'docile', 'relaxed', 'impish', 'lax',
-  'timid', 'hasty', 'serious', 'jolly', 'naive',
-  'modest', 'mild', 'quiet', 'bashful', 'rash',
-  'calm', 'gentle', 'sassy', 'careful', 'quirky',
+  'hardy',
+  'lonely',
+  'brave',
+  'adamant',
+  'naughty',
+  'bold',
+  'docile',
+  'relaxed',
+  'impish',
+  'lax',
+  'timid',
+  'hasty',
+  'serious',
+  'jolly',
+  'naive',
+  'modest',
+  'mild',
+  'quiet',
+  'bashful',
+  'rash',
+  'calm',
+  'gentle',
+  'sassy',
+  'careful',
+  'quirky',
 ] as const
 export type PokemonNature = (typeof NATURES)[number]
 

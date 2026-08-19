@@ -1,10 +1,9 @@
 /**
- * Growth, evolution and graduation, ported from `CompanionStore.applyUsage` and the
- * evolution-path helpers in `Core/CompanionStore.swift`.
+ * Growth, evolution and graduation.
  *
  * Kept pure: it takes state in and returns state plus the events that happened, so the
- * caller owns persistence, notifications and celebrations. The Swift version interleaved all
- * of that, which is why several of these branches had no reachable test.
+ * caller owns persistence, notifications and celebrations. Interleaving all of that with the
+ * rules is what leaves branches with no reachable test.
  */
 
 import {
@@ -21,9 +20,7 @@ import {
 export type RNG = () => number
 
 export type GrowthEvent =
-  | { kind: 'evolved'; toSpeciesID: number }
-  | { kind: 'graduated' }
-  | { kind: 'dittoRevealPending' }
+  { kind: 'evolved'; toSpeciesID: number } | { kind: 'graduated' } | { kind: 'dittoRevealPending' }
 
 export interface GrowthResult {
   mon: MonState
@@ -157,7 +154,11 @@ export function applyUsage(
   if (line === undefined) return { mon: current, events, graduated: false, notes }
 
   for (let steps = 0; steps < MAX_EVOLUTION_STEPS; steps++) {
-    const threshold = PokemonBalance.phaseThreshold(current.rarity, current.totalForms, current.stageIndex)
+    const threshold = PokemonBalance.phaseThreshold(
+      current.rarity,
+      current.totalForms,
+      current.stageIndex,
+    )
     if (current.usedAtStage < threshold) break
 
     const node = evoNodeWithID(line.tree, currentSpeciesID(current))
@@ -186,7 +187,10 @@ export function applyUsage(
       next = planned
     } else {
       next = pickPlannedChild(node, current.baseID, collectedFinals, rng)
-      const fallbackRoute = [node.speciesID, ...makeEvolutionPlan(next, current.baseID, collectedFinals, rng)]
+      const fallbackRoute = [
+        node.speciesID,
+        ...makeEvolutionPlan(next, current.baseID, collectedFinals, rng),
+      ]
       const repaired = repairedPlan(current.pathIDs, current.stageIndex, fallbackRoute)
       current = { ...current, plannedPathIDs: repaired, totalForms: repaired.length }
       notes.push(`evolve: repaired invalid planned path for base ${current.baseID}`)

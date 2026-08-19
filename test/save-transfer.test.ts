@@ -15,12 +15,19 @@ import {
 } from '../src/core/companion/saveTransfer.js'
 import { freshCompanionState, type CompanionState, type MonState } from '../src/core/companion/model.js'
 
-// Ported from SaveTransferTests.swift. Losing a save is the worst failure this app has, so
-// these are the guards that matter most.
+// Losing a save is the worst failure this app has, so these are the guards that matter most.
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
-  baseID: 1, pathIDs: [1, 2], plannedPathIDs: [1, 2], stageIndex: 1, usedAtStage: 10,
-  rarity: 'common', totalForms: 2, isShiny: false, dittoRevealed: false, ...over,
+  baseID: 1,
+  pathIDs: [1, 2],
+  plannedPathIDs: [1, 2],
+  stageIndex: 1,
+  usedAtStage: 10,
+  rarity: 'common',
+  totalForms: 2,
+  isShiny: false,
+  dittoRevealed: false,
+  ...over,
 })
 
 const state = (over: Partial<CompanionState> = {}): CompanionState => ({
@@ -64,7 +71,11 @@ describe('envelope', () => {
   })
 
   it('refuses a file too large to parse quickly', () => {
-    const huge = JSON.stringify({ format: SAVE_FORMAT_ID, schema: 1, pad: 'x'.repeat(MAX_SAVE_BYTES) })
+    const huge = JSON.stringify({
+      format: SAVE_FORMAT_ID,
+      schema: 1,
+      pad: 'x'.repeat(MAX_SAVE_BYTES),
+    })
     try {
       decodeSave(huge)
       expect.unreachable()
@@ -76,7 +87,9 @@ describe('envelope', () => {
 
 describe('file names', () => {
   it('dates the export so repeats do not overwrite', () => {
-    expect(suggestedFileName(new Date(2026, 7, 19, 14, 30).getTime())).toBe('Tokendex-Save-2026-08-19.json')
+    expect(suggestedFileName(new Date(2026, 7, 19, 14, 30).getTime())).toBe(
+      'Tokendex-Save-2026-08-19.json',
+    )
   })
 
   // A single backup slot means the second import destroys the original — exactly the thing
@@ -125,10 +138,12 @@ describe('sanitized', () => {
 
   // Trimming these would be data loss, which is worse than the arithmetic risk they do not pose.
   it('never trims the dex or the inventory', () => {
-    const s = sanitized(state({
-      dex: [{ id: 'a', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false }],
-      inventory: { rareCandy: 99 },
-    }))
+    const s = sanitized(
+      state({
+        dex: [{ id: 'a', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false }],
+        inventory: { rareCandy: 99 },
+      }),
+    )
     expect(s.dex).toHaveLength(1)
     expect(s.inventory).toEqual({ rareCandy: 99 })
   })
@@ -147,7 +162,9 @@ describe('rebasedForThisDevice', () => {
 
   it('carries progress over', () => {
     const r = rebasedForThisDevice(imported, current, {
-      todayTokensByProvider: { claude_code: 10 }, todayDate: '2026-08-19', hasUsageData: true,
+      todayTokensByProvider: { claude_code: 10 },
+      todayDate: '2026-08-19',
+      hasUsageData: true,
     })
     expect(r.usedSinceInstall).toBe(5_000_000)
   })
@@ -155,7 +172,9 @@ describe('rebasedForThisDevice', () => {
   // A save from a Japanese machine must not change an English machine's UI language.
   it('keeps this device language', () => {
     const r = rebasedForThisDevice(imported, current, {
-      todayTokensByProvider: { claude_code: 10 }, todayDate: '2026-08-19', hasUsageData: true,
+      todayTokensByProvider: { claude_code: 10 },
+      todayDate: '2026-08-19',
+      hasUsageData: true,
     })
     expect(r.language).toBe('es')
   })
@@ -164,7 +183,9 @@ describe('rebasedForThisDevice', () => {
   // the rest of the day — and it heals at midnight, which is why it never looks like a bug.
   it('re-anchors the local ledger to this machine', () => {
     const r = rebasedForThisDevice(imported, current, {
-      todayTokensByProvider: { claude_code: 10 }, todayDate: '2026-08-19', hasUsageData: true,
+      todayTokensByProvider: { claude_code: 10 },
+      todayDate: '2026-08-19',
+      hasUsageData: true,
     })
     expect(r.claimedTodayTokensByProvider).toEqual({ claude_code: 10 })
     expect(r.lastDate).toBe('2026-08-19')
@@ -175,7 +196,9 @@ describe('rebasedForThisDevice', () => {
   // a brand-new provider, silently dropping that day's usage.
   it('defers the baseline when today is not known yet', () => {
     const r = rebasedForThisDevice(imported, current, {
-      todayTokensByProvider: {}, todayDate: '2026-08-19', hasUsageData: true,
+      todayTokensByProvider: {},
+      todayDate: '2026-08-19',
+      hasUsageData: true,
     })
     expect(r.installBaselineSet).toBe(false)
     expect(r.claimedTodayTokensByProvider).toBeUndefined()
@@ -186,7 +209,9 @@ describe('rebasedForThisDevice', () => {
   // older save would erase a payout and grant the same candy twice.
   it('merges the grant ledger by max instead of replacing it', () => {
     const r = rebasedForThisDevice(imported, current, {
-      todayTokensByProvider: { c: 1 }, todayDate: 'd', hasUsageData: true,
+      todayTokensByProvider: { c: 1 },
+      todayDate: 'd',
+      hasUsageData: true,
     })
     expect(r.candyGrantTier).toEqual({ w1: 1, w2: 1 })
     expect(mergedGrantTier({ w: 1 }, { w: 0 })).toEqual({ w: 1 })
@@ -196,6 +221,9 @@ describe('rebasedForThisDevice', () => {
 
 describe('summary', () => {
   it('names what the overwrite would replace', () => {
-    expect(summarize(state({ usedSinceInstall: 42, dex: [] }))).toEqual({ dexCount: 0, lifetimeTokens: 42 })
+    expect(summarize(state({ usedSinceInstall: 42, dex: [] }))).toEqual({
+      dexCount: 0,
+      lifetimeTokens: 42,
+    })
   })
 })

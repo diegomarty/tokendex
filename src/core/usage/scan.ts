@@ -1,5 +1,5 @@
 /**
- * Directory scanning with an mtime window, ported from `LocalUsageReader.jsonlFiles`.
+ * Directory scanning with an mtime window.
  *
  * The window is what keeps refreshes cheap: in an append-only log, a file modified before
  * the range start cannot contain entries inside the range.

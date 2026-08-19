@@ -92,11 +92,7 @@ export function tokensToMilestone(state: CompanionState): { label: string; amoun
       amount: Math.max(1, PokemonBalance.eggHatchThreshold - state.eggUsage),
     }
   }
-  const threshold = PokemonBalance.phaseThreshold(
-    active.rarity,
-    active.totalForms,
-    active.stageIndex,
-  )
+  const threshold = PokemonBalance.phaseThreshold(active.rarity, active.totalForms, active.stageIndex)
   const remaining = Math.max(1, threshold - active.usedAtStage)
   const isFinal = active.stageIndex >= active.totalForms - 1
   return { label: isFinal ? 'graduation' : 'evolution', amount: remaining }

@@ -1,5 +1,5 @@
 /**
- * Claude Code log parsing, ported from the Claude section of `Core/LocalUsageReader.swift`.
+ * Claude Code log parsing.
  *
  * Source: `<root>/**\/*.jsonl`, lines with `type:"assistant"` carrying `message.usage`
  * (four token kinds), `message.model`, `message.id` + `requestId` and `timestamp`.
@@ -83,10 +83,7 @@ export async function parseClaudeFile(path: string): Promise<Entry[]> {
  * `(message.id, requestId)` de-duplication counts a turn once even if it is copied into
  * several roots, so totals do not inflate.
  */
-export async function claudeEntries(
-  modifiedSince: number,
-  roots?: string[],
-): Promise<Entry[]> {
+export async function claudeEntries(modifiedSince: number, roots?: string[]): Promise<Entry[]> {
   const targets = roots ?? (await claudeProjectRoots())
   const all: Entry[] = []
   for (const root of targets) {

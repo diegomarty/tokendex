@@ -1,24 +1,23 @@
 /**
  * ISO 8601 parsing with variable fractional-second precision.
  *
- * Ported from `Core/Models.swift` (`ISO8601Parser`). Do NOT replace this with a bare
- * `new Date(string)`: V8 and Swift disagree in two ways that would silently corrupt
- * timestamps.
+ * Do NOT replace this with a bare `new Date(string)`: V8 gets two of these cases wrong in
+ * ways that silently corrupt timestamps.
  *
- *   1. Fractional seconds longer than 9 digits. V8 parses ".0344645678Z" as ".344";
- *      Swift truncates to 3 digits and yields ".034". Measured, not assumed.
- *   2. Date-only strings. V8 accepts "2026-06-10" as UTC midnight; Swift's
- *      `.withInternetDateTime` requires date + time + timezone and returns nil.
+ *   1. Fractional seconds longer than 9 digits. V8 reads ".0344645678Z" as ".344", where the
+ *      correct value is ".034"; this parser truncates to three digits and right-pads.
+ *      Measured, not assumed.
+ *   2. Date-only strings. V8 accepts "2026-06-10" as UTC midnight; a full internet date-time
+ *      requires date + time + timezone, so this parser returns null instead.
  *
- * Matching Swift exactly matters because these values (`resets_at`, block start/end)
+ * Getting both exactly right matters because these values (`resets_at`, block start/end)
  * drive limit windows and the 5-hour block boundary.
  */
 
 /**
- * Internet date-time as `ISO8601DateFormatter` with `.withInternetDateTime` accepts it:
- * dash-separated date, colon-separated time, colon-separated numeric offset or `Z`.
- * The fraction is optional — Swift covers that case with a second, non-fractional
- * formatter, and one optional group here covers both of its paths.
+ * A full internet date-time: dash-separated date, colon-separated time, and either a
+ * colon-separated numeric offset or `Z`. The fraction is optional, and the single optional
+ * group covers both the fractional and the plain form.
  */
 const INTERNET_DATE_TIME =
   /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}:\d{2}:\d{2})(?:\.(\d+))?([Zz]|[+-]\d{2}:\d{2})$/

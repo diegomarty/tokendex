@@ -3,8 +3,7 @@ import { ZERO_RATE, costFor, perMillion, rateFor } from '../src/core/modelPricin
 import { compact, cost, costCompact, grouped, percent } from '../src/core/tokenFormatter.js'
 
 // ---------------------------------------------------------------------------
-// ModelPricing — ported from LocalUsageReaderTests, GeminiUsageTests,
-// GrokUsageTests and AntigravityUsageTests.
+// ModelPricing
 // ---------------------------------------------------------------------------
 
 describe('rateFor / costFor — exact table', () => {
@@ -76,7 +75,10 @@ describe('rateFor — Antigravity is never priced', () => {
   it.each(['gemini-3.6-flash', 'gemini-3-flash-e', 'gemini-default', 'claude-sonnet-4-6'])(
     'antigravity/%s is unpriced',
     (model) => {
-      expect(costFor(`antigravity/${model}`, 1_000_000, 1_000_000, 1_000_000, 1_000_000)).toBeCloseTo(0, 7)
+      expect(costFor(`antigravity/${model}`, 1_000_000, 1_000_000, 1_000_000, 1_000_000)).toBeCloseTo(
+        0,
+        7,
+      )
     },
   )
 
@@ -86,7 +88,7 @@ describe('rateFor — Antigravity is never priced', () => {
 })
 
 // ---------------------------------------------------------------------------
-// TokenFormatter — ported from TokenFormatterTests and testFormatterEdges.
+// TokenFormatter
 // ---------------------------------------------------------------------------
 
 describe('compact', () => {

@@ -12,15 +12,29 @@ import {
   tokensToMilestone,
   parseAmount,
 } from '../src/core/dev/simulation.js'
-import { PokemonBalance, freshCompanionState, type CompanionState, type MonState } from '../src/core/companion/model.js'
+import {
+  PokemonBalance,
+  freshCompanionState,
+  type CompanionState,
+  type MonState,
+} from '../src/core/companion/model.js'
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
-  baseID: 1, pathIDs: [1], plannedPathIDs: [1, 2], stageIndex: 0, usedAtStage: 0,
-  rarity: 'common', totalForms: 2, isShiny: false, dittoRevealed: false, ...over,
+  baseID: 1,
+  pathIDs: [1],
+  plannedPathIDs: [1, 2],
+  stageIndex: 0,
+  usedAtStage: 0,
+  rarity: 'common',
+  totalForms: 2,
+  isShiny: false,
+  dittoRevealed: false,
+  ...over,
 })
 
 const state = (over: Partial<CompanionState> = {}): CompanionState => ({
-  ...freshCompanionState('en'), ...over,
+  ...freshCompanionState('en'),
+  ...over,
 })
 
 describe('offsets ride on top of reality', () => {

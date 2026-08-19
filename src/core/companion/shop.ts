@@ -1,10 +1,9 @@
 /**
- * Shop, inventory and candy grants, ported from the corresponding sections of
- * `Core/CompanionStore.swift`.
+ * Shop, inventory and candy grants.
  *
  * All pure: each function takes state and returns new state plus what happened, so the
- * caller owns persistence and notifications. The Swift original interleaved side effects,
- * which left several of these rules without a reachable test.
+ * caller owns persistence and notifications. Interleaving side effects with the rules is
+ * what leaves them without a reachable test.
  */
 
 import {
@@ -258,7 +257,6 @@ export function grantCandies(
   for (const grant of grants) {
     inventory['rareCandy'] = (inventory['rareCandy'] ?? 0) + grant.count
   }
-  const changed =
-    grants.length > 0 || JSON.stringify(grantTier) !== JSON.stringify(state.candyGrantTier)
+  const changed = grants.length > 0 || JSON.stringify(grantTier) !== JSON.stringify(state.candyGrantTier)
   return { state: { ...state, candyGrantTier: grantTier, inventory }, grants, changed }
 }

@@ -9,12 +9,7 @@ import {
   stageProgress,
   tokensToNext,
 } from '../src/core/companion/growth.js'
-import {
-  type EvoNode,
-  type MonState,
-  PokemonBalance,
-  makeEvoLine,
-} from '../src/core/companion/model.js'
+import { type EvoNode, type MonState, PokemonBalance, makeEvoLine } from '../src/core/companion/model.js'
 
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
 
@@ -79,21 +74,37 @@ describe('applyUsage', () => {
   // A disguised Ditto can become a leaf after asset normalisation, so the reveal must be
   // checked BEFORE terminal graduation or the disguise species enters the Pokédex.
   it('defers to a Ditto reveal before graduating', () => {
-    const disguised = mon({ pathIDs: [1, 2, 3], stageIndex: 2, dittoDisguise: 132, dittoRevealed: false })
+    const disguised = mon({
+      pathIDs: [1, 2, 3],
+      stageIndex: 2,
+      dittoDisguise: 132,
+      dittoRevealed: false,
+    })
     const result = applyUsage(disguised, thr(2), line, new Set(), fixedRNG(0))
     expect(result.graduated).toBe(false)
     expect(result.events).toEqual([{ kind: 'dittoRevealPending' }])
   })
 
   it('does not defer once the Ditto is revealed', () => {
-    const revealed = mon({ pathIDs: [1, 2, 3], stageIndex: 2, dittoDisguise: 132, dittoRevealed: true })
+    const revealed = mon({
+      pathIDs: [1, 2, 3],
+      stageIndex: 2,
+      dittoDisguise: 132,
+      dittoRevealed: true,
+    })
     expect(applyUsage(revealed, thr(2), line, new Set(), fixedRNG(0)).graduated).toBe(true)
   })
 
   it('follows the planned branch when it is still valid', () => {
     const branching = makeEvoLine(1, node(1, [node(2), node(4)]), 'common', {})
     const planned = mon({ plannedPathIDs: [1, 4], totalForms: 2 })
-    const result = applyUsage(planned, PokemonBalance.phaseThreshold('common', 2, 0), branching, new Set(), fixedRNG(0))
+    const result = applyUsage(
+      planned,
+      PokemonBalance.phaseThreshold('common', 2, 0),
+      branching,
+      new Set(),
+      fixedRNG(0),
+    )
     expect(result.mon.pathIDs).toEqual([1, 4])
   })
 
@@ -101,7 +112,13 @@ describe('applyUsage', () => {
     const branching = makeEvoLine(1, node(1, [node(2), node(4)]), 'common', {})
     // Plan points at a species that is not a child any more.
     const stale = mon({ plannedPathIDs: [1, 99], totalForms: 2 })
-    const result = applyUsage(stale, PokemonBalance.phaseThreshold('common', 2, 0), branching, new Set(), fixedRNG(0))
+    const result = applyUsage(
+      stale,
+      PokemonBalance.phaseThreshold('common', 2, 0),
+      branching,
+      new Set(),
+      fixedRNG(0),
+    )
     expect([2, 4]).toContain(result.mon.pathIDs[1])
     expect(result.notes.join(' ')).toContain('repaired invalid planned path')
   })

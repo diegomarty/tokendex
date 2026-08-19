@@ -1,10 +1,7 @@
 /**
- * Ported from `Sources/PokeTokenBar/Core/Models.swift`.
- *
- * Decoding mirrors Swift's `decodeIfPresent`: a missing key and an explicit JSON `null`
- * are both "absent", but a key that IS present with the wrong type throws. Keeping that
- * distinction matters — `LocalUsageReader:1242` documents a real defect caused by
- * treating explicit `null` as merely absent.
+ * Decoding treats a missing key and an explicit JSON `null` as equally "absent", but a key
+ * that IS present with the wrong type throws. Keeping that distinction matters — treating an
+ * explicit `null` as merely absent caused a real defect.
  */
 
 import { parseISO8601 } from './iso8601.js'
@@ -23,7 +20,7 @@ function str(json: Json, key: string): string | undefined {
   return v
 }
 
-/** `decodeIfPresent(Int.self)`. Swift rejects non-integral doubles here, so we do too. */
+/** Optional integer. A non-integral double is rejected here rather than rounded. */
 function int(json: Json, key: string): number | undefined {
   const v = json[key]
   if (v === undefined || v === null) return undefined
@@ -89,8 +86,7 @@ export function parseDailyUsage(json: Json): DailyUsage {
     cacheReadTokens,
     // Falls back to the sum of the four token kinds when totalTokens is absent.
     totalTokens:
-      int(json, 'totalTokens') ??
-      inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens,
+      int(json, 'totalTokens') ?? inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens,
     totalCost: double(json, 'totalCost') ?? double(json, 'costUSD') ?? 0,
   }
 }
@@ -121,7 +117,7 @@ export function parseBlockUsage(json: Json): BlockUsage {
     totalTokens: int(json, 'totalTokens') ?? 0,
     costUSD: double(json, 'costUSD') ?? 0,
   }
-  // Swift uses `try?` here, so a malformed burnRate is tolerated rather than fatal.
+  // A malformed burnRate is tolerated rather than fatal: the rest of the block is still good.
   try {
     const burn = object(json, 'burnRate')
     if (burn) {
@@ -322,8 +318,8 @@ export interface CodexRateLimitWindow {
 }
 
 /**
- * TODO(localisation): these strings are hard-coded Korean in the Swift original. Ported
- * verbatim so the behaviour matches; route through Localization when it lands (phase 5).
+ * TODO(localisation): these strings are hard-coded Korean; route through Localization when
+ * it lands (phase 5).
  */
 export function codexWindowDisplayName(window: CodexRateLimitWindow): string {
   const mins = window.windowDurationMins

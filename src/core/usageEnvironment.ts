@@ -1,12 +1,10 @@
 /**
- * Ported from `Sources/PokeTokenBar/Core/UsageEnvironment.swift`.
- *
  * The single place that reads the environment variables users export to relocate their
  * usage logs. Providers must go through here rather than reading `process.env` directly —
  * `test/usage-environment.test.ts` enforces that mechanically.
  *
  * Not registered here: values the app itself uses (`SHELL`, `PATH`) and dev/QA-only
- * overrides (`PTB_STATE_DIR`). Those are not cases of a user exporting something the app
+ * overrides (`TOKENDEX_STATE_DIR`). Those are not cases of a user exporting something the app
  * fails to see.
  */
 

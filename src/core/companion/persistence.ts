@@ -1,6 +1,5 @@
 /**
- * Lenient decoding of the persisted companion state, ported from the `Decodable`
- * initialisers in `Core/CompanionModel.swift`.
+ * Lenient decoding of the persisted companion state.
  *
  * The governing rule is **partial recovery beats a full reset**: a missing key, a `null`, or
  * a type mismatch in one field must not wipe a Pokédex someone spent months filling. Only a

@@ -26,8 +26,6 @@ import {
   parseCompanionState,
 } from '../src/core/companion/persistence.js'
 
-// Ported from ModelLogicTests.swift (EvoLine/EvoNode/Rarity/StatePersistence sections).
-
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
 
 describe('evolution tree', () => {
@@ -155,16 +153,30 @@ describe('MonState', () => {
   it('clamps currentID to the realised path', () => {
     expect(
       currentSpeciesID({
-        baseID: 1, pathIDs: [1, 2, 3], plannedPathIDs: [1, 2, 3], stageIndex: 1,
-        usedAtStage: 0, rarity: 'common', totalForms: 3, isShiny: false, dittoRevealed: false,
+        baseID: 1,
+        pathIDs: [1, 2, 3],
+        plannedPathIDs: [1, 2, 3],
+        stageIndex: 1,
+        usedAtStage: 0,
+        rarity: 'common',
+        totalForms: 3,
+        isShiny: false,
+        dittoRevealed: false,
       }),
     ).toBe(2)
 
     // Defensive: an out-of-range stageIndex clamps to the last form.
     expect(
       currentSpeciesID({
-        baseID: 1, pathIDs: [1], plannedPathIDs: [1], stageIndex: 5,
-        usedAtStage: 0, rarity: 'common', totalForms: 1, isShiny: false, dittoRevealed: false,
+        baseID: 1,
+        pathIDs: [1],
+        plannedPathIDs: [1],
+        stageIndex: 5,
+        usedAtStage: 0,
+        rarity: 'common',
+        totalForms: 1,
+        isShiny: false,
+        dittoRevealed: false,
       }),
     ).toBe(1)
   })
@@ -178,17 +190,41 @@ describe('MonState', () => {
   // Empty pathIDs means a corrupt save. Rejecting it makes the whole state fall back to an
   // egg instead of rendering an out-of-bounds species on every frame.
   it('rejects empty pathIDs', () => {
-    expect(decodeMonState({ baseID: 1, pathIDs: [], stageIndex: 0, usedAtStage: 0, rarity: 'common', totalForms: 1 })).toBeUndefined()
+    expect(
+      decodeMonState({
+        baseID: 1,
+        pathIDs: [],
+        stageIndex: 0,
+        usedAtStage: 0,
+        rarity: 'common',
+        totalForms: 1,
+      }),
+    ).toBeUndefined()
   })
 
   it('uses the realised path as the plan when none was saved', () => {
-    const legacy = { baseID: 265, pathIDs: [265, 266], stageIndex: 1, usedAtStage: 0, rarity: 'common', totalForms: 3 }
+    const legacy = {
+      baseID: 265,
+      pathIDs: [265, 266],
+      stageIndex: 1,
+      usedAtStage: 0,
+      rarity: 'common',
+      totalForms: 3,
+    }
     expect(decodeMonState(legacy)?.plannedPathIDs).toEqual([265, 266])
     expect(decodeMonState({ ...legacy, plannedPathIDs: [] })?.plannedPathIDs).toEqual([265, 266])
   })
 
   it('preserves a distinct planned path', () => {
-    const saved = { baseID: 265, pathIDs: [265], plannedPathIDs: [265, 266, 267], stageIndex: 0, usedAtStage: 0, rarity: 'common', totalForms: 3 }
+    const saved = {
+      baseID: 265,
+      pathIDs: [265],
+      plannedPathIDs: [265, 266, 267],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'common',
+      totalForms: 3,
+    }
     const decoded = decodeMonState(saved)
     expect(decoded?.pathIDs).toEqual([265])
     expect(decoded?.plannedPathIDs).toEqual([265, 266, 267])
@@ -238,7 +274,14 @@ describe('CompanionState decoding', () => {
 
   it('falls back to an egg on a corrupt active while keeping the dex', () => {
     const state = decodeCompanionState({
-      active: { baseID: 1, pathIDs: [], stageIndex: 0, usedAtStage: 0, rarity: 'common', totalForms: 1 },
+      active: {
+        baseID: 1,
+        pathIDs: [],
+        stageIndex: 0,
+        usedAtStage: 0,
+        rarity: 'common',
+        totalForms: 1,
+      },
       dex: [{ baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare' }],
     })
     expect(state.active).toBeUndefined()
@@ -256,7 +299,9 @@ describe('CompanionState decoding', () => {
   // an empty map means already seeded with nothing reported today. They must stay distinct.
   it('distinguishes an absent provider map from an empty one', () => {
     expect(decodeCompanionState({}).claimedTodayTokensByProvider).toBeUndefined()
-    expect(decodeCompanionState({ claimedTodayTokensByProvider: {} }).claimedTodayTokensByProvider).toEqual({})
+    expect(
+      decodeCompanionState({ claimedTodayTokensByProvider: {} }).claimedTodayTokensByProvider,
+    ).toEqual({})
   })
 
   it('throws only when the payload is not an object at all', () => {

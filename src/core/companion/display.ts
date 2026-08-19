@@ -1,7 +1,4 @@
-/**
- * Display state and hatching decisions, ported from `CompanionStore.computeState` and the
- * hatch path in `Core/CompanionStore.swift`.
- */
+/** Display state and hatching decisions. */
 
 import {
   type CompanionState,
@@ -13,7 +10,7 @@ import {
 import type { RNG } from './growth.js'
 import { ownsShinyCharm } from './shop.js'
 
-/** Burn-rate tier, from `UsageStore.BurnTier`. */
+/** Burn-rate tier. */
 export type BurnTier = 'idle' | 'normal' | 'fast' | 'blazing'
 
 export interface DisplayInputs {
@@ -25,10 +22,7 @@ export interface DisplayInputs {
   eventActive: boolean
 }
 
-export function computeDisplayState(
-  state: CompanionState,
-  inputs: DisplayInputs,
-): CompanionStateKind {
+export function computeDisplayState(state: CompanionState, inputs: DisplayInputs): CompanionStateKind {
   if (state.active === undefined) return 'egg'
   if (inputs.eventActive) return 'levelUp'
   if (inputs.limitWarning) return 'tired'

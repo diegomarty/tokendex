@@ -3,9 +3,9 @@
  * every rule it applies lives in the pure modules beside it (`ledger`, `growth`, `shop`,
  * `display`).
  *
- * That split is deliberate. In `Core/CompanionStore.swift` the rules were interleaved with
- * saving, notifications and network calls, which is why several branches had no reachable
- * test. Here the orchestrator is thin enough to read in one sitting.
+ * That split is deliberate. Interleaving the rules with saving, notifications and network
+ * calls is what leaves branches without a reachable test. Here the orchestrator is thin
+ * enough to read in one sitting.
  */
 
 import { promises as fs } from 'node:fs'
@@ -13,7 +13,13 @@ import { join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
 import type { BaseSpecies, PokeProviding } from '../pokeapi.js'
 import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
-import { computeDisplayState, eggReadyToHatch, rollDittoDisguise, rollShiny, type BurnTier } from './display.js'
+import {
+  computeDisplayState,
+  eggReadyToHatch,
+  rollDittoDisguise,
+  rollShiny,
+  type BurnTier,
+} from './display.js'
 import { applyUsage, makeEvolutionPlan, normalizedEvolutionState, type RNG } from './growth.js'
 import { applyProviderLedger, creditDelta, spendableBalance } from './ledger.js'
 import {
@@ -137,7 +143,12 @@ export class CompanionStore {
     return spendableBalance(this.state)
   }
 
-  displayState(inputs: { burnTier: BurnTier; limitWarning: boolean; hasUsageData: boolean; todayTokens: number }): CompanionStateKind {
+  displayState(inputs: {
+    burnTier: BurnTier
+    limitWarning: boolean
+    hasUsageData: boolean
+    todayTokens: number
+  }): CompanionStateKind {
     return computeDisplayState(this.state, { ...inputs, eventActive: this.now < this.eventUntil })
   }
 
@@ -221,7 +232,8 @@ export class CompanionStore {
 
     for (const event of result.events) {
       if (event.kind === 'evolved') {
-        const name = this.line === undefined ? '' : localizedName(this.line, event.toSpeciesID, this.state.language)
+        const name =
+          this.line === undefined ? '' : localizedName(this.line, event.toSpeciesID, this.state.language)
         this.pendingEvents.push({ kind: 'evolved', speciesID: event.toSpeciesID, name })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
@@ -289,7 +301,12 @@ export class CompanionStore {
       // the plan is still complete — otherwise a restart would silently reroll the branch.
       this.state = {
         ...this.state,
-        active: normalizedEvolutionState(active, line.tree, new Set(this.state.collectedFinals), this.rng),
+        active: normalizedEvolutionState(
+          active,
+          line.tree,
+          new Set(this.state.collectedFinals),
+          this.rng,
+        ),
       }
       // A threshold may already have been passed while the line was unavailable.
       this.grow(0)
@@ -312,12 +329,7 @@ export class CompanionStore {
       // Fixed at hatch, like shininess. The Mint exists precisely to reroll it later, so
       // leaving it unset would make that item act on nothing.
       const nature = NATURES[this.rng() % NATURES.length]!
-      const disguised = rollDittoDisguise(
-        line.rarity,
-        forms,
-        this.options.dittoEnabled ?? true,
-        this.rng,
-      )
+      const disguised = rollDittoDisguise(line.rarity, forms, this.options.dittoEnabled ?? true, this.rng)
 
       const mon: MonState = {
         baseID,

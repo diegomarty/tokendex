@@ -1,6 +1,5 @@
 /**
- * Per-provider accrual ledger, ported from `CompanionStore.update` in
- * `Core/CompanionStore.swift`.
+ * Per-provider accrual ledger.
  *
  * This decides how many *new* tokens a refresh contributes to growth. It is dense with
  * defect prevention, and each branch below exists because a specific way of getting it wrong
@@ -69,7 +68,9 @@ export function applyProviderLedger(
     // usage is not retroactively granted.
     state.claimedTodayTokensByProvider = { ...todayTokensByProvider }
     state.lastDate = todayDate
-    notes.push(`ledger seeded date=${todayDate} providers=${Object.keys(todayTokensByProvider).sort().join(',')}`)
+    notes.push(
+      `ledger seeded date=${todayDate} providers=${Object.keys(todayTokensByProvider).sort().join(',')}`,
+    )
     return { state, delta: 0, notes }
   }
 

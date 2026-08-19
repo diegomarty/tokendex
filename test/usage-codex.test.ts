@@ -11,8 +11,6 @@ import {
 } from '../src/core/usage/codex.js'
 import { entryTotal } from '../src/core/usage/entry.js'
 
-// Ported from the Codex sections of Tests/PokeTokenBarTests/LocalUsageReaderTests.swift.
-
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'ptb-codex-'))
 }
@@ -129,9 +127,33 @@ describe('canonical ids', () => {
     const path = write(
       [
         sessionMeta('session-a', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeCached: 20, cumulativeOutput: 10, lastInput: 100, lastCached: 20, lastOutput: 10 }),
-        stateLine({ ts: '2026-07-29T01:00:02.000Z', cumulativeInput: 300, cumulativeCached: 120, cumulativeOutput: 30, lastInput: 200, lastCached: 100, lastOutput: 20 }),
-        stateLine({ ts: '2026-07-29T01:00:03.000Z', cumulativeInput: 450, cumulativeCached: 170, cumulativeOutput: 45, lastInput: 150, lastCached: 50, lastOutput: 15 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeCached: 20,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastCached: 20,
+          lastOutput: 10,
+        }),
+        stateLine({
+          ts: '2026-07-29T01:00:02.000Z',
+          cumulativeInput: 300,
+          cumulativeCached: 120,
+          cumulativeOutput: 30,
+          lastInput: 200,
+          lastCached: 100,
+          lastOutput: 20,
+        }),
+        stateLine({
+          ts: '2026-07-29T01:00:03.000Z',
+          cumulativeInput: 450,
+          cumulativeCached: 170,
+          cumulativeOutput: 45,
+          lastInput: 150,
+          lastCached: 50,
+          lastOutput: 15,
+        }),
       ],
       dir,
       'rollout.jsonl',
@@ -157,13 +179,45 @@ describe('same-state re-records', () => {
     write(
       [
         sessionMeta('session-a', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeCached: 20, cumulativeOutput: 10, lastInput: 100, lastCached: 20, lastOutput: 10 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeCached: 20,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastCached: 20,
+          lastOutput: 10,
+        }),
         // A plain re-record of the same snapshot.
-        stateLine({ ts: '2026-07-29T01:00:02.000Z', cumulativeInput: 100, cumulativeCached: 20, cumulativeOutput: 10, lastInput: 100, lastCached: 20, lastOutput: 10 }),
-        stateLine({ ts: '2026-07-29T01:00:03.000Z', cumulativeInput: 300, cumulativeCached: 120, cumulativeOutput: 30, lastInput: 200, lastCached: 100, lastOutput: 20 }),
+        stateLine({
+          ts: '2026-07-29T01:00:02.000Z',
+          cumulativeInput: 100,
+          cumulativeCached: 20,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastCached: 20,
+          lastOutput: 10,
+        }),
+        stateLine({
+          ts: '2026-07-29T01:00:03.000Z',
+          cumulativeInput: 300,
+          cumulativeCached: 120,
+          cumulativeOutput: 30,
+          lastInput: 200,
+          lastCached: 100,
+          lastOutput: 20,
+        }),
         // A repeated session_meta must not break token_count state continuity.
         sessionMeta('session-a', '2026-07-29T01:00:04.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:05.000Z', cumulativeInput: 300, cumulativeCached: 120, cumulativeOutput: 30, lastInput: 200, lastCached: 100, lastOutput: 20 }),
+        stateLine({
+          ts: '2026-07-29T01:00:05.000Z',
+          cumulativeInput: 300,
+          cumulativeCached: 120,
+          cumulativeOutput: 30,
+          lastInput: 200,
+          lastCached: 100,
+          lastOutput: 20,
+        }),
       ],
       dir,
     )
@@ -177,9 +231,25 @@ describe('same-state re-records', () => {
     write(
       [
         sessionMeta('session-a', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeCached: 20, cumulativeOutput: 10, lastInput: 100, lastCached: 20, lastOutput: 10 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeCached: 20,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastCached: 20,
+          lastOutput: 10,
+        }),
         // Both cumulative and last total 110, but the input/cache/output split differs.
-        stateLine({ ts: '2026-07-29T01:00:02.000Z', cumulativeInput: 90, cumulativeCached: 10, cumulativeOutput: 20, lastInput: 90, lastCached: 10, lastOutput: 20 }),
+        stateLine({
+          ts: '2026-07-29T01:00:02.000Z',
+          cumulativeInput: 90,
+          cumulativeCached: 10,
+          cumulativeOutput: 20,
+          lastInput: 90,
+          lastCached: 10,
+          lastOutput: 20,
+        }),
       ],
       dir,
     )
@@ -192,10 +262,23 @@ describe('same-state re-records', () => {
     write(
       [
         sessionMeta('session-a', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 100, lastOutput: 10 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastOutput: 10,
+        }),
         // The shape real fork fixtures produce post-replay: cumulative unchanged, but
         // last.total_tokens non-zero while the accounted fields are all zero.
-        stateLine({ ts: '2026-07-29T01:00:02.000Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 0, lastOutput: 0, lastTotal: 6742 }),
+        stateLine({
+          ts: '2026-07-29T01:00:02.000Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 0,
+          lastOutput: 0,
+          lastTotal: 6742,
+        }),
       ],
       dir,
     )
@@ -207,9 +290,21 @@ describe('same-state re-records', () => {
     write(
       [
         sessionMeta('session-a', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 100, lastOutput: 10 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastOutput: 10,
+        }),
         sessionMeta('session-b', '2026-07-29T01:00:02.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:03.000Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 100, lastOutput: 10 }),
+        stateLine({
+          ts: '2026-07-29T01:00:03.000Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastOutput: 10,
+        }),
       ],
       dir,
     )
@@ -321,8 +416,20 @@ describe('fork replay trimming', () => {
     write(
       [
         sessionMeta('parent', '2026-07-29T01:00:00.000Z'),
-        stateLine({ ts: '2026-07-29T01:00:01.000Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 100, lastOutput: 10 }),
-        stateLine({ ts: '2026-07-29T01:00:02.000Z', cumulativeInput: 300, cumulativeOutput: 30, lastInput: 200, lastOutput: 20 }),
+        stateLine({
+          ts: '2026-07-29T01:00:01.000Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastOutput: 10,
+        }),
+        stateLine({
+          ts: '2026-07-29T01:00:02.000Z',
+          cumulativeInput: 300,
+          cumulativeOutput: 30,
+          lastInput: 200,
+          lastOutput: 20,
+        }),
       ],
       dir,
       'parent.jsonl',
@@ -333,10 +440,31 @@ describe('fork replay trimming', () => {
         sessionMeta('parent', '2026-07-30T01:00:00.001Z'),
         // Replays the parent's two turns, but the new CLI records cache_write so the
         // vectors differ.
-        stateLine({ ts: '2026-07-30T01:00:00.010Z', cumulativeInput: 100, cumulativeOutput: 10, lastInput: 100, lastOutput: 10, cacheWrite: 7 }),
-        stateLine({ ts: '2026-07-30T01:00:00.020Z', cumulativeInput: 300, cumulativeOutput: 30, lastInput: 200, lastOutput: 20, cacheWrite: 7 }),
+        stateLine({
+          ts: '2026-07-30T01:00:00.010Z',
+          cumulativeInput: 100,
+          cumulativeOutput: 10,
+          lastInput: 100,
+          lastOutput: 10,
+          cacheWrite: 7,
+        }),
+        stateLine({
+          ts: '2026-07-30T01:00:00.020Z',
+          cumulativeInput: 300,
+          cumulativeOutput: 30,
+          lastInput: 200,
+          lastOutput: 20,
+          cacheWrite: 7,
+        }),
         // The child's own turn, more than a second after the replay burst.
-        stateLine({ ts: '2026-07-30T01:00:03.000Z', cumulativeInput: 1300, cumulativeOutput: 128, lastInput: 1000, lastOutput: 98, cacheWrite: 7 }),
+        stateLine({
+          ts: '2026-07-30T01:00:03.000Z',
+          cumulativeInput: 1300,
+          cumulativeOutput: 128,
+          lastInput: 1000,
+          lastOutput: 98,
+          cacheWrite: 7,
+        }),
       ],
       dir,
       'child.jsonl',
@@ -405,8 +533,18 @@ describe('robustness', () => {
       payload: {
         type: 'token_count',
         info: {
-          total_token_usage: { input_tokens: 1e30, cached_input_tokens: 0, output_tokens: 10, total_tokens: 1e30 },
-          last_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, total_tokens: 110 },
+          total_token_usage: {
+            input_tokens: 1e30,
+            cached_input_tokens: 0,
+            output_tokens: 10,
+            total_tokens: 1e30,
+          },
+          last_token_usage: {
+            input_tokens: 100,
+            cached_input_tokens: 0,
+            output_tokens: 10,
+            total_tokens: 110,
+          },
         },
       },
     })
@@ -430,20 +568,29 @@ describe('isUsableFilenameHint', () => {
 describe('session id probe', () => {
   it('reads the id from the metadata line', async () => {
     const dir = tempDir()
-    const path = write([sessionMeta('abc-123', '2026-07-29T01:00:00.000Z'), codexLine({ ts: '2026-07-29T01:00:01.000Z' })], dir)
+    const path = write(
+      [sessionMeta('abc-123', '2026-07-29T01:00:00.000Z'), codexLine({ ts: '2026-07-29T01:00:01.000Z' })],
+      dir,
+    )
     expect(await probeCodexRolloutSessionID(path)).toBe('abc-123')
   })
 
   it('stops at a token_count that precedes any metadata', async () => {
     const dir = tempDir()
-    const path = write([codexLine({ ts: '2026-07-29T01:00:01.000Z' }), sessionMeta('late', '2026-07-29T01:00:02.000Z')], dir)
+    const path = write(
+      [codexLine({ ts: '2026-07-29T01:00:01.000Z' }), sessionMeta('late', '2026-07-29T01:00:02.000Z')],
+      dir,
+    )
     expect(await probeCodexRolloutSessionID(path)).toBeUndefined()
   })
 
   it('gives up at the byte limit rather than reading the whole file', async () => {
     const dir = tempDir()
     const padding = JSON.stringify({ type: 'noise', blob: 'x'.repeat(4096) })
-    const path = write([...Array.from({ length: 40 }, () => padding), sessionMeta('deep', '2026-07-29T01:00:00.000Z')], dir)
+    const path = write(
+      [...Array.from({ length: 40 }, () => padding), sessionMeta('deep', '2026-07-29T01:00:00.000Z')],
+      dir,
+    )
     expect(await probeCodexRolloutSessionID(path, 4096)).toBeUndefined()
     expect(await probeCodexRolloutSessionID(path)).toBe('deep') // found with the real budget
   })
