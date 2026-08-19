@@ -1,6 +1,5 @@
 /**
- * Login-shell environment lookup, ported from the relevant parts of
- * `Sources/PokeTokenBar/Core/BinaryLocator.swift`.
+ * Login-shell environment lookup.
  *
  * A GUI-launched app does not inherit the login shell's environment, so a user who put
  * `export COPILOT_HOME=...` in `~/.zshrc` sees correct numbers in the CLI and silently
@@ -15,8 +14,8 @@ import { promises as fs } from 'node:fs'
 /**
  * Shell-injection guard: ASCII uppercase, digits and underscore only.
  *
- * Swift's `isUppercase`/`isNumber` are Unicode-aware, so `Σ`, Cyrillic `А` and Arabic-Indic
- * `٣` would pass. They are not shell metacharacters so no real injection follows, but the
+ * A Unicode-aware "is uppercase / is a digit" test would admit `Σ`, Cyrillic `А` and
+ * Arabic-Indic `٣`. They are not shell metacharacters so no real injection follows, but the
  * guard's declared range and its actual range should agree — hence the explicit ASCII test.
  */
 export function isShellSafeEnvironmentName(name: string): boolean {
@@ -52,8 +51,7 @@ export function parseMarkedPath(raw: string): string | undefined {
   return path === '' ? undefined : path
 }
 
-const BATCH_SCRIPT =
-  `for n in "$@"; do printf '<<<BIN:%s:%s:BIN>>>' "$n" "$(eval printf '%s' \\"\\$$n\\" 2>/dev/null)"; done`
+const BATCH_SCRIPT = `for n in "$@"; do printf '<<<BIN:%s:%s:BIN>>>' "$n" "$(eval printf '%s' \\"\\$$n\\" 2>/dev/null)"; done`
 
 const SPAWN_TIMEOUT_MS = 8_000
 
@@ -68,8 +66,8 @@ async function isExecutable(path: string): Promise<boolean> {
 
 /**
  * Reads several environment variables with a *single* shell spawn. Calling once per name
- * would make startup slower with every provider added (the Swift original measured ~0.44s
- * per lookup). Unset and blank values are omitted, so a missing key means "this user does
+ * would make startup slower with every provider added (measured: ~0.44s per lookup). Unset
+ * and blank values are omitted, so a missing key means "this user does
  * not use that variable".
  *
  * Names are passed as positional arguments and never interpolated into the script, which is
@@ -102,4 +100,73 @@ export async function shellEnvironmentValues(names: string[]): Promise<Record<st
     if (value !== undefined) out[name] = value
   }
   return out
+}
+
+/**
+ * Resolves a binary through the login shell's own `PATH`.
+ *
+ * Version managers (mise, nvm, fnm) inject their `PATH` from `~/.zshrc`, so a shim is
+ * invisible to any lookup that only consults the inherited environment. The binary is passed
+ * as a positional argument and never interpolated into the script — that is what keeps this
+ * injection-safe even if a caller ever passes user input.
+ */
+export async function shellResolveBinary(binary: string): Promise<string | undefined> {
+  const shell = process.env['SHELL']
+  if (shell === undefined || !(await isExecutable(shell))) return undefined
+
+  const raw = await new Promise<string | undefined>((resolve) => {
+    execFile(
+      shell,
+      ['-ilc', `printf '<<<BIN:%s:BIN>>>' "$(command -v "$1" 2>/dev/null)"`, 'sh', binary],
+      { timeout: SPAWN_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' },
+      (error, stdout) => resolve(error && !stdout ? undefined : stdout),
+    )
+  })
+  if (raw === undefined) return undefined
+  const path = parseMarkedPath(raw)
+  return path !== undefined && (await isExecutable(path)) ? path : undefined
+}
+
+/**
+ * Walks the inherited `PATH`. A GUI-launched app gets a stub `PATH` and would learn nothing
+ * here, but a VS Code extension host usually inherits a real terminal environment, which
+ * makes this the cheap path that answers first and keeps the shell spawn as the fallback it
+ * should be.
+ *
+ * `PATHEXT` is honoured on Windows, where `codex` on disk is `codex.cmd`.
+ */
+export async function searchPath(binary: string): Promise<string | undefined> {
+  const raw = process.env['PATH']
+  if (raw === undefined || raw === '') return undefined
+  const separator = process.platform === 'win32' ? ';' : ':'
+  const suffixes =
+    process.platform === 'win32'
+      ? ['', ...(process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD').split(';')]
+      : ['']
+
+  for (const directory of raw.split(separator)) {
+    if (directory === '') continue
+    for (const suffix of suffixes) {
+      const candidate = `${directory}${process.platform === 'win32' ? '\\' : '/'}${binary}${suffix}`
+      if (await isExecutable(candidate)) return candidate
+    }
+  }
+  return undefined
+}
+
+/**
+ * The inherited `PATH`, and a child environment built on top of it.
+ *
+ * These live here rather than beside the spawn because `test/usage-environment.test.ts` bans
+ * `process.env` outside this module's small allowlist. That ban is about *provider location*
+ * variables — a user's `CLAUDE_CONFIG_DIR` must reach the app through the login shell, not
+ * only through the inherited environment — and `PATH` is a different thing entirely. Rather
+ * than widen the allowlist and blunt the guard, the two readings sit here where they belong.
+ */
+export function inheritedPath(): string | undefined {
+  return process.env['PATH']
+}
+
+export function childEnvironment(path: string): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: path }
 }
