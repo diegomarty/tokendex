@@ -13,14 +13,21 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { type CompanionView, buildSnapshot } from '../core/snapshot.js'
 import { LocalUsageCache } from '../core/usage/cache.js'
-import { enrichmentScanStart, todayKey } from '../core/usage/entry.js'
+import { type Entry, enrichmentScanStart, todayKey } from '../core/usage/entry.js'
 import { claudeProjectRoots, codexSessionsDir } from '../core/usage/roots.js'
 import { CompanionStore } from '../core/companion/store.js'
+import { LimitsPoller, isLimitWarning } from '../core/limits/poller.js'
+import { candyEligibleWindows } from '../core/limits/windows.js'
 import { eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
-import { type AppLanguage, type ItemKind, type Rarity, currentSpeciesID } from '../core/companion/model.js'
-import { buyEgg, buyItem, consumeRareCandy, useMint } from '../core/companion/shop.js'
+import {
+  type AppLanguage,
+  type ItemKind,
+  type Rarity,
+  currentSpeciesID,
+} from '../core/companion/model.js'
+import { buyEgg, buyItem, consumeRareCandy, grantCandies, useMint } from '../core/companion/shop.js'
 import {
   type DevState,
   addOffset,
@@ -36,6 +43,7 @@ import {
   tokensToMilestone,
 } from '../core/dev/simulation.js'
 import { freshCompanionState } from '../core/companion/model.js'
+import { type DevAction, DEV_GROUPS, DEV_SCENARIOS, devSummary } from '../core/dev/scenarios.js'
 import { promises as devFS } from 'node:fs'
 import { join as devJoin } from 'node:path'
 import { ourData } from '../core/appPaths.js'
@@ -44,6 +52,7 @@ import { f } from '../core/i18n/strings.js'
 import { stage as stageLabel } from '../core/i18n/dispatch.js'
 import * as D from '../core/i18n/dispatch.js'
 import { s as str } from '../core/i18n/strings.js'
+import { panelStrings } from '../core/i18n/panelStrings.js'
 import { grouped } from '../core/tokenFormatter.js'
 import { cost } from '../core/tokenFormatter.js'
 import {
@@ -57,9 +66,17 @@ import {
   natureName,
   shopEntryPrice,
 } from '../core/companion/model.js'
-import { canBuyEgg, canBuyItem, canUseMint, canUseRareCandy, itemCount, ownedItems } from '../core/companion/shop.js'
+import {
+  canBuyEgg,
+  canBuyItem,
+  canUseMint,
+  canUseRareCandy,
+  itemCount,
+  ownedItems,
+} from '../core/companion/shop.js'
 import { spendableBalance } from '../core/companion/ledger.js'
 import type {
+  PanelDevControl,
   PanelState,
   PanelShopItem,
   PanelBagItem,
@@ -73,19 +90,9 @@ export type WorkerAction =
   | { action: 'useItem'; item: ItemKind }
   | { action: 'buyEgg'; tier?: Rarity }
   | { action: 'setLanguage'; language: AppLanguage }
-  // Development-only. Everything below is reachable from the `tokendex.dev` command and
-  // gated behind the `tokendex.devMode` setting.
-  | { action: 'devAddTokens'; provider: string; amount: number }
-  | { action: 'devAddToMilestone'; scope: 'next' | 'graduation' }
-  | { action: 'devClearOffsets' }
-  | { action: 'devGrantItem'; item: ItemKind; count: number }
-  | { action: 'devGrantTokens'; amount: number }
-  | { action: 'devSetShiny'; value: boolean }
-  | { action: 'devSetDitto'; value: boolean }
-  | { action: 'devSetEggTier'; tier?: Rarity }
-  | { action: 'devDayRollover' }
-  | { action: 'devResetSave' }
-  | { action: 'devSnapshot'; slot: 'save' | 'restore' }
+  // Development-only. Declared in `core/dev/scenarios.ts` so the panel's Dev tab, the quick pick
+  // and this switch are all driven by one table.
+  | DevAction
 
 export interface ScanRequest {
   id: number
@@ -97,12 +104,14 @@ export interface PanelRequest {
   id: number
   type: 'panel'
   locale?: string
+  devMode?: boolean
 }
 
 export interface ActionRequest {
   id: number
   type: 'action'
   locale?: string
+  devMode?: boolean
   payload: WorkerAction
 }
 
@@ -123,6 +132,13 @@ const config = (workerData ?? {}) as WorkerConfig
 
 const companion = new CompanionStore({ provider: new PokeAPIClient() })
 
+/**
+ * Official limits, kept off the scan's critical path — `refresh()` returns what is known and
+ * fetches for next time. They are what turns an exhausted window into a rare candy, and the
+ * only reason the shop's grant logic ever receives anything.
+ */
+const limits = new LimitsPoller()
+
 // Dev simulation state, persisted apart from the save so it survives a reload and can be
 // rewound without touching real accounting.
 const DEV_FILE = devJoin(ourData(), 'dev-state.json')
@@ -134,7 +150,10 @@ async function loadDev(): Promise<DevState> {
   if (devLoaded) return dev
   devLoaded = true
   try {
-    dev = { ...freshDevState(), ...(JSON.parse(await devFS.readFile(DEV_FILE, 'utf8')) as DevState) }
+    dev = {
+      ...freshDevState(),
+      ...(JSON.parse(await devFS.readFile(DEV_FILE, 'utf8')) as DevState),
+    }
   } catch {
     dev = freshDevState()
   }
@@ -161,26 +180,66 @@ async function scan(locale: string | undefined) {
   const since = enrichmentScanStart(now, locale)
   const errors: string[] = []
 
-  // One provider failing must not lose the other's numbers.
-  const claude = await cache
-    .claudeEntries(since)
-    .catch((e: unknown) => {
-      errors.push(`Claude: ${e instanceof Error ? e.message : String(e)}`)
+  /**
+   * Every provider is read independently and a failure in one is recorded rather than thrown.
+   * One unreadable store must never cost the user the numbers from all the others.
+   */
+  const read = async (label: string, load: () => Promise<Entry[]>): Promise<Entry[]> => {
+    try {
+      return await load()
+    } catch (e) {
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`)
       return []
-    })
-  const codex = await cache.codexEntries(since).catch((e: unknown) => {
-    errors.push(`Codex: ${e instanceof Error ? e.message : String(e)}`)
-    return []
-  })
+    }
+  }
 
+  const [claude, codex, gemini, grok, cursor, copilot, opencode, hermes, kiro, antigravity] =
+    await Promise.all([
+      read('Claude', () => cache.claudeEntries(since)),
+      read('Codex', () => cache.codexEntries(since)),
+      read('Gemini', () => cache.geminiEntries(since)),
+      read('Grok', () => cache.grokEntries(since)),
+      read('Cursor', () => cache.cursorEntries(since)),
+      read('Copilot', () => cache.copilotEntries(since)),
+      read('OpenCode', () => cache.openCodeEntries(since)),
+      read('Hermes', () => cache.hermesEntries(since)),
+      read('Kiro', () => cache.kiroEntries(since)),
+      read('Antigravity', async () => {
+        // Its diagnostics ride along with the entries: an unreadable conversation store makes
+        // the total quietly low, which is exactly the kind of silence worth breaking.
+        const scan = await cache.antigravityScan(since)
+        errors.push(...scan.notes)
+        return scan.entries
+      }),
+    ])
+
+  // Providers with nothing to report are dropped: a permanent row of zeros for a tool the
+  // user does not have is noise, and the panel is read at a glance.
   const sources = [
     { providerID: 'claude_code', displayName: 'Claude Code', entries: claude },
     { providerID: 'codex', displayName: 'Codex', entries: codex },
-  ]
+    { providerID: 'gemini', displayName: 'Gemini', entries: gemini },
+    { providerID: 'grok', displayName: 'Grok', entries: grok },
+    { providerID: 'cursor', displayName: 'Cursor', entries: cursor },
+    { providerID: 'copilot', displayName: 'Copilot', entries: copilot },
+    { providerID: 'opencode', displayName: 'OpenCode', entries: opencode },
+    { providerID: 'hermes', displayName: 'Hermes', entries: hermes },
+    { providerID: 'kiro', displayName: 'Kiro', entries: kiro },
+    {
+      providerID: 'antigravity',
+      displayName: 'Antigravity',
+      entries: antigravity,
+    },
+  ].filter((s) => s.entries.length > 0)
 
   // Build once without the companion so the per-provider daily totals are available to feed
   // the ledger, then rebuild with the resulting companion view.
-  const usage = buildSnapshot(sources, { now, ...(locale !== undefined ? { locale } : {}), errors })
+  const usage = buildSnapshot(sources, {
+    now,
+    ...(locale !== undefined ? { locale } : {}),
+    lang: companion.snapshot().language,
+    errors,
+  })
 
   let view: CompanionView | undefined
   try {
@@ -195,7 +254,21 @@ async function scan(locale: string | undefined) {
       todayDate: dev.dateOverride ?? todayKey(now),
       hasUsageData: usage.providers.some((p) => p.entries > 0),
     })
-    view = companionView(locale)
+    // After `update`, so the grant lands on the state that was just persisted rather than on
+    // a copy `update` is about to overwrite.
+    const known = limits.refresh()
+    const outcome = grantCandies(
+      companion.snapshot(),
+      candyEligibleWindows(known.sources, companion.snapshot().language),
+      known.ready,
+    )
+    if (outcome.changed) {
+      // Re-arming counts as a change even with no grant: dropping it leaves a stale tier, and
+      // the next genuine crossing is then mistaken for one already paid.
+      companion.replaceState(outcome.state)
+      await companion.save()
+    }
+    view = companionView(locale, isLimitWarning(known.sources))
   } catch (e) {
     errors.push(`Companion: ${e instanceof Error ? e.message : String(e)}`)
   }
@@ -203,13 +276,14 @@ async function scan(locale: string | undefined) {
   return buildSnapshot(sources, {
     now,
     ...(locale !== undefined ? { locale } : {}),
+    lang: companion.snapshot().language,
     errors,
     ...(view !== undefined ? { companion: view } : {}),
   })
 }
 
 /** Everything the UI needs, already formatted — it must never re-derive a number. */
-function companionView(locale: string | undefined): CompanionView {
+function companionView(locale: string | undefined, limitWarning: boolean): CompanionView {
   const state = companion.snapshot()
   const lang = state.language
   const active = state.active
@@ -367,7 +441,11 @@ async function applyAction(payload: WorkerAction): Promise<void> {
  * Everything the panel renders, already formatted and localised. Ids are opaque tokens the
  * webview echoes back — it never parses them, so a rename here cannot break the UI silently.
  */
-function buildPanel(usage: ReturnType<typeof buildSnapshot>, locale: string | undefined): PanelState {
+function buildPanel(
+  usage: ReturnType<typeof buildSnapshot>,
+  locale: string | undefined,
+  devMode = false,
+): PanelState {
   const state = companion.snapshot()
   const lang = state.language
   const line = companion.currentLine()
@@ -420,7 +498,10 @@ function buildPanel(usage: ReturnType<typeof buildSnapshot>, locale: string | un
     return entry
   })
 
-  const activeID = state.active === undefined ? undefined : `active-${state.active.baseID}-${currentSpeciesID(state.active)}`
+  const activeID =
+    state.active === undefined
+      ? undefined
+      : `active-${state.active.baseID}-${currentSpeciesID(state.active)}`
   const dexLog: PanelDexEntry[] = dexEntriesSorted(state, line).map((e) => {
     const row: PanelDexEntry = {
       finalID: e.finalID,
@@ -462,28 +543,7 @@ function buildPanel(usage: ReturnType<typeof buildSnapshot>, locale: string | un
     dexLog,
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
-    strings: {
-      today: str(lang, 'todayTokens'),
-      month: str(lang, 'thisMonth'),
-      spendable: str(lang, 'spendableTokens'),
-      provider: D.providerColumn(lang),
-      buy: str(lang, 'buy'),
-      owned: str(lang, 'ownedAlready'),
-      use: str(lang, 'use'),
-      empty: str(lang, 'shopHint'),
-      bagEmpty: str(lang, 'bagEmptyTitle'),
-      dexEmpty: str(lang, 'dexEmptyTitle'),
-      dexEmptyHint: str(lang, 'dexEmptyHint'),
-      segmentSpecies: str(lang, 'collection'),
-      segmentLog: str(lang, 'catchLogTitle'),
-      raisingBadge: str(lang, 'dexRaising'),
-      confirmBuy: str(lang, 'buy'),
-      exportSave: str(lang, 'exportSaveButton'),
-      importSave: str(lang, 'importSaveButton'),
-      incubating: str(lang, 'eggIncubating'),
-      language: str(lang, 'language'),
-      settingsHint: str(lang, 'dexEmptyHint'),
-    },
+    strings: panelStrings(lang),
     errors: usage.errors,
   }
   const view = usage.companion
@@ -507,7 +567,37 @@ function buildPanel(usage: ReturnType<typeof buildSnapshot>, locale: string | un
     }
     panel.companion = c
   }
+  if (devMode) panel.dev = buildDevPanel()
   return panel
+}
+
+/**
+ * The Dev tab's contents, straight from the scenario table plus the live summary.
+ *
+ * Nothing is decided here: adding a scenario is one entry in `core/dev/scenarios.ts` and it shows
+ * up in the tab and in the quick pick at once.
+ */
+function buildDevPanel(): NonNullable<PanelState['dev']> {
+  const groups = DEV_GROUPS.map((group) => ({
+    title: group.title,
+    controls: DEV_SCENARIOS.filter((scenario) => scenario.group === group.id).map((scenario) => {
+      const control: PanelDevControl = {
+        id: scenario.id,
+        label: scenario.label,
+        description: scenario.detail,
+        input: scenario.input.kind === 'none' ? 'button' : scenario.input.kind,
+        destructive: scenario.confirm !== undefined,
+      }
+      if (scenario.input.kind !== 'none') {
+        control.prompt = scenario.input.prompt
+        control.defaultValue = scenario.input.defaultValue
+      }
+      if (scenario.input.kind === 'choice') control.options = scenario.input.options
+      return control
+    }),
+  })).filter((group) => group.controls.length > 0)
+
+  return { summary: devSummary(companion.snapshot(), dev), groups }
 }
 
 parentPort?.on('message', (message: WorkerRequest) => {
@@ -519,7 +609,11 @@ parentPort?.on('message', (message: WorkerRequest) => {
   void work
     .then((snapshot) => {
       const response: ScanResponse = wantsPanel
-        ? { id: message.id, ok: true, panel: buildPanel(snapshot, message.locale) }
+        ? {
+            id: message.id,
+            ok: true,
+            panel: buildPanel(snapshot, message.locale, message.devMode ?? false),
+          }
         : { id: message.id, ok: true, snapshot }
       parentPort?.postMessage(response)
     })

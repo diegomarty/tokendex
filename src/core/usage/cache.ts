@@ -1,5 +1,5 @@
 /**
- * Per-file incremental cache, ported from `Core/LocalUsageCache.swift`.
+ * Per-file incremental cache.
  *
  * This is **not an optimisation, it is required**. If you code daily, virtually every session
  * file counts as "modified this month" (hundreds of megabytes), so an mtime filter alone
@@ -10,8 +10,8 @@
  * A file whose `(path, mtime, size)` is unchanged is never re-parsed, and the snapshot is
  * persisted so the cold parse happens **once**, not once per launch.
  *
- * Scope: Claude and Codex. Gemini and Grok are deferred; the snapshot tolerates their absence
- * so adding them later does not invalidate an existing cache.
+ * The snapshot tolerates missing per-provider sections, so adding a provider never
+ * invalidates an existing cache.
  */
 
 import { promises as fs } from 'node:fs'
@@ -30,7 +30,17 @@ import {
 } from './codex.js'
 import { type Entry, dedupKeepMax } from './entry.js'
 import { parseClaudeFile } from './claude.js'
-import { claudeProjectRoots, codexSessionsDir } from './roots.js'
+import { parseGeminiFile } from './gemini.js'
+import { isGrokUsageFile, parseGrokFile } from './grok.js'
+import {
+  copilotEntries,
+  cursorEntries,
+  hermesEntries,
+  kiroEntries,
+  openCodeEntries,
+} from './additional.js'
+import { type AntigravityScan, antigravityScan } from './antigravity.js'
+import { claudeProjectRoots, codexSessionsDir, geminiTmpDir, grokSessionsDir } from './roots.js'
 import { jsonlFiles } from './scan.js'
 
 /** Bump to re-parse only Codex blobs when fork replay or same-state handling changes. */
@@ -74,13 +84,33 @@ interface Snapshot {
   claude: Record<string, Blob>
   codex: Record<string, CodexBlob>
   codexSessionIDs: Record<string, CodexSessionProbe>
+  gemini?: Record<string, Blob>
+  grok?: Record<string, Blob>
+  /**
+   * Append-only stores keep entries plus a per-database high-water mark, rather than a blob
+   * per file: their data lives in one database that is appended to, not in files that change.
+   */
+  incremental?: Record<string, IncrementalCache>
   codexParserVersion: number
   codexSessionIndexVersion: number
+}
+
+interface IncrementalCache {
+  entries: Entry[]
+  highWaterByPath: Record<string, number>
 }
 
 export interface CacheOptions {
   claudeRoots?: string[]
   codexRoot?: string
+  geminiRoot?: string
+  grokRoot?: string
+  cursorRoots?: string[]
+  copilotRoots?: string[]
+  openCodeRoots?: string[]
+  hermesRoots?: string[]
+  kiroRoots?: string[]
+  antigravityRoot?: string
   filePath?: string
   now?: () => number
   /**
@@ -95,6 +125,9 @@ export class LocalUsageCache {
   private claude: Record<string, Blob> = {}
   private codex: Record<string, CodexBlob> = {}
   private codexSessionIDs: Record<string, CodexSessionProbe> = {}
+  private gemini: Record<string, Blob> = {}
+  private grok: Record<string, Blob> = {}
+  private incremental: Record<string, IncrementalCache> = {}
   private loaded = false
   private dirty = false
   private lastSave: number | undefined
@@ -110,9 +143,9 @@ export class LocalUsageCache {
   }
 
   private get filePath(): string {
-    // Compressed and suffixed so it is self-describing. The Swift app's `usage-cache.json`
-    // is a different file on purpose — the two implementations do not share a format, and
-    // silently reading each other's would be worse than a cold start.
+    // Compressed and suffixed so it is self-describing. The `.gz` also keeps the name from
+    // colliding with any plain `usage-cache.json` sitting beside it — nothing else shares
+    // this format, and silently reading a foreign one would be worse than a cold start.
     return this.options.filePath ?? join(AppPaths.ourData(), 'usage-cache.json.gz')
   }
 
@@ -143,6 +176,113 @@ export class LocalUsageCache {
     return entries
   }
 
+  async geminiEntries(modifiedSince: number): Promise<Entry[]> {
+    await this.ensureLoaded()
+    // `.json` is collected only here: Gemini keeps legacy checkpoints in that extension,
+    // while allowing it under the Claude roots would drag in their `.meta.json` sidecars.
+    const entries = await this.collect(
+      this.options.geminiRoot ?? geminiTmpDir(),
+      modifiedSince,
+      this.gemini,
+      parseGeminiFile,
+      { allowJSON: true },
+    )
+    await this.saveIfNeeded()
+    return entries
+  }
+
+  async grokEntries(modifiedSince: number): Promise<Entry[]> {
+    await this.ensureLoaded()
+    const all = await this.collect(
+      this.options.grokRoot ?? (await grokSessionsDir()),
+      modifiedSince,
+      this.grok,
+      parseGrokFile,
+      // The eligibility test runs **before** the blob lookup. A blob is invalidated by
+      // updates.jsonl's own mtime and size, but the evidence here is a sibling summary.json;
+      // deciding inside parsing would freeze a subagent session parsed before its summary was
+      // written, making the double count permanent because the file never changes again.
+      { include: isGrokUsageFile },
+    )
+    await this.saveIfNeeded()
+    // A fork copying its parent's updates keeps the same turn ids, so this counts each once.
+    return dedupKeepMax(all)
+  }
+
+  /**
+   * Cursor and Copilot resume from a per-database watermark rather than re-reading.
+   *
+   * A reset means the store was rebuilt, so the previously held entries are **discarded**
+   * rather than merged: keeping them would double count against the cold rescan that
+   * `scanIncrementalStores` has already performed.
+   */
+  private async incrementalEntries(
+    key: 'cursor' | 'copilot',
+    scan: (marks: Record<string, number>) => Promise<{
+      entries: Entry[]
+      highWaterByPath: Record<string, number>
+      didReset: boolean
+    }>,
+  ): Promise<Entry[]> {
+    await this.ensureLoaded()
+    const held = this.incremental[key] ?? { entries: [], highWaterByPath: {} }
+    const result = await scan(held.highWaterByPath)
+    const merged = result.didReset ? result.entries : dedupKeepMax([...held.entries, ...result.entries])
+
+    this.incremental[key] = {
+      entries: merged,
+      highWaterByPath: result.highWaterByPath,
+    }
+    this.dirty = true
+    await this.saveIfNeeded()
+    return merged
+  }
+
+  async cursorEntries(modifiedSince: number): Promise<Entry[]> {
+    return this.incrementalEntries('cursor', (afterRowIDByPath) =>
+      cursorEntries(modifiedSince, {
+        afterRowIDByPath,
+        ...(this.options.cursorRoots !== undefined ? { roots: this.options.cursorRoots } : {}),
+      }),
+    )
+  }
+
+  async copilotEntries(modifiedSince: number): Promise<Entry[]> {
+    return this.incrementalEntries('copilot', (afterRowIDByPath) =>
+      copilotEntries(modifiedSince, {
+        afterRowIDByPath,
+        ...(this.options.copilotRoots !== undefined ? { roots: this.options.copilotRoots } : {}),
+      }),
+    )
+  }
+
+  /**
+   * OpenCode, Hermes and Kiro rewrite their stores in place and expose no append-only id, so
+   * there is nothing to resume from — they are re-read whole on every scan.
+   */
+  async openCodeEntries(modifiedSince: number): Promise<Entry[]> {
+    return openCodeEntries(modifiedSince, this.options.openCodeRoots)
+  }
+
+  async hermesEntries(modifiedSince: number): Promise<Entry[]> {
+    return hermesEntries(modifiedSince, this.options.hermesRoots)
+  }
+
+  async kiroEntries(modifiedSince: number): Promise<Entry[]> {
+    return kiroEntries(modifiedSince, this.options.kiroRoots)
+  }
+
+  /**
+   * Antigravity keeps its token ledger inside a protobuf blob, so the scan window cannot be
+   * pushed into SQL and every conversation store is re-read whole.
+   *
+   * Returns the notes alongside the entries rather than swallowing them: an unreadable store
+   * makes the totals silently low, and that is worth saying out loud.
+   */
+  async antigravityScan(modifiedSince: number): Promise<AntigravityScan> {
+    return antigravityScan(modifiedSince, this.options.antigravityRoot)
+  }
+
   /** Test observation point: confirms deleted rollouts do not accumulate in the index. */
   async codexSessionIndexCount(): Promise<number> {
     await this.ensureLoaded()
@@ -156,9 +296,14 @@ export class LocalUsageCache {
     since: number,
     cache: Record<string, Blob>,
     parse: (path: string) => Promise<Entry[]>,
+    options: {
+      allowJSON?: boolean
+      include?: (path: string) => Promise<boolean>
+    } = {},
   ): Promise<Entry[]> {
     const result: Entry[] = []
-    for (const file of await jsonlFiles(root, since)) {
+    for (const file of await jsonlFiles(root, since, options)) {
+      if (options.include !== undefined && !(await options.include(file.path))) continue
       const blob = cache[file.path]
       if (blob !== undefined && blob.mtime === file.mtime && blob.size === file.size) {
         result.push(...blob.entries) // unchanged -> not re-parsed
@@ -295,6 +440,9 @@ export class LocalUsageCache {
     this.claude = snapshot.claude ?? {}
     this.codex = snapshot.codex ?? {}
     this.codexSessionIDs = snapshot.codexSessionIDs ?? {}
+    this.gemini = snapshot.gemini ?? {}
+    this.grok = snapshot.grok ?? {}
+    this.incremental = snapshot.incremental ?? {}
 
     if (snapshot.codexParserVersion !== CODEX_PARSER_VERSION) {
       this.codex = {}
@@ -320,6 +468,16 @@ export class LocalUsageCache {
       Object.fromEntries(Object.entries(map).filter(([, v]) => v.mtime >= cutoff))
     this.claude = keepRecent(this.claude)
     this.codex = keepRecent(this.codex)
+    this.gemini = keepRecent(this.gemini)
+    this.grok = keepRecent(this.grok)
+    // Incremental caches hold entries, not file blobs, so they prune by entry date.
+    const cutoffDate = this.now - PRUNE_AGE_MS
+    for (const [key, held] of Object.entries(this.incremental)) {
+      this.incremental[key] = {
+        entries: held.entries.filter((e) => e.date >= cutoffDate),
+        highWaterByPath: held.highWaterByPath,
+      }
+    }
   }
 
   /** Writes when dirty, throttled to at most once a minute. */
@@ -336,6 +494,9 @@ export class LocalUsageCache {
       claude: this.claude,
       codex: this.codex,
       codexSessionIDs: this.codexSessionIDs,
+      gemini: this.gemini,
+      grok: this.grok,
+      incremental: this.incremental,
       codexParserVersion: CODEX_PARSER_VERSION,
       codexSessionIndexVersion: CODEX_SESSION_INDEX_VERSION,
     }

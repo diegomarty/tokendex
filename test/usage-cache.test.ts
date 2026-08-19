@@ -6,8 +6,6 @@ import { describe, expect, it } from 'vitest'
 import { LocalUsageCache } from '../src/core/usage/cache.js'
 import { entryTotal } from '../src/core/usage/entry.js'
 
-// Ported from Tests/PokeTokenBarTests/LocalUsageCacheTests.swift.
-
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'ptb-cache-'))
 }
@@ -22,7 +20,12 @@ function claudeLine(id: string, output: number): string {
     message: {
       id,
       model: 'claude-opus-4-8',
-      usage: { input_tokens: 100, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      usage: {
+        input_tokens: 100,
+        output_tokens: output,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
     },
   })
 }
@@ -34,7 +37,12 @@ function codexLine(ts: string, output: number): string {
     payload: {
       type: 'token_count',
       info: {
-        last_token_usage: { input_tokens: 1000, cached_input_tokens: 200, output_tokens: output, total_tokens: 1000 + output },
+        last_token_usage: {
+          input_tokens: 1000,
+          cached_input_tokens: 200,
+          output_tokens: output,
+          total_tokens: 1000 + output,
+        },
       },
     },
   })
@@ -44,7 +52,12 @@ function forkedMeta(ts: string): string {
   return JSON.stringify({
     type: 'session_meta',
     timestamp: ts,
-    payload: { id: 'child', forked_from_id: 'parent', parent_thread_id: 'parent', thread_source: 'user' },
+    payload: {
+      id: 'child',
+      forked_from_id: 'parent',
+      parent_thread_id: 'parent',
+      thread_source: 'user',
+    },
   })
 }
 
@@ -52,7 +65,13 @@ function subagentMeta(ts: string): string {
   return JSON.stringify({
     type: 'session_meta',
     timestamp: ts,
-    payload: { id: 'sub-1', session_id: 'parent', forked_from_id: 'parent', parent_thread_id: 'parent', thread_source: 'subagent' },
+    payload: {
+      id: 'sub-1',
+      session_id: 'parent',
+      forked_from_id: 'parent',
+      parent_thread_id: 'parent',
+      thread_source: 'subagent',
+    },
   })
 }
 
@@ -208,7 +227,10 @@ describe('session index', () => {
     // A child with an orphaned parent forces the probe path over the other file. That other
     // file must sit OUTSIDE the lookup window — inside it, it is already loaded and there is
     // nothing left to probe.
-    write(root, 'rollout-child.jsonl', [forkedMeta('2026-07-29T01:00:00.000Z'), codexLine('2026-07-29T01:00:03.000Z', 5)])
+    write(root, 'rollout-child.jsonl', [
+      forkedMeta('2026-07-29T01:00:00.000Z'),
+      codexLine('2026-07-29T01:00:03.000Z', 5),
+    ])
     const other = write(root, 'rollout-other.jsonl', [codexLine('2026-07-29T01:00:00.000Z', 1)])
     const ancient = new Date(Date.now() - 200 * 86_400_000)
     utimesSync(other, ancient, ancient)
