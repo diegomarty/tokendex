@@ -1,0 +1,105 @@
+{
+  "name": "tokendex",
+  "displayName": "Tokendex",
+  "description": "Track your local AI-CLI token usage as a creature that grows in the status bar.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tokendex.open",
+        "title": "Tokendex: abrir panel"
+      },
+      {
+        "command": "tokendex.refresh",
+        "title": "Tokendex: refrescar ahora"
+      },
+      {
+        "command": "tokendex.showOutput",
+        "title": "Tokendex: mostrar registro"
+      },
+      {
+        "command": "tokendex.dev",
+        "title": "Tokendex: simulación de desarrollo…"
+      }
+    ],
+    "configuration": {
+      "title": "Tokendex",
+      "properties": {
+        "tokendex.refreshInterval": {
+          "type": "number",
+          "default": 120,
+          "enum": [
+            30,
+            60,
+            120,
+            300,
+            600
+          ],
+          "enumDescriptions": [
+            "30 s",
+            "1 min",
+            "2 min (recomendado)",
+            "5 min",
+            "10 min"
+          ],
+          "description": "Cada cuánto se relee el uso local."
+        },
+        "tokendex.devMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Habilita el menú de simulación de desarrollo. Inyecta tokens ficticios en la observación, sin tocar tus logs reales."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run typecheck && node esbuild.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "npm run compile && npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  },
+  "publisher": "diegomarty",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/diegomarty/tokendex"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "tokens",
+    "usage",
+    "pokemon",
+    "tokendex"
+  ],
+  "galleryBanner": {
+    "color": "#1f2430",
+    "theme": "dark"
+  },
+  "bugs": {
+    "url": "https://github.com/diegomarty/tokendex/issues"
+  },
+  "homepage": "https://github.com/diegomarty/tokendex#readme"
+}

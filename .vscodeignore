@@ -1,0 +1,13 @@
+src/**
+test/**
+tools/**
+docs/**
+node_modules/**
+.vscode/**
+.github/**
+tsconfig*.json
+vitest.config.ts
+esbuild.mjs
+CLAUDE.md
+PORTED-THROUGH
+**/*.map

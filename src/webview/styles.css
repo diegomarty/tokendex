@@ -1,0 +1,262 @@
+/*
+ * Webview styling.
+ *
+ * Everything colour-related comes from VS Code's own CSS variables so the panel follows the
+ * user's theme instead of imposing one. Hard-coding a palette here is the fastest way to make
+ * an extension look broken in half the themes people use.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 16px;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+}
+
+/* An editor tab can be 2000px wide. Left unbounded, the companion card and its progress bar
+   stretch across the whole screen and the panel reads as mostly empty. */
+main { max-width: 1040px; margin: 0 auto; }
+
+h2 { font-size: 1.05em; margin: 0 0 10px; font-weight: 600; }
+
+/* ---- tabs ---- */
+nav.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  margin: 0 auto 16px;
+  max-width: 1040px;
+}
+nav button {
+  appearance: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.65;
+  padding: 7px 13px;
+  font: inherit;
+  cursor: pointer;
+}
+nav button:hover { opacity: 1; }
+nav button[aria-selected='true'] {
+  opacity: 1;
+  border-bottom-color: var(--vscode-focusBorder);
+}
+
+section[hidden] { display: none; }
+
+/* ---- companion ---- */
+.companion {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  background: var(--vscode-editorWidget-background, transparent);
+}
+.sprite {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 10px;
+  background: var(--vscode-editor-background);
+}
+/* Rendered at the sprite's native 96px. `pixelated` is only correct when scaling by a whole
+   number — at an arbitrary size it turns pixel art into mush, which is what the 34px slots
+   were doing. */
+.sprite img { width: 96px; height: 96px; image-rendering: pixelated; }
+.sprite .egg { font-size: 62px; line-height: 1; }
+
+/* Paused whenever the panel is hidden — an always-running animation was measured as the
+   single biggest idle-CPU cost in the macOS original. */
+.sprite img.bob { animation: bob 1.6s ease-in-out infinite; }
+body.paused .sprite img.bob { animation-play-state: paused; }
+@keyframes bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sprite img.bob { animation: none; }
+}
+
+.companion-info { flex: 1; min-width: 0; max-width: 620px; }
+.companion-name { font-size: 1.4em; font-weight: 600; line-height: 1.2; }
+
+/* Facts as chips instead of one long dot-separated line: at a glance you can find the stage
+   or the rarity without reading the whole sentence. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.chip {
+  font-size: 0.8em;
+  padding: 2px 9px;
+  border-radius: 11px;
+  border: 1px solid var(--vscode-panel-border);
+  opacity: 0.85;
+}
+.chip.shiny { border-color: var(--vscode-charts-yellow, gold); opacity: 1; }
+
+.progress { margin-top: 12px; }
+.progress .meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin-bottom: 5px;
+}
+.bar {
+  height: 9px;
+  border-radius: 5px;
+  /* An explicit track colour: `opacity` on the container faded the fill too, which is why
+     the bar was nearly invisible. */
+  background: var(--vscode-panel-border);
+  overflow: hidden;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 5px;
+  background: var(--vscode-charts-blue, var(--vscode-focusBorder));
+  transition: width 0.4s ease;
+}
+
+/* ---- stats ---- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.stat {
+  padding: 11px 13px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 7px;
+}
+.stat .label { opacity: 0.65; font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; }
+.stat .value { font-size: 1.35em; font-weight: 600; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.stat .note { opacity: 0.6; font-size: 0.85em; margin-top: 1px; }
+
+table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+th { opacity: 0.65; font-weight: 500; font-size: 0.85em; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- shop / bag ---- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 7px;
+  margin-bottom: 8px;
+}
+.row .icon { font-size: 24px; width: 30px; text-align: center; flex: none; }
+.row .body { flex: 1; min-width: 0; }
+.row .title { font-weight: 600; }
+.row .desc { opacity: 0.7; font-size: 0.88em; margin-top: 2px; }
+
+button.action {
+  appearance: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 5px 13px;
+  font: inherit;
+  cursor: pointer;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  white-space: nowrap;
+}
+button.action:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+button.action:disabled { opacity: 0.4; cursor: default; }
+button.action.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+/* ---- dex ---- */
+.dex { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 10px; }
+.dex .cell {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 7px;
+  padding: 8px 4px;
+  text-align: center;
+}
+.dex img { width: 56px; height: 56px; image-rendering: pixelated; }
+.dex .cell .name { font-size: 0.78em; opacity: 0.8; margin-top: 3px; word-break: break-word; }
+.dex .cell.shiny { border-color: var(--vscode-charts-yellow, gold); }
+
+.empty { opacity: 0.6; padding: 26px 0; text-align: center; }
+.error {
+  border-left: 3px solid var(--vscode-editorError-foreground, crimson);
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  opacity: 0.9;
+  font-size: 0.9em;
+}
+
+label.setting { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+label.setting select {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: inherit;
+}
+
+/* ---- evolution strip ---- */
+.evoline { display: flex; align-items: center; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+.evoline .slot {
+  width: 56px; height: 56px;
+  display: grid; place-items: center;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+}
+/* Exactly half the 96px source, so `pixelated` downscales cleanly. A fractional size (the
+   old 34px) is what made these unreadable smudges. */
+.evoline .slot img { width: 48px; height: 48px; image-rendering: pixelated; }
+/* Stages already passed are dimmed; the current one is highlighted; what is still ahead is
+   faded so the strip reads left-to-right as progress. */
+.evoline .slot.done { opacity: 0.55; }
+.evoline .slot.current { border-color: var(--vscode-focusBorder); border-width: 2px; }
+.evoline .slot.future { opacity: 0.4; border-style: dashed; }
+.evoline .mystery { font-size: 24px; font-weight: 700; opacity: 0.6; }
+.evoline .arrow { opacity: 0.45; font-size: 18px; padding: 0 1px; }
+
+/* ---- dex segments ---- */
+.segments { display: flex; gap: 6px; margin-bottom: 14px; }
+.segments .seg {
+  appearance: none;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  padding: 4px 13px;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.segments .seg[aria-selected='true'] {
+  opacity: 1;
+  background: var(--vscode-button-secondaryBackground);
+  border-color: transparent;
+}
+
+/* A species held only by the Pokémon being raised is not permanent yet, and saying so stops a
+   shrinking count from looking like data loss. */
+.dex .cell.raising { border-style: dashed; opacity: 0.85; }
+.dex .cell .badge {
+  font-size: 0.68em;
+  opacity: 0.7;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.row .thumb { width: 34px; height: 34px; image-rendering: pixelated; flex: none; }
+.row.active { border-color: var(--vscode-focusBorder); }
