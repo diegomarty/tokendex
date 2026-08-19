@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+
 - Status bar showing today's token usage and companion state, refreshing every 2 minutes.
 - Panel with usage, companion, shop, bag, Pokédex and language settings.
 - Claude Code and Codex usage parsing, including Codex fork replay trimming and session
@@ -20,5 +21,6 @@
   silently replacing progress with an empty state.
 
 ### Not yet ported
+
 - Gemini, Grok, Cursor, Copilot, Antigravity, Kiro and OpenCode providers.
 - Official limit windows (OAuth / Codex rate limits) and the candy grants that depend on them.

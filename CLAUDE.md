@@ -3,27 +3,6 @@
 A VS Code extension that reads local AI-CLI usage logs and turns them into a companion that
 grows in the status bar.
 
-**Read [`docs/context.md`](docs/context.md) before making non-trivial changes.** This file is
-the rules; that one is why they are the rules — the measurements behind the architecture, the
-traps already hit, what is deliberately deferred, and what is still undecided.
-
-## Origin and upstream
-
-Derived from [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar) (MIT), a
-macOS menu-bar app. The parsing engine and companion progression were ported to TypeScript.
-`LICENSE` carries dual attribution; keep it.
-
-**This repo does not contain the Swift source.** To see what upstream changed:
-
-```
-git clone https://github.com/chattymin/PokeTokenBar /tmp/ptb-upstream
-git -C /tmp/ptb-upstream log --oneline <SHA in PORTED-THROUGH>..HEAD -- Sources/PokeTokenBar/Core/
-```
-
-Port what applies, then update `PORTED-THROUGH`. Upstream moves fast — it added three usage
-providers in its first two months — so this is the route by which new providers arrive, not a
-side task.
-
 ## Architecture rules
 
 - **`src/core/` never imports `vscode`.** It stays unit-testable without launching the editor.
@@ -34,20 +13,42 @@ side task.
   never re-derive or re-format a number — a second formatting path is a second source of
   truth that drifts.
 - **Provider location env vars go through `usageEnvironment`**, never `process.env` directly.
+- **SQLite goes through `sql.js`, never `better-sqlite3`.** A native module would mean one
+  VSIX per platform, which is the whole cost this design exists to avoid.
+- **Official limits never block a scan.** They are decoration; the totals are not.
+
+## Extension points
+
+Adding a provider or an install path touches a fixed set of places. Never grow a private list
+somewhere else, and never add a `providerID === '…'` branch on a generic path (today/week/month
+totals, burn tier, companion rhythm).
+
+- **A usage source**: one module under `src/core/usage/`, one method on `LocalUsageCache`, one
+  entry in the worker's provider list (both the `read(…)` call and the `sources` array). Root
+  discovery goes in `roots.ts`; a location env var goes in `USAGE_ENVIRONMENT_NAMES`.
+- **A version manager or install path**: `binaryLocator.commonToolDirectories()`.
+- **An append-only SQLite store**: call `scanIncrementalStores` in `usage/additional.ts`. Do
+  not copy the watermark loop.
 
 ## Testing
 
-Port the test before the implementation, then **inject the defect and confirm the test
-fails**. A test that has never failed proves nothing. This caught two real gaps during the
-port: a `new Date()` that diverged from Swift in three cases, and a missing guard on the
-Codex subagent exemption.
+Write the test first, then **inject the defect and confirm the test fails**. A test that has
+never failed proves nothing. This caught two real gaps: a `new Date()` that diverged in three
+specific cases, and a missing guard on the Codex subagent exemption.
 
-`src/core/i18n/strings.ts` is **generated**. Brand mentions were rebranded after extraction;
-re-running the extractor reintroduces the old name.
+Reproduce the exact branch that triggers a bug. For an `A || B` gate, test **B alone** (A
+false, B true) — a test that passes through a different path gives false confidence.
+
+When you fix a defect, sweep the codebase for the same _class_ of mistake and leave the
+prevention behind as a test, a guard or a note — a mechanism, not a memory.
+
+`src/core/i18n/strings.ts` is **generated**; edit `dispatch.ts` for anything new.
 
 ## Conventions
 
-- Commits and PRs in English.
+- Commits and PRs in English, using the gitmoji convention — see `CONTRIBUTING.md`.
 - **No `Co-Authored-By: Claude` trailer.**
+- Formatting is pinned in `.prettierrc.json` and gated in CI. Run `npm run format` before
+  committing, and never run Prettier with a different config.
 - Sprites are fetched from PokéAPI at runtime and never bundled — a licence obligation. Keep
   the Pokémon disclaimer in the README.

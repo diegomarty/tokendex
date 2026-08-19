@@ -1,7 +1,7 @@
 # Tokendex
 
 Turns your local AI-CLI token usage into a Pokémon-style companion that grows in the status
-bar. Claude Code and Codex are read directly from their local logs — nothing is uploaded.
+bar. Ten AI CLIs are read directly from their own local logs — nothing is uploaded.
 
 ## What it does
 
@@ -14,10 +14,20 @@ bar. Claude Code and Codex are read directly from their local logs — nothing i
 
 Local log files only:
 
-| Provider | Location |
-|---|---|
+| Provider    | Location                                                         |
+| ----------- | ---------------------------------------------------------------- |
 | Claude Code | `~/.claude/projects` (plus `CLAUDE_CONFIG_DIR`, comma-separated) |
-| Codex | `~/.codex/sessions` |
+| Codex       | `~/.codex/sessions`                                              |
+| Gemini      | `~/.gemini/tmp`                                                  |
+| Grok        | `~/.grok/sessions` (plus `GROK_HOME`)                            |
+| Antigravity | `~/.gemini/antigravity-cli/conversations`                        |
+| Cursor      | the editor's `state.vscdb`                                       |
+| Copilot     | the CLI's history store (plus `COPILOT_HOME`)                    |
+| OpenCode    | `~/.local/share/opencode` (plus `OPENCODE_DATA_DIR`)             |
+| Hermes      | the CLI's home (plus `HERMES_HOME`)                              |
+| Kiro        | the CLI's data directory                                         |
+
+Providers you do not use never appear — a permanent row of zeros is noise.
 
 Nothing is sent anywhere. The one network call is to [PokéAPI](https://pokeapi.co) for
 sprites and species data, fetched at runtime.
@@ -32,27 +42,21 @@ from Windows across the `\\wsl$` bridge was measured at ~17x slower.
 
 Measured on a real 1.4 GB corpus (970 MB Claude, 494 MB Codex):
 
-| | |
-|---|---|
-| First scan ever | ~30 s, once |
-| Startup with a warm cache | ~100 ms |
-| Each refresh | 65-80 ms |
+|                           |             |
+| ------------------------- | ----------- |
+| First scan ever           | ~30 s, once |
+| Startup with a warm cache | ~100 ms     |
+| Each refresh              | 65-80 ms    |
 
 Scanning runs in a `worker_thread`, never on the extension host, so VS Code is never blocked.
 
 ## Settings
 
-| Setting | Default |
-|---|---|
+| Setting                    | Default       |
+| -------------------------- | ------------- |
 | `tokendex.refreshInterval` | `120` seconds |
 
 ## Credits
-
-Derived from [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar) (MIT), a
-macOS menu-bar app. The usage-parsing engine and the companion progression were ported to
-TypeScript and rebuilt as a cross-platform VS Code extension: the scan runs in a worker
-thread, the cache and the game rules were restructured into pure modules, and the UI is a
-webview rather than AppKit.
 
 Pokémon and Pokémon character names are trademarks of Nintendo. This project is a fan work,
 is not affiliated with or endorsed by Nintendo, Creatures Inc. or GAME FREAK Inc., and bundles
@@ -60,5 +64,4 @@ no Pokémon assets — sprites are fetched from PokéAPI at runtime.
 
 ## Licence
 
-MIT, with dual attribution: see `LICENSE`. Copyright is held by Diego Martín for this
-extension and by chattymin for the original work it derives from.
+MIT — see [`LICENSE`](LICENSE).
