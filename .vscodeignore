@@ -11,3 +11,5 @@ esbuild.mjs
 CLAUDE.md
 PORTED-THROUGH
 **/*.map
+dist/bench/**
+dist/tools/**

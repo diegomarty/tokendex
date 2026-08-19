@@ -3,7 +3,7 @@
  *
  * Every string here is already formatted and already localised. The webview cannot import the
  * core modules (different bundle, no Node), and even if it could, re-deriving a number there
- * would create a second source of truth that drifts from upstream.
+ * would create a second source of truth that drifts.
  */
 
 export interface PanelTotals {
@@ -79,8 +79,19 @@ export interface PanelDexEntry {
   isActive: boolean
 }
 
+/** Tab labels. `dev` is a literal: that surface is developer-only and never localised. */
+export interface PanelTabLabels {
+  home: string
+  shop: string
+  bag: string
+  dex: string
+  settings: string
+  dev: string
+}
+
 /** UI chrome labels, resolved once on the extension side. */
 export interface PanelStrings {
+  tabs: PanelTabLabels
   today: string
   month: string
   spendable: string
@@ -103,6 +114,28 @@ export interface PanelStrings {
   settingsHint: string
 }
 
+/**
+ * One control in the Dev tab. The webview renders it and echoes the id back; it never knows
+ * what the action does, which is what keeps the dev surface out of the shipped UI logic.
+ */
+export interface PanelDevControl {
+  id: string
+  label: string
+  description: string
+  input: 'button' | 'amount' | 'choice'
+  prompt?: string
+  defaultValue?: string
+  options?: { value: string; label: string }[]
+  /** Destructive: the host raises a native confirmation before dispatching. */
+  destructive: boolean
+}
+
+/** Present only while `tokendex.devMode` is on. Absent = the tab is not even shown. */
+export interface PanelDev {
+  summary: { label: string; value: string }[]
+  groups: { title: string; controls: PanelDevControl[] }[]
+}
+
 export interface PanelState {
   totals: PanelTotals
   providers: PanelProvider[]
@@ -117,6 +150,8 @@ export interface PanelState {
   language: string
   languages: { id: string; label: string }[]
   strings: PanelStrings
+  /** Development surface, only when devMode is on. */
+  dev?: PanelDev
   errors: string[]
 }
 
@@ -127,3 +162,4 @@ export type PanelMessage =
   | { type: 'setLanguage'; language: string }
   | { type: 'exportSave' }
   | { type: 'importSave' }
+  | { type: 'dev'; id: string; value?: string }

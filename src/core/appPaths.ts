@@ -1,7 +1,5 @@
 /**
- * Platform data locations, replacing the direct
- * `FileManager.default.urls(for: .applicationSupportDirectory, ...)` calls and the four
- * hard-coded `Library/Application Support` literals in the Swift original.
+ * Platform data locations.
  *
  * The extension runs wherever the extension host runs — inside WSL for a Remote-WSL
  * window, on Windows for a local one — so every one of these must be resolved at runtime
@@ -30,9 +28,31 @@ export function localAppData(): string {
   return appSupport()
 }
 
-/** Where this app keeps its own state (game save, sprite cache, usage cache). */
-export function ourData(): string {
-  return join(appSupport(), 'Tokendex')
+/**
+ * Where editor-style apps keep configuration.
+ *
+ * Differs from `appSupport` on Linux only: VS Code and its forks (Cursor) use `~/.config`
+ * there, while data-style stores use `~/.local/share`. On macOS and Windows the two coincide.
+ */
+export function configHome(): string {
+  if (process.platform === 'darwin') return join(home(), 'Library', 'Application Support')
+  if (process.platform === 'win32') {
+    return process.env['APPDATA'] ?? join(home(), 'AppData', 'Roaming')
+  }
+  return process.env['XDG_CONFIG_HOME'] ?? join(home(), '.config')
 }
 
-
+/**
+ * Where this app keeps its own state (game save, sprite cache, usage cache).
+ *
+ * `TOKENDEX_STATE_DIR` redirects all of it, which is what makes it safe to experiment: the
+ * development scenarios mutate the real save, and an Extension Development Host pointed at a
+ * throwaway directory cannot touch the progress you actually care about. Deliberately NOT
+ * registered in `usageEnvironment`: that module is for *provider log locations* a user exports
+ * for the CLI, while this is a dev/QA override the app itself defines.
+ */
+export function ourData(): string {
+  const override = process.env['TOKENDEX_STATE_DIR']
+  if (override !== undefined && override.trim() !== '') return override
+  return join(appSupport(), 'Tokendex')
+}

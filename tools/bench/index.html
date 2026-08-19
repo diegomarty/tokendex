@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tokendex · bench</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bench-bg: #15161a;
+        --bench-fg: #e6e6e6;
+        --bench-dim: #8b8f98;
+        --bench-line: #2a2c33;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font:
+          13px/1.5 system-ui,
+          sans-serif;
+        background: var(--bench-bg);
+        color: var(--bench-fg);
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--bench-line);
+        position: sticky;
+        top: 0;
+        background: var(--bench-bg);
+        z-index: 2;
+      }
+      header strong {
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      label {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        color: var(--bench-dim);
+      }
+      select,
+      button {
+        font: inherit;
+        color: var(--bench-fg);
+        background: #22242b;
+        border: 1px solid var(--bench-line);
+        border-radius: 5px;
+        padding: 4px 7px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #4a4d57;
+      }
+      #status {
+        margin-left: auto;
+        color: var(--bench-dim);
+        font-variant-numeric: tabular-nums;
+      }
+      #stage {
+        display: flex;
+        gap: 16px;
+        padding: 16px;
+        align-items: flex-start;
+        overflow-x: auto;
+      }
+      .pane {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: none;
+      }
+      .pane h2 {
+        margin: 0;
+        font: 600 11px/1 system-ui;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--bench-dim);
+      }
+      iframe {
+        border: 1px solid var(--bench-line);
+        border-radius: 8px;
+        background: #000;
+        height: 78vh;
+      }
+      #log {
+        border-top: 1px solid var(--bench-line);
+        padding: 8px 14px;
+        max-height: 22vh;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 12px;
+        color: var(--bench-dim);
+      }
+      #log b {
+        color: var(--bench-fg);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Tokendex bench</strong>
+      <label
+        >Case
+        <select id="fixture"></select
+      ></label>
+      <label
+        >Theme
+        <select id="theme">
+          <option value="dark">Dark Modern</option>
+          <option value="light">Light Modern</option>
+          <option value="hc">High Contrast</option>
+          <option value="split">Dark + Light</option>
+        </select></label
+      >
+      <label
+        >Width
+        <select id="width">
+          <option value="380">380 · narrow panel</option>
+          <option value="520">520 · sidebar</option>
+          <option value="900" selected>900 · editor tab</option>
+          <option value="1400">1400 · wide screen</option>
+        </select></label
+      >
+      <button id="remount">Reload</button>
+      <span id="status">—</span>
+    </header>
+    <div id="stage"></div>
+    <div id="log"></div>
+    <script src="/dist/bench/app.js"></script>
+  </body>
+</html>

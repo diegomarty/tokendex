@@ -2,3 +2,10 @@ node_modules/
 dist/
 out/
 *.vsix
+.dev-state/
+.dev-state-clean/
+
+# Local-only: kept on disk, never committed.
+docs/
+PORTED-THROUGH
+.claude/

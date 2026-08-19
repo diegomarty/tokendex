@@ -22,19 +22,23 @@
     "commands": [
       {
         "command": "tokendex.open",
-        "title": "Tokendex: abrir panel"
+        "title": "Tokendex: Open panel"
       },
       {
         "command": "tokendex.refresh",
-        "title": "Tokendex: refrescar ahora"
+        "title": "Tokendex: Refresh now"
       },
       {
         "command": "tokendex.showOutput",
-        "title": "Tokendex: mostrar registro"
+        "title": "Tokendex: Show log"
       },
       {
         "command": "tokendex.dev",
-        "title": "Tokendex: simulación de desarrollo…"
+        "title": "Tokendex: Development simulation…"
+      },
+      {
+        "command": "tokendex.reloadWebview",
+        "title": "Tokendex: Reload the panel (development)"
       }
     ],
     "configuration": {
@@ -53,25 +57,40 @@
           "enumDescriptions": [
             "30 s",
             "1 min",
-            "2 min (recomendado)",
+            "2 min (recommended)",
             "5 min",
             "10 min"
           ],
-          "description": "Cada cuánto se relee el uso local."
+          "description": "How often local usage is re-read."
         },
         "tokendex.devMode": {
           "type": "boolean",
           "default": false,
-          "description": "Habilita el menú de simulación de desarrollo. Inyecta tokens ficticios en la observación, sin tocar tus logs reales."
+          "description": "Shows the Dev tab and the development simulation menu. Already on when running from source (an Extension Development Host); set it explicitly to override that in either direction. It injects fictitious tokens into the observation, leaving your real logs untouched."
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "tokendex.reloadWebview",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "config.tokendex.devMode"
+      }
+    ]
   },
   "scripts": {
-    "compile": "npm run typecheck && node esbuild.mjs",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --dev --watch",
+    "compile": "npm run typecheck && npm run build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test:watch": "vitest",
+    "bench": "node tools/bench/serve.mjs",
+    "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
+    "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
     "package": "npm run compile && npx --yes @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -101,5 +120,9 @@
   "bugs": {
     "url": "https://github.com/diegomarty/tokendex/issues"
   },
-  "homepage": "https://github.com/diegomarty/tokendex#readme"
+  "homepage": "https://github.com/diegomarty/tokendex#readme",
+  "dependencies": {
+    "@types/sql.js": "^1.4.11",
+    "sql.js": "^1.14.2"
+  }
 }

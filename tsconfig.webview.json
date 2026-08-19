@@ -1,15 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "lib": [
-      "ES2022",
-      "DOM"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
     "outDir": "out-webview"
   },
-  "include": [
-    "src/webview/**/*.ts"
-  ],
+  "include": ["src/webview/**/*.ts", "tools/bench/**/*.ts"],
   "exclude": []
 }

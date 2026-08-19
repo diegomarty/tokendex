@@ -2,12 +2,47 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Ejecutar la extensión",
+      // The default F5: your usual profile, with the extension loaded on top of it.
+      "name": "Extension (your profile)",
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "env": {
+        // Throwaway save, Pokédex and usage cache: the development scenarios mutate real state,
+        // and this keeps them off the progress you care about. Persistent across runs, so the
+        // ~30 s cold usage scan happens once, not on every launch.
+        "TOKENDEX_STATE_DIR": "${workspaceFolder}/.dev-state"
+      },
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "preLaunchTask": "npm: compile"
+      "preLaunchTask": "npm: build"
+    },
+    {
+      // Empty, disposable profile — needs no setup. This is how a new user's first run actually
+      // looks: no save, no cache, no settings, no other extensions.
+      "name": "Extension (clean profile, first run)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--profile-temp"],
+      "env": {
+        "TOKENDEX_STATE_DIR": "${workspaceFolder}/.dev-state-clean"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
+    },
+    {
+      // Optional isolation, if the dev window ever starts polluting your real profile: create it
+      // once with "Profiles: New Profile..." -> name it exactly "Tokendex Dev" -> "Copy from:
+      // Default". Without that step VS Code opens an EMPTY profile, which looks like half your
+      // extensions vanished.
+      "name": "Extension (Tokendex Dev profile)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--profile=Tokendex Dev"],
+      "env": {
+        "TOKENDEX_STATE_DIR": "${workspaceFolder}/.dev-state"
+      },
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
     }
   ]
 }

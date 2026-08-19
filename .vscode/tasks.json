@@ -2,11 +2,42 @@
   "version": "2.0.0",
   "tasks": [
     {
+      // The default build task: leave it running and every save rebuilds in ~20 ms. An open
+      // panel repaints itself (see `watchBundles` in extension.ts) as long as devMode is on.
+      "type": "npm",
+      "script": "watch",
+      "label": "npm: watch",
+      "isBackground": true,
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "never", "panel": "dedicated" },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^\\s*(?:✘|▲)\\s+\\[(?:ERROR|WARNING)\\]\\s+(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "\\[watch\\] build started",
+          "endsPattern": "\\[watch\\] build finished"
+        }
+      }
+    },
+    {
+      // Fast one-shot build for F5. Type checking is deliberately out of the hot loop; it runs
+      // in `npm run compile`, in CI, and on demand.
+      "type": "npm",
+      "script": "build",
+      "label": "npm: build",
+      "problemMatcher": []
+    },
+    {
       "type": "npm",
       "script": "compile",
+      "label": "npm: compile",
       "problemMatcher": "$tsc",
-      "group": "build",
-      "label": "npm: compile"
+      "group": "build"
     }
   ]
 }
