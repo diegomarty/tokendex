@@ -3,6 +3,10 @@
 A VS Code extension that reads local AI-CLI usage logs and turns them into a companion that
 grows in the status bar.
 
+**Read [`docs/context.md`](docs/context.md) before making non-trivial changes.** This file is
+the rules; that one is why they are the rules — the measurements behind the architecture, the
+traps already hit, what is deliberately deferred, and what is still undecided.
+
 ## Origin and upstream
 
 Derived from [chattymin/PokeTokenBar](https://github.com/chattymin/PokeTokenBar) (MIT), a
