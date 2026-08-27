@@ -39,6 +39,10 @@ breakdown.
   known), your companion's mood, and a tooltip with the full breakdown.
 - **A companion raised by real work** — it hatches after real spend, evolves through its
   actual evolution line, can be shiny, has a nature, and graduates into a persistent Pokédex.
+- **Wild encounters, right on Home** — as you spend, wild Pokémon walk into the scene where
+  your trainer and companion stand (a quiet queue: a badge on the activity bar, never a toast
+  unless it is shiny or legendary). Throw a Poké/Great/Ultra/Master Ball bought with tokens,
+  watch the wobbles, and fill the Pokédex — or watch it flee.
 - **Celebrations** — hatches, evolutions, graduations and rare-candy grants arrive as
   notifications, in your language (EN · 한국어 · 日本語 · ES).
 - **The full panel** — usage totals with exact values on hover, official limit windows as
@@ -93,10 +97,11 @@ An idle refresh writes nothing; an open panel re-renders instead of re-scanning.
 
 ## Settings
 
-| Setting                      | Default    | What it does                           |
-| ---------------------------- | ---------- | -------------------------------------- |
-| `tokendex.refreshInterval`   | `120` s    | How often local usage is re-read       |
-| `tokendex.companionLocation` | `explorer` | Where the compact companion card lives |
+| Setting                           | Default    | What it does                                                          |
+| --------------------------------- | ---------- | --------------------------------------------------------------------- |
+| `tokendex.refreshInterval`        | `120` s    | How often local usage is re-read                                      |
+| `tokendex.companionLocation`      | `explorer` | Where the compact companion card lives                                |
+| `tokendex.encounterNotifications` | `rare`     | Encounter toasts: `rare` (shiny/legendary, max one per hour) or `off` |
 
 ### Working in WSL
 
@@ -113,8 +118,9 @@ steps, the gitmoji commit convention, and the extension points for adding a new 
 
 Pokémon and Pokémon character names are trademarks of Nintendo. This project is a fan work,
 is not affiliated with or endorsed by Nintendo, Creatures Inc. or GAME FREAK Inc., and bundles
-no Pokémon assets — sprites are fetched from PokéAPI at runtime; the icon artwork is
-first-party.
+no Pokémon assets — Pokémon and item sprites are fetched from [PokéAPI](https://pokeapi.co)
+at runtime, trainer sprites from [Pokémon Showdown](https://play.pokemonshowdown.com); the
+icon artwork is first-party.
 
 ## Licence
 
