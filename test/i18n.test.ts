@@ -170,3 +170,58 @@ describe('celebration toasts', () => {
     expect(new Set(kinds).size).toBe(kinds.length)
   })
 })
+
+describe('shop and first-run strings', () => {
+  it.each(APP_LANGUAGES)('covers the shop chrome in %s', (lang) => {
+    for (const text of [
+      d.shopGroupBalls(lang),
+      d.shopGroupItems(lang),
+      d.shopGroupEggs(lang),
+      d.getBallsCta(lang),
+    ]) {
+      expect(text.trim()).not.toBe('')
+    }
+    // Derived numbers, like the candy's XP copy: the discount shown must be the one charged.
+    const bundle = d.bundleDescription(lang, 10, 10)
+    expect(bundle).toContain('10')
+  })
+
+  it.each(APP_LANGUAGES)('asks before letting a marked encounter go, naming it, in %s', (lang) => {
+    expect(d.runAwayConfirm(lang, 'Dratini')).toContain('Dratini')
+    expect(d.refreshIntervalLabel(lang).trim()).not.toBe('')
+  })
+
+  it.each(APP_LANGUAGES)('explains an empty first run in %s', (lang) => {
+    // The provider list is the actionable part — a user reads it to know which CLI to run.
+    expect(d.noUsageText(lang)).toContain('Claude Code')
+    expect(d.noUsageText(lang)).toContain('Codex')
+    expect(d.welcomeToast(lang).trim()).not.toBe('')
+  })
+})
+
+describe('wild encounter strings', () => {
+  it.each(APP_LANGUAGES)('covers the whole encounter flow in %s', (lang) => {
+    expect(
+      d.celebrationText(lang, { kind: 'wildAppeared', name: 'Pidove', rarity: 'rare', isShiny: false }),
+    ).toContain('Pidove')
+    expect(d.celebrationText(lang, { kind: 'wildCaught', name: 'Pidove', isShiny: false })).toContain(
+      'Pidove',
+    )
+    expect(d.fledText(lang, 'Pidove')).toContain('Pidove')
+    // The near-miss line differs from the plain break — that difference is the drama.
+    expect(d.brokeFreeText(lang, 3)).not.toBe(d.brokeFreeText(lang, 0))
+    for (const text of [
+      d.runAwayLabel(lang),
+      d.trainerLabel(lang),
+      d.wildCaughtBadge(lang),
+      d.wildNoBallsText(lang),
+      d.brokeFreeText(lang, 0),
+    ]) {
+      expect(text.trim()).not.toBe('')
+    }
+    const empty = d.wildEmptyText(lang, '1.2M')
+    expect(empty).toContain('1.2M')
+    const tooltip = d.wildBadgeTooltip(lang, 3)
+    expect(tooltip).toContain('3')
+  })
+})

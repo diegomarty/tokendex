@@ -19,6 +19,7 @@ import type { ItemKind, Rarity } from '../companion/model.js'
 import type { CompanionState } from '../companion/model.js'
 import { compact } from '../tokenFormatter.js'
 import { type DevState, parseAmount, tokensToGraduation, tokensToMilestone } from './simulation.js'
+import { tokensToNextEncounter } from '../companion/encounters.js'
 
 /**
  * Every development-only action the worker understands.
@@ -38,6 +39,8 @@ export type DevAction =
   | { action: 'devDayRollover' }
   | { action: 'devResetSave' }
   | { action: 'devSnapshot'; slot: 'save' | 'restore' }
+  | { action: 'devSpawnEncounter'; variant: string }
+  | { action: 'devGrantBalls'; count: number }
 
 export type DevGroup = 'tokens' | 'items' | 'state' | 'edge' | 'reset'
 
@@ -160,6 +163,41 @@ export const DEV_SCENARIOS: DevScenario[] = [
 
   // ---- states that are impractical to reach by chance ----
   {
+    id: 'spawn-wild',
+    group: 'state',
+    label: 'Spawn a wild encounter',
+    detail: 'Queues one directly, no network — the real trigger is one per 2.5M tokens',
+    input: {
+      kind: 'choice',
+      prompt: 'What appears',
+      options: [
+        { value: 'common', label: 'Common (Caterpie, always caught)' },
+        { value: 'rare', label: 'Rare (Dratini, breaks out of Poké Balls)' },
+        { value: 'legendary', label: 'Legendary (Mewtwo, needs the Master Ball)' },
+        { value: 'shiny', label: 'Shiny (Magikarp ✨, tests the rare toast)' },
+      ],
+      defaultValue: 'common',
+    },
+    build: (value) => ({ action: 'devSpawnEncounter', variant: value === '' ? 'common' : value }),
+  },
+  {
+    id: 'fill-wild-queue',
+    group: 'state',
+    label: 'Fill the wild queue',
+    detail: 'Twelve commons in a row — proves the cap and the full-queue banking',
+    input: { kind: 'none' },
+    steps: 12,
+    build: () => ({ action: 'devSpawnEncounter', variant: 'common' }),
+  },
+  {
+    id: 'grant-balls',
+    group: 'items',
+    label: 'Grant 10 of every ball',
+    detail: 'Poké, Great, Ultra and Master — a capture test session in one click',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devGrantBalls', count: 10 }),
+  },
+  {
     id: 'shiny-on',
     group: 'state',
     label: 'Make the current one shiny',
@@ -277,6 +315,11 @@ export function devSummary(state: CompanionState, dev: DevState): { label: strin
     { label: 'To graduation', value: compact(tokensToGraduation(state)) },
     { label: 'Lifetime tokens', value: compact(state.usedSinceInstall) },
     { label: 'Spent in the shop', value: compact(state.spentTokens) },
+    { label: 'Wild queue', value: `${state.wild.length} waiting · ${state.encountersSeen} seen` },
+    {
+      label: 'To next encounter',
+      value: compact(tokensToNextEncounter(state.encounterUsage, state.encountersSeen)),
+    },
     {
       label: 'Synthetic offsets',
       value:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANIMATED_SPECIES_MAX, hasAnimatedSprite } from '../src/core/companion/model.js'
+import { ANIMATED_SPECIES_MAX, hasAnimatedSprite, stillSpriteURL } from '../src/core/companion/model.js'
 import {
   ANIMATED_SPRITE_MAX,
   hasAnimatedSprite as webviewHasAnimatedSprite,
@@ -43,5 +43,15 @@ describe('spriteURL', () => {
   it('returns the still sprite when no animation is asked for', () => {
     expect(spriteURL(6, false, false)).toContain('/pokemon/6.png')
     expect(spriteURL(6, true, false)).toContain('/pokemon/shiny/6.png')
+  })
+
+  // The status bar tooltip is the one *core* consumer of a sprite URL, and the core cannot
+  // import the webview's builder. This is the pin that makes that second copy safe — the same
+  // arrangement the animated ceiling above lives under.
+  it('agrees with the core still-sprite URL used by the tooltip', () => {
+    for (const id of [1, 25, 649]) {
+      expect(stillSpriteURL(id, false)).toBe(spriteURL(id, false, false))
+      expect(stillSpriteURL(id, true)).toBe(spriteURL(id, true, false))
+    }
   })
 })

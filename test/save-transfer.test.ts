@@ -14,6 +14,7 @@ import {
   summarize,
 } from '../src/core/companion/saveTransfer.js'
 import { freshCompanionState, type CompanionState, type MonState } from '../src/core/companion/model.js'
+import { EncounterBalance } from '../src/core/companion/encounters.js'
 
 // Losing a save is the worst failure this app has, so these are the guards that matter most.
 
@@ -146,6 +147,71 @@ describe('sanitized', () => {
     )
     expect(s.dex).toHaveLength(1)
     expect(s.inventory).toEqual({ rareCandy: 99 })
+  })
+
+  // The wild queue *is* trimmed, unlike the dex: an encounter is a pending offer, not something
+  // earned, and a hand-edited save could otherwise ask the panel to draw ten thousand rows.
+  it('trims the wild queue to the queue cap', () => {
+    const wild = Array.from({ length: 10_000 }, (_, i) => ({
+      id: `w${i}`,
+      speciesID: 1,
+      captureRate: 45,
+      rarity: 'common' as const,
+      isShiny: false,
+      appearedAt: i,
+      throws: 0,
+    }))
+    expect(sanitized(state({ wild })).wild).toHaveLength(EncounterBalance.maxQueue)
+  })
+
+  // [trigger branch] `throws` and `captureRate` feed the flee and catch formulas directly. An
+  // imported `throws: 1e9` makes every encounter flee on the first miss; a `captureRate: 1e9`
+  // makes every legendary a guaranteed catch. Decoding succeeds, so nothing else catches it.
+  it('clamps the fields a wild encounter feeds into the formulas', () => {
+    const s = sanitized(
+      state({
+        wild: [
+          {
+            id: 'w',
+            speciesID: 1,
+            captureRate: 1_000_000_000,
+            rarity: 'legendary',
+            isShiny: false,
+            appearedAt: 0,
+            throws: 1_000_000_000,
+          },
+        ],
+      }),
+    )
+    expect(s.wild[0]!.captureRate).toBe(255)
+    expect(s.wild[0]!.throws).toBe(99)
+  })
+
+  it('clamps the encounter accumulator like the other token fields', () => {
+    const s = sanitized(state({ encounterUsage: MAX_TOKEN_VALUE * 10, encountersSeen: -5 }))
+    expect(s.encounterUsage).toBe(MAX_TOKEN_VALUE)
+    expect(s.encountersSeen).toBe(0)
+  })
+
+  // A slug that is no longer in the roster would draw a 404 on every repaint; absent means
+  // "the default", which is invisible and correct.
+  it('drops a trainer slug outside the roster and keeps a valid one', () => {
+    expect(sanitized(state({ trainerID: 'not-a-trainer' })).trainerID).toBeUndefined()
+    expect(sanitized(state({ trainerID: 'lyra' })).trainerID).toBe('lyra')
+  })
+
+  // A save written before this feature has none of these keys at all, and `sanitized` runs on
+  // the way *out* as well as in — a crash here would make exporting impossible.
+  it('survives a save that predates encounters', () => {
+    const old = state()
+    delete (old as Partial<CompanionState>).wild
+    delete (old as Partial<CompanionState>).encounterUsage
+    delete (old as Partial<CompanionState>).encountersSeen
+
+    const s = sanitized(old)
+    expect(s.wild).toEqual([])
+    expect(s.encounterUsage).toBe(0)
+    expect(s.encountersSeen).toBe(0)
   })
 })
 

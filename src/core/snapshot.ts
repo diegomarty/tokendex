@@ -12,6 +12,7 @@
 import { compact, cost, grouped } from './tokenFormatter.js'
 import type { DailyUsage, PeriodUsage, ProviderSnapshot } from './models.js'
 import type { AppLanguage, CompanionStateKind } from './companion/model.js'
+import { stillSpriteURL } from './companion/model.js'
 import { s } from './i18n/strings.js'
 import { statusEgg, statusOpenPanel, tooltipMonth, tooltipToday } from './i18n/dispatch.js'
 import { type Entry, activeBlock, daily, entryTotal, monthKey, period, todayKey } from './usage/entry.js'
@@ -56,6 +57,10 @@ export interface CompanionView {
   stageText?: string
   dexCount: number
   spendableTokens: number
+  /** Unresolved wild encounters, for the activity-bar badge. */
+  wildCount: number
+  /** The badge's hover text, already localised. */
+  wildTooltip: string
 }
 
 export interface UsageSnapshot {
@@ -261,6 +266,12 @@ function tooltipFor(args: {
   if (companion !== undefined) {
     lines.push('')
     const label = companion.name ?? '···'
+    // The one place the companion is *visible* without opening anything: a StatusBarItem cannot
+    // render an image, but its Markdown tooltip can. The still PNG, runtime-fetched like every
+    // other sprite. The egg keeps its emoji — there is no egg sprite to show.
+    if (companion.state !== 'egg' && companion.speciesID !== undefined) {
+      lines.push(`![](${stillSpriteURL(companion.speciesID, companion.isShiny)})`)
+    }
     lines.push(
       companion.state === 'egg'
         ? `🥚 ${companion.toNextText}`

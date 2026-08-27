@@ -10,7 +10,9 @@
  */
 
 import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
+import { EncounterBalance } from './encounters.js'
 import { decodeCompanionState } from './persistence.js'
+import { isTrainerID } from './trainers.js'
 
 export const SAVE_FORMAT_ID = 'tokendex.save'
 export const SAVE_SCHEMA_VERSION = 1
@@ -220,6 +222,24 @@ export function sanitized(state: CompanionState): CompanionState {
   if (next.eggTier !== undefined && captureRateCeiling(next.eggTier) === undefined) {
     delete next.eggTier
   }
+
+  next.encounterUsage = clamp(state.encounterUsage ?? 0)
+  next.encountersSeen = clamp(state.encountersSeen ?? 0)
+
+  // The wild queue is the one collection that *is* trimmed here, and it is not data loss in
+  // the way a Pokédex would be: an encounter is a pending offer, not something earned. A save
+  // carrying ten thousand of them would otherwise be drawn as ten thousand rows. `throws` and
+  // `captureRate` are clamped because both feed the catch and flee formulas directly — an
+  // imported `throws: 1e9` would make every encounter flee on the first miss.
+  next.wild = (state.wild ?? []).slice(0, EncounterBalance.maxQueue).map((encounter) => ({
+    ...encounter,
+    captureRate: Math.min(Math.max(1, encounter.captureRate), 255),
+    throws: Math.min(Math.max(0, encounter.throws), 99),
+  }))
+
+  // An unknown slug would render as a broken image on every repaint. Falling back to absent
+  // (the roster default) is invisible and correct.
+  if (next.trainerID !== undefined && !isTrainerID(next.trainerID)) delete next.trainerID
 
   if (next.active !== undefined) {
     const active = { ...next.active }

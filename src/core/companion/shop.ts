@@ -14,6 +14,7 @@ import {
   ITEM_KINDS,
   type ItemKind,
   NATURES,
+  Pokeball,
   type PokemonNature,
   RareCandy,
   type Rarity,
@@ -49,11 +50,23 @@ function isPurchasedPassive(state: CompanionState, entry: ShopEntry): boolean {
   return itemIsPassive(entry.item) && itemCount(state, entry.item) > 0
 }
 
+/**
+ * Balls sold in tens as well as singly.
+ *
+ * Not the Master Ball: a ten-pack of guaranteed catches is not a thing worth pricing. Bundles
+ * exist because every purchase raises a native confirmation modal, so buying ten balls one at a
+ * time is ten modals — unusable, and the reason the shop grew a quantity at all.
+ */
+const BUNDLED_BALLS: readonly ItemKind[] = ['pokeBall', 'greatBall', 'ultraBall']
+
 export function shopEntries(state: CompanionState): ShopEntry[] {
   const entries: ShopEntry[] = ITEM_KINDS.filter((k) => itemShopPrice(k) !== undefined).map((item) => ({
     kind: 'item',
     item,
   }))
+  entries.push(
+    ...BUNDLED_BALLS.map((item) => ({ kind: 'item' as const, item, quantity: Pokeball.bundleSize })),
+  )
   // Eggs are only offered while there is a Pokémon to discard.
   if (state.active !== undefined) {
     entries.push(...FreshEgg.shopTiers.map((tier) => ({ kind: 'egg' as const, tier })))
@@ -66,24 +79,35 @@ export function shopEntries(state: CompanionState): ShopEntry[] {
   })
 }
 
-export function canBuyItem(state: CompanionState, kind: ItemKind): boolean {
-  const price = itemShopPrice(kind)
+/** What a row costs, so the gate and the purchase can never disagree about the bundle discount. */
+export function itemPurchasePrice(kind: ItemKind, quantity = 1): number | undefined {
+  if (itemShopPrice(kind) === undefined) return undefined
+  return shopEntryPrice({ kind: 'item', item: kind, quantity: Math.max(1, Math.floor(quantity)) })
+}
+
+export function canBuyItem(state: CompanionState, kind: ItemKind, quantity = 1): boolean {
+  const price = itemPurchasePrice(kind, quantity)
   if (price === undefined) return false
   if (itemIsPassive(kind) && itemCount(state, kind) > 0) return false // passives are bought once
+  // A passive is held, not stocked: a bundle of Shiny Charms is meaningless and must not be a
+  // way to pay the bundle discount for one.
+  if (itemIsPassive(kind) && quantity > 1) return false
   return spendableBalance(state) >= price
 }
 
 /**
- * Buys one item: the wallet pays, the inventory gains one. `usedSinceInstall` (growth and
- * statistics) is untouched — only the spend ledger moves, so buying never rewinds growth.
+ * Buys `quantity` of an item: the wallet pays, the inventory gains them. `usedSinceInstall`
+ * (growth and statistics) is untouched — only the spend ledger moves, so buying never rewinds
+ * growth.
  */
-export function buyItem(state: CompanionState, kind: ItemKind): CompanionState | undefined {
-  if (!canBuyItem(state, kind)) return undefined
-  const price = itemShopPrice(kind)!
+export function buyItem(state: CompanionState, kind: ItemKind, quantity = 1): CompanionState | undefined {
+  const count = Math.max(1, Math.floor(quantity))
+  if (!canBuyItem(state, kind, count)) return undefined
+  const price = itemPurchasePrice(kind, count)!
   return {
     ...state,
     spentTokens: state.spentTokens + price,
-    inventory: { ...state.inventory, [kind]: itemCount(state, kind) + 1 },
+    inventory: { ...state.inventory, [kind]: itemCount(state, kind) + count },
   }
 }
 

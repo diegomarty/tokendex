@@ -27,45 +27,66 @@ interface BaseRequest {
 }
 
 export type DispatchRequest<Action> = BaseRequest &
-  ({ type: 'scan' } | { type: 'panel' } | { type: 'render' } | { type: 'action'; payload: Action })
+  (
+    | { type: 'scan' }
+    | { type: 'panel' }
+    | { type: 'render' }
+    /**
+     * `fromLastScan` re-renders from the last scan after applying the action, instead of
+     * re-scanning. It exists for the latency-sensitive actions (a ball throw awaits this reply
+     * to land its animation): the usage half genuinely did not change, and `buildPanel` reads
+     * the companion store itself, so the game half is fresh anyway. Falls back to a full scan
+     * when there is nothing to reuse.
+     */
+    | { type: 'action'; payload: Action; fromLastScan?: boolean }
+  )
 
-export type DispatchResponse<Snapshot, Panel> =
+export type DispatchResponse<Snapshot, Panel, Extra = never> =
   | { id: number; ok: true; snapshot: Snapshot }
-  | { id: number; ok: true; panel: Panel }
+  | { id: number; ok: true; panel: Panel; extra?: Extra }
   | { id: number; ok: false; error: string }
 
-export interface DispatcherDeps<Action, Snapshot, Panel> {
+export interface DispatcherDeps<Action, Snapshot, Panel, Extra = never> {
   scan: (locale: string | undefined) => Promise<Snapshot>
-  applyAction: (action: Action) => Promise<void>
+  /** May return a result to ride the reply beside the panel (a throw's outcome). */
+  applyAction: (action: Action) => Promise<Extra | undefined>
   buildPanel: (snapshot: Snapshot, locale: string | undefined, devMode: boolean) => Panel
-  post: (response: DispatchResponse<Snapshot, Panel>) => void
+  post: (response: DispatchResponse<Snapshot, Panel, Extra>) => void
 }
 
-export function createDispatcher<Action, Snapshot, Panel>(
-  deps: DispatcherDeps<Action, Snapshot, Panel>,
+export function createDispatcher<Action, Snapshot, Panel, Extra = never>(
+  deps: DispatcherDeps<Action, Snapshot, Panel, Extra>,
 ): (message: DispatchRequest<Action>) => void {
   let lastScan: Snapshot | undefined
   let queue: Promise<void> = Promise.resolve()
 
   async function handle(message: DispatchRequest<Action>): Promise<void> {
     try {
+      // The action always applies first — reusing the last scan is about skipping the *disk
+      // pass*, never about replying with pre-action state.
+      let extra: Extra | undefined
+      if (message.type === 'action') extra = await deps.applyAction(message.payload)
+
       let snapshot: Snapshot
-      if (message.type === 'render' && lastScan !== undefined) {
-        snapshot = lastScan
+      const reuse =
+        (message.type === 'render' || (message.type === 'action' && message.fromLastScan === true)) &&
+        lastScan !== undefined
+      if (reuse) {
+        snapshot = lastScan as Snapshot
       } else {
-        if (message.type === 'action') await deps.applyAction(message.payload)
         snapshot = await deps.scan(message.locale)
         lastScan = snapshot
       }
-      deps.post(
-        message.type === 'scan'
-          ? { id: message.id, ok: true, snapshot }
-          : {
-              id: message.id,
-              ok: true,
-              panel: deps.buildPanel(snapshot, message.locale, message.devMode ?? false),
-            },
-      )
+      if (message.type === 'scan') {
+        deps.post({ id: message.id, ok: true, snapshot })
+      } else {
+        const panel = deps.buildPanel(snapshot, message.locale, message.devMode ?? false)
+        deps.post(
+          extra === undefined
+            ? { id: message.id, ok: true, panel }
+            : { id: message.id, ok: true, panel, extra },
+        )
+      }
     } catch (e) {
       deps.post({ id: message.id, ok: false, error: e instanceof Error ? e.message : String(e) })
     }

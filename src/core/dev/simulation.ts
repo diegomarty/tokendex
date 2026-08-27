@@ -11,8 +11,15 @@
  * can be rewound without touching real accounting.
  */
 
-import type { CompanionState, ItemKind, PokemonNature, Rarity } from '../companion/model.js'
-import { PokemonBalance } from '../companion/model.js'
+import type {
+  CompanionState,
+  ItemKind,
+  PokemonNature,
+  Rarity,
+  WildEncounter,
+} from '../companion/model.js'
+import { BALL_KINDS, PokemonBalance } from '../companion/model.js'
+import { enqueueEncounter } from '../companion/encounters.js'
 
 export interface DevState {
   /** Synthetic tokens added to each provider's observed daily total, by provider id. */
@@ -123,6 +130,50 @@ export function grantItem(state: CompanionState, item: ItemKind, count: number):
     ...state,
     inventory: { ...state.inventory, [item]: Math.max(0, (state.inventory[item] ?? 0) + count) },
   }
+}
+
+/** What a wild-encounter test session needs in one click: a working stock of every ball. */
+export function grantBalls(state: CompanionState, count: number): CompanionState {
+  const inventory = { ...state.inventory }
+  for (const kind of BALL_KINDS) inventory[kind] = Math.max(0, (inventory[kind] ?? 0) + count)
+  return { ...state, inventory }
+}
+
+export type TestEncounterVariant = 'common' | 'rare' | 'legendary' | 'shiny'
+
+/**
+ * Fixed species per variant, chosen for recognisability at a glance in the queue. Hardcoded
+ * names are fine here: this is the dev surface, and going through PokéAPI would make "test the
+ * capture flow on a plane" impossible.
+ */
+const TEST_SPECIES: Record<
+  TestEncounterVariant,
+  { id: number; captureRate: number; rarity: Rarity; name: string }
+> = {
+  common: { id: 10, captureRate: 255, rarity: 'common', name: 'Caterpie' },
+  rare: { id: 147, captureRate: 45, rarity: 'rare', name: 'Dratini' },
+  legendary: { id: 150, captureRate: 3, rarity: 'legendary', name: 'Mewtwo' },
+  shiny: { id: 129, captureRate: 255, rarity: 'common', name: 'Magikarp' },
+}
+
+/**
+ * Queues a synthetic wild encounter, bypassing accrual and the network — the point is to test
+ * the *capture* flow, and reaching a legendary through the real pipeline would take days.
+ * Uses `enqueueEncounter` so the queue cap and its rarity-aware drop still apply.
+ */
+export function spawnTestEncounter(state: CompanionState, variant: string, now: number): CompanionState {
+  const species = TEST_SPECIES[variant as TestEncounterVariant] ?? TEST_SPECIES.common
+  const encounter: WildEncounter = {
+    id: `dev-${now}-${Math.floor(now % 997)}-${state.wild.length}`,
+    speciesID: species.id,
+    captureRate: species.captureRate,
+    rarity: species.rarity,
+    isShiny: variant === 'shiny',
+    appearedAt: now,
+    throws: 0,
+    names: { en: species.name, ko: species.name, ja: species.name, es: species.name },
+  }
+  return { ...state, wild: enqueueEncounter(state.wild, encounter) }
 }
 
 export function grantTokens(state: CompanionState, amount: number): CompanionState {

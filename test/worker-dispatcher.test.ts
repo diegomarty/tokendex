@@ -16,11 +16,11 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function harness() {
-  const posted: DispatchResponse<Snap, Panel>[] = []
+function harness(extraFor?: (action: Action) => string | undefined) {
+  const posted: DispatchResponse<Snap, Panel, string>[] = []
   const scans: ReturnType<typeof deferred<Snap>>[] = []
   const applied: string[] = []
-  const dispatch = createDispatcher<Action, Snap, Panel>({
+  const dispatch = createDispatcher<Action, Snap, Panel, string>({
     scan: () => {
       const d = deferred<Snap>()
       scans.push(d)
@@ -28,6 +28,7 @@ function harness() {
     },
     applyAction: async (a) => {
       applied.push(a.action)
+      return extraFor?.(a)
     },
     buildPanel: (snapshot, _locale, devMode) => ({ fromSeq: snapshot.seq, devMode }),
     post: (r) => posted.push(r),
@@ -110,5 +111,55 @@ describe('dispatcher', () => {
     h.scans[0]!.reject(new Error('nope'))
     await h.settle()
     expect(h.posted[0]).toEqual({ id: 1, ok: false, error: 'nope' })
+  })
+
+  // [trigger branch] The whole point of `fromLastScan` is skipping the disk pass — but reusing
+  // the scan *before* applying the action would answer with pre-throw state, and the animation
+  // would land on a Pokémon the save no longer holds.
+  it('fromLastScan skips the scan but still applies the action first', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'scan' })
+    await h.settle()
+    h.scans[0]!.resolve({ seq: 9 })
+    await h.settle()
+
+    h.dispatch({ id: 2, type: 'action', payload: { action: 'throwBall' }, fromLastScan: true })
+    await h.settle()
+    expect(h.applied).toEqual(['throwBall']) // the action ran…
+    expect(h.scans).toHaveLength(1) // …and no second disk pass did
+    expect(h.posted[1]).toEqual({ id: 2, ok: true, panel: { fromSeq: 9, devMode: false } })
+  })
+
+  it('fromLastScan with nothing to reuse falls back to a full scan', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'action', payload: { action: 'throwBall' }, fromLastScan: true })
+    await h.settle()
+    expect(h.scans).toHaveLength(1)
+    h.scans[0]!.resolve({ seq: 4 })
+    await h.settle()
+    expect(h.posted[0]).toEqual({ id: 1, ok: true, panel: { fromSeq: 4, devMode: false } })
+  })
+
+  // The outcome must ride the same reply as the panel: two messages could interleave with a
+  // timer scan's push and the webview would pair an outcome with the wrong state.
+  it('attaches what applyAction returns to the action reply', async () => {
+    const h = harness((a) => (a.action === 'throwBall' ? 'caught' : undefined))
+    h.dispatch({ id: 1, type: 'action', payload: { action: 'throwBall' } })
+    await h.settle()
+    h.scans[0]!.resolve({ seq: 1 })
+    await h.settle()
+    expect(h.posted[0]).toEqual({
+      id: 1,
+      ok: true,
+      panel: { fromSeq: 1, devMode: false },
+      extra: 'caught',
+    })
+
+    // …and only to replies whose action produced one.
+    h.dispatch({ id: 2, type: 'action', payload: { action: 'buyEgg' } })
+    await h.settle()
+    h.scans[1]!.resolve({ seq: 2 })
+    await h.settle()
+    expect(h.posted[1]).toEqual({ id: 2, ok: true, panel: { fromSeq: 2, devMode: false } })
   })
 })

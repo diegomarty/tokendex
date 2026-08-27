@@ -14,6 +14,17 @@ import * as AppPaths from '../appPaths.js'
 import type { BaseSpecies, PokeProviding } from '../pokeapi.js'
 import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
 import {
+  EncounterBalance,
+  addEncounterUsage,
+  enqueueEncounter,
+  owedEncounters,
+  payForEncounter,
+  runFromEncounter,
+  throwBall,
+  type ThrowOutcome,
+} from './encounters.js'
+import { trainerIDOrDefault } from './trainers.js'
+import {
   computeDisplayState,
   eggReadyToHatch,
   rollDittoDisguise,
@@ -23,12 +34,15 @@ import {
 import { applyUsage, makeEvolutionPlan, normalizedEvolutionState, type RNG } from './growth.js'
 import { applyProviderLedger, creditDelta, spendableBalance } from './ledger.js'
 import {
+  type BallKind,
   type CompanionState,
   type CompanionStateKind,
   type DexEntry,
   type EvoLine,
   type MonState,
   NATURES,
+  type Rarity,
+  type WildEncounter,
   PokemonOdds,
   RareCandy,
   currentSpeciesID,
@@ -43,6 +57,8 @@ import { backupFileName, sanitized } from './saveTransfer.js'
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
 const GRADUATE_EVENT_WINDOW_MS = 6_000
+/** At most one encounter toast per hour, and only for a shiny or a legendary. */
+const ENCOUNTER_TOAST_COOLDOWN_MS = 60 * 60_000
 
 export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
@@ -50,6 +66,13 @@ export type CompanionEvent =
   | { kind: 'graduated'; name: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
+  /**
+   * A wild Pokémon appeared and it is worth interrupting for. The filter runs *before* the
+   * push (`noteEncounterAppeared`): only a shiny or a legendary, at most one per hour. Ordinary
+   * encounters never become events — they surface through the panel and the badge. A catch is
+   * not an event either: the player is watching the animation that announces it.
+   */
+  | { kind: 'wildAppeared'; speciesID: number; name: string; rarity: Rarity; isShiny: boolean }
 
 export interface StoreOptions {
   provider: PokeProviding
@@ -59,6 +82,12 @@ export interface StoreOptions {
   hostLanguage?: string
   /** Disabled in tests so the Ditto disguise roll is deterministic. */
   dittoEnabled?: boolean
+  /**
+   * Read at each spawn (a callback, because the setting can change while the store lives).
+   * `false` silences even the shiny/legendary encounter toast; the badge and the panel still
+   * update. Absent means on.
+   */
+  encounterToastsEnabled?: () => boolean
 }
 
 export class CompanionStore {
@@ -77,6 +106,8 @@ export class CompanionStore {
   private nextNetworkAttempt = 0
   private pendingEvents: CompanionEvent[] = []
   private loaded = false
+  /** Mirrors `hatching`: a spawn awaits the network, and two overlapping runs would double-pay. */
+  private spawning = false
 
   constructor(private readonly options: StoreOptions) {
     this.state = freshCompanionState(options.hostLanguage)
@@ -222,6 +253,13 @@ export class CompanionStore {
       this.state = creditDelta(this.state, delta)
       // creditDelta already moved usedAtStage, so growth is evaluated with a zero delta.
       if (this.state.active !== undefined) this.grow(0)
+      // Accrued beside `creditDelta`, not inside it: that function routes a delta to exactly one
+      // of two destinations (the egg or the current stage), while an encounter accrues in either
+      // case. Folding it in would make a two-way choice a three-way one it is not.
+      this.state = {
+        ...this.state,
+        encounterUsage: addEncounterUsage(this.state.encounterUsage, delta),
+      }
     }
 
     const networkAllowed = this.now >= this.nextNetworkAttempt
@@ -229,6 +267,160 @@ export class CompanionStore {
     if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
       await this.loadCurrentLine()
     }
+    if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
+    await this.save()
+  }
+
+  // MARK: - Wild encounters
+
+  /**
+   * Materialises the encounters the accumulated usage has paid for.
+   *
+   * Usage is spent only once an encounter exists (`payForEncounter` after the fetch, never
+   * before), so an offline spell defers encounters instead of losing them — the same bargain
+   * `hatchIfNeeded` strikes with the egg, and it shares that path's backoff.
+   */
+  private async spawnEncountersIfNeeded(): Promise<void> {
+    const owed = owedEncounters(this.state.encounterUsage, this.state.encountersSeen)
+    // A full queue banks the usage instead of minting: paying the threshold and letting
+    // `enqueueEncounter` drop something would waste tokens on encounters nobody sees — and could
+    // announce a Pokémon that was itself the one dropped. Working through the queue is what
+    // releases the banked spawns.
+    const room = EncounterBalance.maxQueue - this.state.wild.length
+    if (owed === 0 || room <= 0) return
+
+    this.spawning = true
+    try {
+      let index: BaseSpecies[] | undefined
+      try {
+        index = await this.options.provider.baseSpeciesIndex()
+      } catch {
+        index = undefined
+      }
+      // No REST fallback here, unlike hatching. A hatch is the whole game and worth up to
+      // sixteen probing requests; an encounter is one of many, and burning that on a Caterpie
+      // would slow every scan for a decoration. It waits for the index instead.
+      if (index === undefined || index.length === 0) {
+        this.noteNetworkFailure()
+        return
+      }
+
+      for (let i = 0; i < Math.min(owed, room); i++) {
+        const encounter = await this.rollEncounter(index)
+        if (encounter === undefined) {
+          this.noteNetworkFailure()
+          return // usage stays banked: this encounter is deferred, not lost
+        }
+
+        const paid = payForEncounter(this.state.encounterUsage, this.state.encountersSeen)
+        this.state = {
+          ...this.state,
+          ...paid,
+          wild: enqueueEncounter(this.state.wild, encounter),
+        }
+        this.noteEncounterAppeared(encounter)
+      }
+      this.noteNetworkSuccess()
+    } finally {
+      this.spawning = false
+    }
+  }
+
+  /**
+   * Encounters are frequent by design — one per 2.5M tokens — so `wildAppeared` reaching
+   * `pendingEvents` means a native toast, and that is reserved: only a shiny or a legendary
+   * qualifies, and even those at most once an hour (`lastEncounterToastAt` is persisted so a
+   * restart does not reopen the window). Everything else surfaces through the panel and the
+   * activity-bar badge, which is the "never interrupt work" default the queue exists for.
+   */
+  private noteEncounterAppeared(encounter: WildEncounter): void {
+    if (this.options.encounterToastsEnabled?.() === false) return
+    const worthAToast = encounter.isShiny || encounter.rarity === 'legendary'
+    const cooledDown = this.now - (this.state.lastEncounterToastAt ?? 0) >= ENCOUNTER_TOAST_COOLDOWN_MS
+    if (!worthAToast || !cooledDown) return
+
+    this.state = { ...this.state, lastEncounterToastAt: this.now }
+    this.pendingEvents.push({
+      kind: 'wildAppeared',
+      speciesID: encounter.speciesID,
+      name: encounter.names?.[this.state.language] ?? `#${encounter.speciesID}`,
+      rarity: encounter.rarity,
+      isShiny: encounter.isShiny,
+    })
+  }
+
+  /**
+   * One wild Pokémon.
+   *
+   * The species pick reuses the hatch selector verbatim: its capture-rate weighting already
+   * makes common species common, and halving an already-collected line is exactly the bias a
+   * Pokédex wants. No tier is passed — a wild encounter carries no guarantee.
+   */
+  private async rollEncounter(index: BaseSpecies[]): Promise<WildEncounter | undefined> {
+    // Wild catches never enter `collectedFinals` (that set steers evolution-branch diversity),
+    // so without help the same Caterpie reappears at full weight for ever. The selector's
+    // halve-if-seen bias is fed a *local* set instead: the real collection, plus every species
+    // already caught wild, plus everything already waiting in the queue — computed per roll and
+    // never persisted, so the evolution rules cannot see it.
+    const seen = new Set(this.state.collectedFinals)
+    for (const entry of this.state.dex) {
+      if (entry.source === 'wild') seen.add(`${entry.finalID}:${entry.finalID}`)
+    }
+    for (const queued of this.state.wild) seen.add(`${queued.speciesID}:${queued.speciesID}`)
+
+    const speciesID = chooseBaseFromIndex(index, undefined, seen, this.rng)
+    if (speciesID === undefined) return undefined
+
+    try {
+      const species = await this.options.provider.wildSpecies(speciesID)
+      // The Shiny Charm applies to wilds too — it is described as raising shiny odds, and
+      // exempting half the game from it would be the surprising reading.
+      const isShiny = rollShiny(this.state, this.rng)
+      const encounter: WildEncounter = {
+        id: `w${this.now}-${speciesID}-${this.state.encountersSeen}`,
+        speciesID,
+        captureRate: species.captureRate,
+        rarity: species.rarity,
+        isShiny,
+        appearedAt: this.now,
+        throws: 0,
+      }
+      if (Object.keys(species.names).length > 0) encounter.names = species.names
+      return encounter
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Throws one ball. The wobble count comes back with the outcome because the animation plays
+   * it — deriving it again in the webview would be a second source of truth for a die already
+   * cast.
+   */
+  async throwBallAt(encounterID: string, ball: BallKind): Promise<ThrowOutcome> {
+    await this.load()
+    const result = throwBall(this.state, encounterID, ball, this.rng, this.now)
+    this.state = result.state
+
+    // No pendingEvent on a catch: the player is looking at the panel — they just clicked the
+    // throw — so a native toast would only repeat what the animation is showing. The event
+    // window still runs so the status bar celebrates alongside.
+    if (result.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
+
+    await this.save()
+    return result.outcome
+  }
+
+  /** The player walks away. Spends nothing, so there is nothing to celebrate either. */
+  async runFrom(encounterID: string): Promise<void> {
+    await this.load()
+    this.state = runFromEncounter(this.state, encounterID)
+    await this.save()
+  }
+
+  async setTrainer(trainerID: string): Promise<void> {
+    await this.load()
+    this.state = { ...this.state, trainerID: trainerIDOrDefault(trainerID) }
     await this.save()
   }
 
@@ -332,7 +524,17 @@ export class CompanionStore {
     this.nextNetworkAttempt = 0
   }
 
+  /**
+   * Opens (or re-opens) the backoff window.
+   *
+   * Several paths can fail in one pass — hatching, loading the line, spawning an encounter — and
+   * the backoff describes "PokéAPI is unreachable", not how many call sites noticed. Reporting
+   * twice in one pass would double the window twice, so the delay grows as 4x per tick instead
+   * of 2x and reaches the 30-minute ceiling in half the ticks. Ignoring a report from inside the
+   * window this pass just opened keeps one failure worth one doubling.
+   */
   private noteNetworkFailure(): void {
+    if (this.nextNetworkAttempt > this.now) return
     const doubled = this.networkBackoffMs === 0 ? 60_000 : this.networkBackoffMs * 2
     this.networkBackoffMs = Math.min(doubled, 30 * 60_000)
     this.nextNetworkAttempt = this.now + this.networkBackoffMs

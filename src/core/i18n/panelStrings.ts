@@ -9,7 +9,18 @@
 
 import type { PanelStrings } from '../../webview/protocol.js'
 import type { AppLanguage } from '../companion/model.js'
-import { providerColumn } from './dispatch.js'
+import {
+  getBallsCta,
+  noUsageText,
+  refreshIntervalLabel,
+  providerColumn,
+  runAwayLabel,
+  shopGroupBalls,
+  shopGroupEggs,
+  shopGroupItems,
+  trainerLabel,
+  wildCaughtBadge,
+} from './dispatch.js'
 import { s } from './strings.js'
 
 export function panelStrings(lang: AppLanguage): PanelStrings {
@@ -43,5 +54,14 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     incubating: s(lang, 'eggIncubating'),
     language: s(lang, 'language'),
     settingsHint: s(lang, 'dexEmptyHint'),
+    run: runAwayLabel(lang),
+    trainer: trainerLabel(lang),
+    wildBadge: wildCaughtBadge(lang),
+    getBalls: getBallsCta(lang),
+    refreshInterval: refreshIntervalLabel(lang),
+    shopBalls: shopGroupBalls(lang),
+    shopItems: shopGroupItems(lang),
+    shopEggs: shopGroupEggs(lang),
+    noUsage: noUsageText(lang),
   }
 }

@@ -120,6 +120,14 @@ export function itemName(lang: AppLanguage, kind: ItemKind): string {
       return t(lang, '민트', 'Mint', 'ミント', 'Menta')
     case 'shinyCharm':
       return t(lang, '이로치 부적', 'Shiny Charm', 'ひかるおまもり', 'Amuleto Iris')
+    case 'pokeBall':
+      return t(lang, '몬스터볼', 'Poké Ball', 'モンスターボール', 'Poké Ball')
+    case 'greatBall':
+      return t(lang, '슈퍼볼', 'Great Ball', 'スーパーボール', 'Super Ball')
+    case 'ultraBall':
+      return t(lang, '하이퍼볼', 'Ultra Ball', 'ハイパーボール', 'Ultra Ball')
+    case 'masterBall':
+      return t(lang, '마스터볼', 'Master Ball', 'マスターボール', 'Master Ball')
   }
 }
 
@@ -151,6 +159,40 @@ export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
         'While owned, raises the chance of hatching a shiny.',
         '持っていると色違いが生まれる確率が上がります。',
         'Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.',
+      )
+    // Ball copy states the multiplier rather than a catch percentage: the real odds depend on
+    // the species' capture rate, and a single number in the shop would be a lie for most of them.
+    case 'pokeBall':
+      return t(
+        lang,
+        '야생 포켓몬에게 던지는 기본 볼이에요.',
+        'The standard ball for throwing at a wild Pokémon.',
+        '野生のポケモンに投げる基本のボールです。',
+        'La ball estándar para lanzar a un Pokémon salvaje.',
+      )
+    case 'greatBall':
+      return t(
+        lang,
+        '몬스터볼보다 1.5배 잘 잡혀요.',
+        'Catches 1.5x better than a Poké Ball.',
+        'モンスターボールより1.5倍つかまえやすい。',
+        'Captura 1,5 veces mejor que una Poké Ball.',
+      )
+    case 'ultraBall':
+      return t(
+        lang,
+        '몬스터볼보다 2배 잘 잡혀요.',
+        'Catches 2x better than a Poké Ball.',
+        'モンスターボールより2倍つかまえやすい。',
+        'Captura 2 veces mejor que una Poké Ball.',
+      )
+    case 'masterBall':
+      return t(
+        lang,
+        '반드시 잡아요. 전설을 만났을 때를 위해 아껴 두세요.',
+        'Never fails. Save it for a legendary.',
+        'かならずつかまえられます。伝説のために取っておきましょう。',
+        'Nunca falla. Guárdala para un legendario.',
       )
   }
 }
@@ -245,12 +287,157 @@ export const statusEgg = (lang: AppLanguage): string => t(lang, '알', 'Egg', '�
 export const statusOpenPanel = (lang: AppLanguage): string =>
   t(lang, '패널 열기', 'Open panel', 'パネルを開く', 'Abrir el panel')
 
+// MARK: - Wild encounters
+
+export const runAwayLabel = (lang: AppLanguage): string => t(lang, '도망가기', 'Run', 'にげる', 'Huir')
+
+export const trainerLabel = (lang: AppLanguage): string =>
+  t(lang, '트레이너', 'Trainer', 'トレーナー', 'Entrenador')
+
+/** Badge on a catch-log row that came from a wild capture rather than a raised line. */
+export const wildCaughtBadge = (lang: AppLanguage): string => t(lang, '야생', 'wild', 'やせい', 'salvaje')
+
+/**
+ * Native confirmation before letting a wild Pokémon go. Built only for encounters worth the
+ * friction — rare, legendary or shiny — so running from a Caterpie stays one click.
+ */
+export function runAwayConfirm(lang: AppLanguage, name: string): string {
+  return t(
+    lang,
+    `야생 ${name}을(를) 보내줄까요?`,
+    `Let the wild ${name} go?`,
+    `やせいの${name}をにがしますか？`,
+    `¿Dejar escapar al ${name} salvaje?`,
+  )
+}
+
+export const refreshIntervalLabel = (lang: AppLanguage): string =>
+  t(lang, '갱신 주기', 'Refresh interval', '更新間隔', 'Intervalo de actualización')
+
+// MARK: - Shop
+
+export const shopGroupBalls = (lang: AppLanguage): string =>
+  t(lang, '몬스터볼', 'Poké Balls', 'ボール', 'Poké Balls')
+
+export const shopGroupItems = (lang: AppLanguage): string => t(lang, '도구', 'Items', 'どうぐ', 'Objetos')
+
+export const shopGroupEggs = (lang: AppLanguage): string => t(lang, '알', 'Eggs', 'タマゴ', 'Huevos')
+
+/** The call-to-action under an empty ball rack — the moment of highest purchase intent. */
+export const getBallsCta = (lang: AppLanguage): string =>
+  t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Comprar Poké Balls')
+
+/**
+ * The ten-pack's description. Derived from the balance constants, like the candy's XP copy:
+ * hard-coding "10% off" would let the discount drift from what `shopEntryPrice` actually
+ * charges.
+ */
+export function bundleDescription(lang: AppLanguage, size: number, discountPercent: number): string {
+  return t(
+    lang,
+    `${size}개 묶음, ${discountPercent}% 할인.`,
+    `${size} at once, ${discountPercent}% off.`,
+    `${size}個セット、${discountPercent}%お得。`,
+    `${size} de una vez, ${discountPercent}% de descuento.`,
+  )
+}
+
+// MARK: - First run
+
+/** Home's empty state before any AI CLI usage has been found. Brand names stay untranslated. */
+export function noUsageText(lang: AppLanguage): string {
+  const clis = 'Claude Code, Codex, Gemini, Grok, Antigravity, Cursor, Copilot, OpenCode, Hermes, Kiro'
+  return t(
+    lang,
+    `아직 AI CLI 사용 기록을 찾지 못했어요. Tokendex가 읽는 로그: ${clis}.`,
+    `No AI CLI usage found yet. Tokendex reads local logs from: ${clis}.`,
+    `AI CLIの使用記録がまだ見つかりません。Tokendexが読むログ: ${clis}。`,
+    `Aún no se ha encontrado uso de ningún CLI de IA. Tokendex lee los registros locales de: ${clis}.`,
+  )
+}
+
+/** One-time toast on first activation, anchoring what the status bar item is. */
+export function welcomeToast(lang: AppLanguage): string {
+  return t(
+    lang,
+    'Tokendex가 로컬 AI 사용 기록을 읽는 중이에요 — 상태 표시줄에 알이 나타나요!',
+    'Tokendex is reading your local AI usage — your egg appears in the status bar!',
+    'Tokendexがローカルの AI 使用記録を読み込んでいます — ステータスバーにタマゴが現れます！',
+    'Tokendex está leyendo tu uso local de IA — ¡tu huevo aparece en la barra de estado!',
+  )
+}
+
+export function wildEmptyText(lang: AppLanguage, toNextAmount: string): string {
+  return t(
+    lang,
+    `지금은 야생 포켓몬이 없어요 — 다음 출현까지 ${toNextAmount} 토큰.`,
+    `No wild Pokémon right now — ${toNextAmount} tokens to the next.`,
+    `いまは野生のポケモンがいません — 次の出現まで${toNextAmount}トークン。`,
+    `No hay Pokémon salvajes ahora mismo — ${toNextAmount} tokens hasta el siguiente.`,
+  )
+}
+
+export function wildNoBallsText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '던질 볼이 없어요 — 상점에서 사 오세요.',
+    'No balls to throw — buy some in the shop.',
+    '投げるボールがありません — ショップで買いましょう。',
+    'No tienes balls que lanzar — cómpralas en la tienda.',
+  )
+}
+
+/** Tooltip on the activity-bar badge counting waiting encounters. */
+export function wildBadgeTooltip(lang: AppLanguage, count: number): string {
+  return t(
+    lang,
+    `야생 포켓몬 ${count}마리가 기다리고 있어요`,
+    count === 1 ? 'A wild Pokémon is waiting' : `${count} wild Pokémon are waiting`,
+    `野生のポケモンが${count}匹待っています`,
+    count === 1 ? 'Un Pokémon salvaje te espera' : `${count} Pokémon salvajes te esperan`,
+  )
+}
+
+/** The scene's result line for a ball that failed. `shakes` is how close it came, 0..3. */
+export function brokeFreeText(lang: AppLanguage, shakes: number): string {
+  if (shakes >= 3) {
+    return t(
+      lang,
+      '아깝다! 거의 잡을 뻔했는데!',
+      'Shoot! It was so close, too!',
+      'ああ！おしかった！',
+      '¡Ah! ¡Casi lo tenías!',
+    )
+  }
+  return t(
+    lang,
+    '앗, 나와버렸다!',
+    'Oh no! It broke free!',
+    'だめだ！ボールから出てしまった！',
+    '¡Oh no! ¡Se ha liberado!',
+  )
+}
+
+export function fledText(lang: AppLanguage, name: string): string {
+  return t(
+    lang,
+    `야생 ${name}은(는) 도망가 버렸다…`,
+    `The wild ${name} fled…`,
+    `やせいの${name}はにげてしまった…`,
+    `¡El ${name} salvaje ha huido…!`,
+  )
+}
+
 // MARK: - Celebrations
 
 /**
  * Structural mirror of `CompanionEvent` (plus the worker-emitted candy grant), so this module
  * needs no import from the companion store. The store's variants carry extra fields
  * (speciesID) and stay assignable.
+ *
+ * `wildCaught` has no `CompanionEvent` twin on purpose: a catch never toasts (the player is
+ * watching the animation). The copy lives here for the throw-outcome text the worker sends
+ * back to the panel.
  */
 export type CelebrationEvent =
   | { kind: 'hatched'; name: string; isShiny: boolean }
@@ -258,8 +445,16 @@ export type CelebrationEvent =
   | { kind: 'graduated'; name: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
+  | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
+  | { kind: 'wildCaught'; name: string; isShiny: boolean }
 
-/** Toast copy for the game's peak moments — the events `drainEvents` accumulates. */
+/**
+ * Toast copy for the game's peak moments — the events `drainEvents` accumulates.
+ *
+ * Having copy here does **not** mean a toast is shown: `wildAppeared` fires on every encounter,
+ * and the host filters it down to shinies and legendaries at most once an hour. The panel and
+ * the activity-bar badge are where an ordinary encounter surfaces.
+ */
 export function celebrationText(lang: AppLanguage, event: CelebrationEvent): string {
   switch (event.kind) {
     case 'hatched': {
@@ -306,6 +501,26 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `${itemName(lang, 'rareCandy')} ×${event.count} かくとく — ${event.windowName}`,
         `${itemName(lang, 'rareCandy')} ×${event.count} — ${event.windowName}`,
       )
+    case 'wildAppeared': {
+      const text = t(
+        lang,
+        `야생 ${event.name}이(가) 나타났어요!`,
+        `A wild ${event.name} appeared!`,
+        `やせいの${event.name}があらわれた！`,
+        `¡Un ${event.name} salvaje apareció!`,
+      )
+      return event.isShiny ? `${text} ✨` : text
+    }
+    case 'wildCaught': {
+      const text = t(
+        lang,
+        `${event.name}을(를) 잡았어요!`,
+        `Gotcha! ${event.name} was caught!`,
+        `やった！${event.name}をつかまえた！`,
+        `¡Bien! ¡${event.name} ha sido capturado!`,
+      )
+      return event.isShiny ? `${text} ✨` : text
+    }
   }
 }
 

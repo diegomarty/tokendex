@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { stillSpriteURL } from '../src/core/companion/model.js'
 import { SNAPSHOT_SCHEMA, aggregateProviders, buildSnapshot } from '../src/core/snapshot.js'
 import type { Entry } from '../src/core/usage/entry.js'
 import { localDayKey } from '../src/core/usage/entry.js'
@@ -113,6 +114,8 @@ describe('buildSnapshot', () => {
     toNextText: '3M to hatch',
     dexCount: 0,
     spendableTokens: 0,
+    wildCount: 0,
+    wildTooltip: '',
   }
 
   it('names the egg in the status bar instead of a placeholder', () => {
@@ -228,10 +231,34 @@ describe('buildSnapshot', () => {
         toNextText: '1M to next',
         dexCount: 2,
         spendableTokens: 100,
+        wildCount: 0,
+        wildTooltip: '',
       },
     })
     expect(withMon.statusText).toContain('Charmander')
     expect(withMon.tooltipMarkdown).toContain('Pokédex 2')
+  })
+
+  // The tooltip is the one place the companion is *visible* without opening anything: a
+  // StatusBarItem cannot render an image, but its Markdown tooltip can.
+  it('embeds the companion sprite in the tooltip, but never for the egg', () => {
+    const companion = {
+      state: 'working' as const,
+      name: 'Charmander',
+      speciesID: 4,
+      isShiny: true,
+      progress: 0.5,
+      toNextText: '1M to next',
+      dexCount: 2,
+      spendableTokens: 100,
+      wildCount: 0,
+      wildTooltip: '',
+    }
+    const withMon = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion })
+    expect(withMon.tooltipMarkdown).toContain(`![](${stillSpriteURL(4, true)})`)
+
+    const withEgg = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion: egg })
+    expect(withEgg.tooltipMarkdown).not.toContain('![](')
   })
 
   it('handles having no data at all', () => {

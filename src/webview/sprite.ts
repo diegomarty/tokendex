@@ -12,6 +12,19 @@
 
 export const SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon'
 
+/** PokéAPI item sprites, used for the pokéballs in the ball rack and the bag. 30x30. */
+export const ITEM_SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items'
+
+/**
+ * Pokémon Showdown's trainer sprites, 80x80. The **second** remote host this project talks to,
+ * and it needs its own `img-src` entry in the CSP (`surface.ts`) — without it the avatar is
+ * silently blank, with nothing in the panel to say why.
+ *
+ * Showdown has no back-facing trainer sprites (`trainers-back/` is a 404), so the encounter
+ * scene stands the trainer front-on, the way a Gen-1 trainer card does.
+ */
+export const TRAINER_SPRITE_BASE = 'https://play.pokemonshowdown.com/sprites/trainers'
+
 /**
  * PokéAPI's Gen-V animated assets only exist for national dex #1…649.
  *
@@ -38,4 +51,14 @@ export function spriteURL(speciesID: number, shiny: boolean, animated: boolean):
     return `${SPRITE_BASE}/versions/generation-v/black-white/${directory}/${speciesID}.gif`
   }
   return `${SPRITE_BASE}/${shiny ? 'shiny/' : ''}${speciesID}.png`
+}
+
+/** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...). */
+export function itemSpriteURL(name: string): string {
+  return `${ITEM_SPRITE_BASE}/${name}.png`
+}
+
+/** The player's avatar. The slug comes from the core's roster and is never built here. */
+export function trainerURL(slug: string): string {
+  return `${TRAINER_SPRITE_BASE}/${slug}.png`
 }

@@ -27,11 +27,15 @@ import {
   type CandyWindow,
   type CompanionState,
   FreshEgg,
+  ITEM_KINDS,
   Mint,
+  Pokeball,
   PokemonBalance,
   RareCandy,
   ShinyCharm,
   freshCompanionState,
+  itemShopPrice,
+  shopEntryPrice,
   type MonState,
 } from '../src/core/companion/model.js'
 
@@ -61,8 +65,28 @@ describe('shop listing', () => {
   })
 
   it('sorts by price', () => {
-    const prices = shopEntries(state({ active: mon() })).map((e) => (e.kind === 'item' ? e.item : e.tier))
-    expect(prices[0]).toBe('mint') // cheapest at 100M
+    const entries = shopEntries(state({ active: mon() }))
+    const prices = entries.map((e) => shopEntryPrice(e))
+    expect(prices).toEqual([...prices].sort((a, b) => a - b))
+
+    const first = entries[0]
+    expect(first?.kind === 'item' && first.item === 'pokeBall').toBe(true) // cheapest at 5M
+  })
+
+  it('offers a ten-pack of every ball except the Master Ball', () => {
+    const bundles = shopEntries(state())
+      .filter((e) => e.kind === 'item' && (e.quantity ?? 1) > 1)
+      .map((e) => (e.kind === 'item' ? e.item : undefined))
+
+    expect(bundles).toEqual(['pokeBall', 'greatBall', 'ultraBall'])
+  })
+
+  // `shopEntryPrice` falls back to 0 when a kind has no price, so an item added without one is
+  // silently **free**. This walks the whole enum so the next kind cannot land that way.
+  it('prices every item kind', () => {
+    for (const kind of ITEM_KINDS) {
+      expect(itemShopPrice(kind), `${kind} has no price and would be free`).toBeGreaterThan(0)
+    }
   })
 
   it('sinks an already-bought passive to the bottom', () => {
@@ -90,6 +114,41 @@ describe('buying items', () => {
     const owned = state({ usedSinceInstall: 10_000_000_000, inventory: { shinyCharm: 1 } })
     expect(canBuyItem(owned, 'shinyCharm')).toBe(false)
     expect(buyItem(owned, 'shinyCharm')).toBeUndefined()
+  })
+
+  it('charges the bundle discount and stocks the whole bundle', () => {
+    const unit = Pokeball.price.pokeBall
+    const before = state({ usedSinceInstall: 10_000_000_000 })
+    const after = buyItem(before, 'pokeBall', Pokeball.bundleSize)!
+
+    expect(after.spentTokens).toBe(unit * Pokeball.bundleMultiplier)
+    // On top of the starter balls a fresh save carries.
+    expect(itemCount(after, 'pokeBall')).toBe(itemCount(before, 'pokeBall') + Pokeball.bundleSize)
+    // Cheaper per ball than buying them one at a time, which is the whole point of the row.
+    expect(after.spentTokens).toBeLessThan(unit * Pokeball.bundleSize)
+  })
+
+  it('checks the balance against the bundle price, not the unit price', () => {
+    const enoughForOne = state({ usedSinceInstall: Pokeball.price.pokeBall })
+    expect(canBuyItem(enoughForOne, 'pokeBall')).toBe(true)
+    expect(canBuyItem(enoughForOne, 'pokeBall', Pokeball.bundleSize)).toBe(false)
+    expect(buyItem(enoughForOne, 'pokeBall', Pokeball.bundleSize)).toBeUndefined()
+  })
+
+  // A passive is held, not stocked; a ten-pack would just be the bundle discount on one charm.
+  // The wallet has to cover ten charms outright, or this passes on affordability instead of on
+  // the rule it is meant to pin.
+  it('refuses a bundle of a passive item', () => {
+    const flush = state({ usedSinceInstall: ShinyCharm.price * 20 })
+    expect(canBuyItem(flush, 'shinyCharm')).toBe(true)
+    expect(canBuyItem(flush, 'shinyCharm', Pokeball.bundleSize)).toBe(false)
+    expect(buyItem(flush, 'shinyCharm', Pokeball.bundleSize)).toBeUndefined()
+  })
+
+  it('treats a nonsense quantity as one', () => {
+    const flush = state({ usedSinceInstall: 10_000_000_000, inventory: {} })
+    expect(buyItem(flush, 'pokeBall', 0)?.inventory['pokeBall']).toBe(1)
+    expect(buyItem(flush, 'pokeBall', -5)?.inventory['pokeBall']).toBe(1)
   })
 
   it('reports ownership of the shiny charm', () => {

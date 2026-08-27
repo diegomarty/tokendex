@@ -26,6 +26,23 @@ export interface BaseSpecies {
   captureRate: number
 }
 
+/**
+ * One species as a wild encounter needs it.
+ *
+ * Deliberately **not** an `EvoLine`: an encounter is a single Pokémon, and fetching its whole
+ * chain would cost one request per form for a species that may well flee. What it does need
+ * beyond the index is the pair of legendary flags — `capture_rate` alone cannot express the
+ * legendary tier (see `captureRateCeiling`), so a Mewtwo drawn from the index would otherwise be
+ * labelled "rare".
+ */
+export interface WildSpecies {
+  id: number
+  captureRate: number
+  rarity: Rarity
+  /** langCode -> name, restricted to the languages the app supports. */
+  names: Record<string, string>
+}
+
 /** Injectable so tests use a stub rather than the network. */
 export interface PokeProviding {
   line(baseSpeciesID: number): Promise<EvoLine>
@@ -33,6 +50,8 @@ export interface PokeProviding {
   baseSpeciesIndex(): Promise<BaseSpecies[]>
   /** A single species, or undefined when it is not a line start. */
   baseSpecies(id: number): Promise<BaseSpecies | undefined>
+  /** One species for a wild encounter. Throws when the network is down; never returns partial. */
+  wildSpecies(id: number): Promise<WildSpecies>
 }
 
 const REST_BASE = 'https://pokeapi.co/api/v2'
@@ -63,6 +82,15 @@ async function getJSON<T>(url: string): Promise<T> {
   const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`)
   return (await response.json()) as T
+}
+
+/** The species' names, narrowed to the languages the app can display. */
+function namesByLanguage(dto: SpeciesDTO): Record<string, string> {
+  const byLang: Record<string, string> = {}
+  for (const entry of dto.names ?? []) {
+    if (LANG_CODES.includes(entry.language.name)) byLang[entry.language.name] = entry.name
+  }
+  return byLang
 }
 
 /** Species id from a PokéAPI resource URL (".../pokemon-species/25/"). */
@@ -115,16 +143,26 @@ export class PokeAPIClient implements PokeProviding {
     const ids = allIDs(tree)
     const dtos = await Promise.all(ids.map((id) => this.species(id)))
     for (const [index, dto] of dtos.entries()) {
-      const byLang: Record<string, string> = {}
-      for (const entry of dto.names ?? []) {
-        if (LANG_CODES.includes(entry.language.name)) byLang[entry.language.name] = entry.name
-      }
-      names[ids[index]!] = byLang
+      names[ids[index]!] = namesByLanguage(dto)
     }
 
     const line = makeEvoLine(baseSpeciesID, tree, rarity, names)
     this.lineCache.set(baseSpeciesID, line)
     return line
+  }
+
+  /**
+   * One request, and usually zero: `species()` memoises, and a wild species is very often one
+   * the index or a previous encounter already pulled.
+   */
+  async wildSpecies(id: number): Promise<WildSpecies> {
+    const dto = await this.species(id)
+    return {
+      id,
+      captureRate: dto.capture_rate,
+      rarity: rarityFrom(dto.capture_rate, dto.is_legendary, dto.is_mythical),
+      names: namesByLanguage(dto),
+    }
   }
 
   private async species(id: number): Promise<SpeciesDTO> {

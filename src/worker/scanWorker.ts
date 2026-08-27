@@ -61,7 +61,7 @@ import { type DevAction, DEV_GROUPS, DEV_SCENARIOS, devSummary } from '../core/d
 import { promises as devFS } from 'node:fs'
 import { join as devJoin } from 'node:path'
 import { ourData } from '../core/appPaths.js'
-import { compact } from '../core/tokenFormatter.js'
+import { compact, percent } from '../core/tokenFormatter.js'
 import { f } from '../core/i18n/strings.js'
 import { stage as stageLabel } from '../core/i18n/dispatch.js'
 import { type CelebrationEvent, celebrationText, openPanelLabel } from '../core/i18n/dispatch.js'
@@ -72,15 +72,26 @@ import { grouped } from '../core/tokenFormatter.js'
 import { cost } from '../core/tokenFormatter.js'
 import {
   APP_LANGUAGES,
+  BALL_KINDS,
+  type BallKind,
   FreshEgg,
   ITEM_KINDS,
+  Pokeball,
   itemEmoji,
   itemIsPassive,
+  itemSpriteName,
   languageLabel,
   localizedName,
   natureName,
   shopEntryPrice,
 } from '../core/companion/model.js'
+import {
+  catchChance,
+  encounterThresholdFor,
+  tokensToNextEncounter,
+} from '../core/companion/encounters.js'
+import { TRAINER_IDS, trainerIDOrDefault } from '../core/companion/trainers.js'
+import { spawnTestEncounter, grantBalls } from '../core/dev/simulation.js'
 import {
   canBuyEgg,
   canBuyItem,
@@ -97,14 +108,19 @@ import type {
   PanelBagItem,
   PanelDexEntry,
   PanelDexSpecies,
+  PanelThrowResult,
+  PanelWild,
 } from '../webview/protocol.js'
 import { dexEntriesSorted, dexSpecies, entryName, lineItems } from '../core/companion/dexView.js'
 
 export type WorkerAction =
-  | { action: 'buyItem'; item: ItemKind }
+  | { action: 'buyItem'; item: ItemKind; quantity?: number }
   | { action: 'useItem'; item: ItemKind }
   | { action: 'buyEgg'; tier?: Rarity }
   | { action: 'setLanguage'; language: AppLanguage }
+  | { action: 'throwBall'; encounterID: string; ball: BallKind }
+  | { action: 'runFrom'; encounterID: string }
+  | { action: 'setTrainer'; trainerID: string }
   // Development-only. Declared in `core/dev/scenarios.ts` so the panel's Dev tab, the quick pick
   // and this switch are all driven by one table.
   | DevAction
@@ -113,6 +129,10 @@ export interface ScanRequest {
   id: number
   type: 'scan'
   locale?: string
+  /** `tokendex.encounterNotifications` !== 'off'. Sticky: absent keeps the last value. */
+  encounterToasts?: boolean
+  /** The host's `tokendex.refreshInterval`, for the Settings picker. Sticky like the flag. */
+  refreshSeconds?: number
 }
 
 export interface PanelRequest {
@@ -128,6 +148,12 @@ export interface ActionRequest {
   locale?: string
   devMode?: boolean
   payload: WorkerAction
+  /**
+   * Re-render from the last scan instead of re-scanning after the action. Set for the
+   * latency-sensitive game actions (a throw's animation awaits this reply): the usage half did
+   * not change, and `buildPanel` reads the companion store fresh anyway.
+   */
+  fromLastScan?: boolean
 }
 
 /**
@@ -153,7 +179,9 @@ export interface CelebrateBroadcast {
 
 export type ScanResponse =
   | { id: number; ok: true; snapshot: ReturnType<typeof buildSnapshot> }
-  | { id: number; ok: true; panel: PanelState }
+  /** `extra` rides beside the panel on a throw reply — never inside `PanelState`, which is
+   *  replayed to late-opening surfaces and would replay the animation. */
+  | { id: number; ok: true; panel: PanelState; extra?: PanelThrowResult }
   | { id: number; ok: false; error: string }
 
 interface WorkerConfig {
@@ -164,7 +192,24 @@ interface WorkerConfig {
 
 const config = (workerData ?? {}) as WorkerConfig
 
-const companion = new CompanionStore({ provider: new PokeAPIClient() })
+/** Selectable refresh intervals, in seconds. One list for the host's timer, the setting's enum
+ *  and the panel's picker — three copies would drift. */
+export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
+
+/**
+ * Whether an encounter may toast at all (`tokendex.encounterNotifications`). Carried on every
+ * request rather than read here — the worker has no access to VS Code configuration — and held
+ * as a flag the store reads through a callback, so a change applies without a restart.
+ */
+let encounterToasts = true
+
+/** The host's current `tokendex.refreshInterval`, piggybacked on requests like the flag above. */
+let refreshSecondsSetting: number | undefined
+
+const companion = new CompanionStore({
+  provider: new PokeAPIClient(),
+  encounterToastsEnabled: () => encounterToasts,
+})
 
 /**
  * Official limits, kept off the scan's critical path — `refresh()` returns what is known and
@@ -391,6 +436,8 @@ function companionView(
   const active = state.active
   const dexCount = state.dex.length
   const spendableTokens = companion.spendable()
+  const wildCount = state.wild.length
+  const wildTooltip = D.wildBadgeTooltip(lang, wildCount)
 
   if (active === undefined) {
     return {
@@ -400,6 +447,8 @@ function companionView(
       toNextText: f.eggToHatch(lang, compact(eggTokensToHatch(state))),
       dexCount,
       spendableTokens,
+      wildCount,
+      wildTooltip,
     }
   }
 
@@ -415,6 +464,8 @@ function companionView(
     stageText: stageLabel(lang, active.stageIndex + 1, active.totalForms),
     dexCount,
     spendableTokens,
+    wildCount,
+    wildTooltip,
   }
   const name = companion.displayName()
   if (name !== undefined) view.name = name
@@ -422,19 +473,72 @@ function companionView(
 }
 
 /**
+ * The scene's result line, pre-localised — the webview must never compose localised text.
+ * Present tense theatre, matching the games: "Gotcha!", "It broke free!", "It fled…".
+ */
+function throwResultText(
+  lang: AppLanguage,
+  outcome: { kind: string; shakes?: number },
+  name: string,
+  isShiny: boolean,
+): string {
+  switch (outcome.kind) {
+    case 'caught':
+      return celebrationText(lang, { kind: 'wildCaught', name, isShiny })
+    case 'broke':
+      return D.brokeFreeText(lang, outcome.shakes ?? 0)
+    case 'fled':
+      return D.fledText(lang, name)
+    case 'noBall':
+      return D.wildNoBallsText(lang)
+    default:
+      return '' // unknownEncounter: the state push already removed the scene
+  }
+}
+
+/**
  * Applies a user action, then rescans so the reply carries a fully consistent snapshot. The
  * webview never mutates state itself — it only asks, and re-renders whatever comes back.
+ *
+ * A throw returns its outcome, which the dispatcher attaches to the reply beside the panel.
  */
-async function applyAction(payload: WorkerAction): Promise<void> {
+async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | undefined> {
   await companion.load()
   const state = companion.snapshot()
 
   switch (payload.action) {
     case 'buyItem': {
-      const next = buyItem(state, payload.item)
+      const next = buyItem(state, payload.item, payload.quantity ?? 1)
       if (next !== undefined) companion.replaceState(next)
       break
     }
+
+    case 'throwBall': {
+      // The name is captured before the throw: a caught or fled encounter is gone afterwards.
+      const target = state.wild.find((e) => e.id === payload.encounterID)
+      const name = target?.names?.[state.language] ?? `#${target?.speciesID ?? '?'}`
+      const outcome = await companion.throwBallAt(payload.encounterID, payload.ball)
+      const shakes = 'shakes' in outcome ? outcome.shakes : 0
+      return {
+        encounterID: payload.encounterID,
+        kind: outcome.kind,
+        shakes,
+        resultText: throwResultText(
+          companion.snapshot().language,
+          outcome,
+          name,
+          target?.isShiny ?? false,
+        ),
+      }
+    }
+
+    case 'runFrom':
+      await companion.runFrom(payload.encounterID)
+      break
+
+    case 'setTrainer':
+      await companion.setTrainer(payload.trainerID)
+      break
     case 'useItem': {
       if (payload.item === 'rareCandy') {
         const next = consumeRareCandy(state)
@@ -518,6 +622,14 @@ async function applyAction(payload: WorkerAction): Promise<void> {
       await saveDev()
       break
 
+    case 'devSpawnEncounter':
+      companion.replaceState(spawnTestEncounter(state, payload.variant, Date.now()))
+      break
+
+    case 'devGrantBalls':
+      companion.replaceState(grantBalls(state, payload.count))
+      break
+
     case 'devSnapshot':
       if (payload.slot === 'save') {
         await devFS.writeFile(DEV_SNAPSHOT_FILE, JSON.stringify(state), 'utf8')
@@ -532,6 +644,7 @@ async function applyAction(payload: WorkerAction): Promise<void> {
       break
   }
   await companion.save()
+  return undefined
 }
 
 /**
@@ -548,10 +661,14 @@ function buildPanel(
   const line = companion.currentLine()
   const spendable = spendableBalance(state)
 
+  // The discount is derived, not written: `shopEntryPrice` charges bundleMultiplier/bundleSize,
+  // and copy that said a different percentage would be lying about the till.
+  const bundleDiscount = Math.round(100 * (1 - Pokeball.bundleMultiplier / Pokeball.bundleSize))
   const shop: PanelShopItem[] = []
   for (const kind of ITEM_KINDS) {
     const owned = itemIsPassive(kind) && itemCount(state, kind) > 0
-    shop.push({
+    const isBall = (BALL_KINDS as readonly string[]).includes(kind)
+    const row: PanelShopItem = {
       id: `item:${kind}`,
       emoji: itemEmoji(kind),
       title: D.itemName(lang, kind),
@@ -559,7 +676,28 @@ function buildPanel(
       priceText: compact(shopEntryPrice({ kind: 'item', item: kind })),
       enabled: canBuyItem(state, kind),
       owned,
-    })
+      group: isBall ? 'balls' : 'items',
+    }
+    const sprite = itemSpriteName(kind)
+    if (sprite !== undefined) row.sprite = sprite
+    shop.push(row)
+    // Ball ten-packs, straight after their single row. The Master Ball is deliberately not
+    // bundled — a ten-pack of guaranteed catches is not a thing worth pricing.
+    if (kind !== 'masterBall' && isBall) {
+      const quantity = Pokeball.bundleSize
+      const bundle: PanelShopItem = {
+        id: `item:${kind}:${quantity}`,
+        emoji: itemEmoji(kind),
+        title: `${D.itemName(lang, kind)} ×${quantity}`,
+        description: D.bundleDescription(lang, quantity, bundleDiscount),
+        priceText: compact(shopEntryPrice({ kind: 'item', item: kind, quantity })),
+        enabled: canBuyItem(state, kind, quantity),
+        owned: false,
+        group: 'balls',
+      }
+      if (sprite !== undefined) bundle.sprite = sprite
+      shop.push(bundle)
+    }
   }
   if (state.active !== undefined) {
     for (const tier of FreshEgg.shopTiers) {
@@ -571,9 +709,11 @@ function buildPanel(
         priceText: compact(FreshEgg.price_(tier)),
         enabled: canBuyEgg(state, tier),
         owned: false,
+        group: 'eggs',
       })
     }
   }
+  // Sorted within each group by price, owned passives last; the webview renders group by group.
   shop.sort((a, b) => Number(a.owned) - Number(b.owned))
 
   const bag: PanelBagItem[] = ownedItems(state).map((item) => {
@@ -586,6 +726,7 @@ function buildPanel(
     const entry: PanelBagItem = {
       id: `item:${item.kind}`,
       emoji: itemEmoji(item.kind),
+      ...(itemSpriteName(item.kind) !== undefined ? { sprite: itemSpriteName(item.kind) } : {}),
       title: D.itemName(lang, item.kind),
       description: D.itemDescription(lang, item.kind),
       count: item.count,
@@ -606,6 +747,7 @@ function buildPanel(
       isShiny: e.isShiny,
       rarityText: D.rarityLabel(lang, e.rarity),
       isActive: e.id === activeID,
+      isWild: e.source === 'wild',
     }
     if (e.caughtAt !== undefined) {
       row.caughtText = new Date(e.caughtAt).toLocaleDateString(locale)
@@ -621,6 +763,54 @@ function buildPanel(
     rarityText: D.rarityLabel(lang, sp.rarity),
   }))
 
+  const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
+  const threshold = encounterThresholdFor(state.encountersSeen)
+  // The head of the queue is the one on stage: its capture rate prices every ball's odds, and
+  // its rarity decides whether letting it go deserves a native confirmation.
+  const staged = state.wild[0]
+  const wild: PanelWild = {
+    encounters: state.wild.map((e) => {
+      const row: PanelWild['encounters'][number] = {
+        id: e.id,
+        speciesID: e.speciesID,
+        name: e.names?.[lang] ?? `#${e.speciesID}`,
+        rarityText: D.rarityLabel(lang, e.rarity),
+        rarity: e.rarity,
+        isShiny: e.isShiny,
+        appearedText:
+          todayKey(e.appearedAt) === todayKey(Date.now())
+            ? new Date(e.appearedAt).toLocaleTimeString(locale, {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : new Date(e.appearedAt).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
+      }
+      // Running from a common stays one click; discarding what hurts to lose asks first.
+      if (e.rarity === 'rare' || e.rarity === 'legendary' || e.isShiny) {
+        row.runConfirmText = D.runAwayConfirm(lang, row.name)
+      }
+      return row
+    }),
+    waitingText: D.wildBadgeTooltip(lang, state.wild.length),
+    emptyText: D.wildEmptyText(lang, compact(toNext)),
+    progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
+    balls: BALL_KINDS.map((kind) => {
+      const ball: PanelWild['balls'][number] = {
+        kind,
+        name: D.itemName(lang, kind),
+        count: itemCount(state, kind),
+        sprite: itemSpriteName(kind) ?? 'poke-ball',
+      }
+      if (staged !== undefined) {
+        // Same maths the throw rolls (`catchChance`), so the number shown is the number played.
+        const pct = catchChance(staged.captureRate, kind) * 100
+        ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
+      }
+      return ball
+    }),
+    noBallsText: D.wildNoBallsText(lang),
+  }
+
   const panel: PanelState = {
     totals: {
       todayText: compact(usage.totals.todayTokens),
@@ -630,16 +820,26 @@ function buildPanel(
       monthExactText: grouped(usage.totals.monthTokens, locale),
       monthCostText: cost(usage.totals.monthCost),
     },
-    providers: usage.providers.map((p) => ({
-      displayName: p.displayName,
-      todayText: compact(p.today?.totalTokens ?? 0),
-      monthText: compact(p.month?.totalTokens ?? 0),
-    })),
+    providers: usage.providers.map((p) => {
+      const row: PanelState['providers'][number] = {
+        displayName: p.displayName,
+        todayText: compact(p.today?.totalTokens ?? 0),
+        monthText: compact(p.month?.totalTokens ?? 0),
+      }
+      // The same trailing-window burn the tooltip shows — one source, two surfaces.
+      if (p.tokensPerMinute !== undefined && p.tokensPerMinute > 0) {
+        row.burnText = `${compact(Math.round(p.tokensPerMinute))}/min`
+      }
+      return row
+    }),
     spendableText: compact(spendable),
     shop,
     bag,
     dexSpecies: species,
     dexLog,
+    wild,
+    trainerID: trainerIDOrDefault(state.trainerID),
+    trainers: [...TRAINER_IDS],
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
     limits: usage.limits,
@@ -658,6 +858,7 @@ function buildPanel(
           : { state: item.state },
       ),
     }
+    if (view.state === 'levelUp') c.celebrating = true
     if (view.name !== undefined) c.name = view.name
     if (view.speciesID !== undefined) c.speciesID = view.speciesID
     if (view.stageText !== undefined) c.stageText = view.stageText
@@ -666,6 +867,15 @@ function buildPanel(
       if (state.active.nature !== undefined) c.natureText = natureName(state.active.nature, lang)
     }
     panel.companion = c
+  }
+  if (refreshSecondsSetting !== undefined) {
+    panel.refresh = {
+      seconds: refreshSecondsSetting,
+      options: REFRESH_PRESETS.map((seconds) => ({
+        seconds,
+        label: D.intervalLabel(lang, seconds),
+      })),
+    }
   }
   if (devMode) panel.dev = buildDevPanel()
   return panel
@@ -702,14 +912,28 @@ function buildDevPanel(): NonNullable<PanelState['dev']> {
 
 // Serialization and the render-from-last-scan shortcut live in `dispatcher.ts`, where they
 // are tested with stubs; this wiring is the only untested part.
-const dispatch = createDispatcher<WorkerAction, ReturnType<typeof buildSnapshot>, PanelState>({
+const dispatch = createDispatcher<
+  WorkerAction,
+  ReturnType<typeof buildSnapshot>,
+  PanelState,
+  PanelThrowResult
+>({
   scan,
   applyAction,
   buildPanel,
   post: (response) => parentPort?.postMessage(response),
 })
 
-parentPort?.on('message', dispatch)
+parentPort?.on('message', (message: WorkerRequest) => {
+  // Settings piggyback on requests because a worker cannot read VS Code configuration.
+  if ('encounterToasts' in message && typeof message.encounterToasts === 'boolean') {
+    encounterToasts = message.encounterToasts
+  }
+  if ('refreshSeconds' in message && typeof message.refreshSeconds === 'number') {
+    refreshSecondsSetting = message.refreshSeconds
+  }
+  dispatch(message)
+})
 
 // Keep the resolved roots warm so the first scan does not also pay for discovery.
 void claudeProjectRoots().catch(() => undefined)

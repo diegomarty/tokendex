@@ -17,8 +17,10 @@ import {
   type PokemonNature,
   RARITIES,
   type Rarity,
+  type WildEncounter,
   freshCompanionState,
 } from './model.js'
+import { EncounterBalance } from './encounters.js'
 
 type Json = Record<string, unknown>
 
@@ -53,6 +55,10 @@ const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every
 
 function isNumberRecord(v: unknown): v is Record<string, number> {
   return isObject(v) && Object.values(v).every(isInt)
+}
+
+function isStringRecord(v: unknown): v is Record<string, string> {
+  return isObject(v) && Object.values(v).every(isString)
 }
 
 function isNameMap(v: unknown): v is Record<number, Record<string, string>> {
@@ -127,7 +133,41 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
   // name map for the final species only. The view backfills from a line lookup.
   const names = lenientOptional(value, 'names', isNameMap)
   if (names !== undefined) entry.names = names
+  // Only 'wild' is a value; anything else degrades to absent, which reads as "raised" — the
+  // original meaning, so a save written before encounters existed needs no migration.
+  if (value['source'] === 'wild') entry.source = 'wild'
   return entry
+}
+
+/**
+ * One queued wild encounter. Anything missing an identity, a species or a capture rate is
+ * dropped rather than defaulted: a made-up capture rate would silently change the catch odds,
+ * which is worse than losing one encounter the player has not seen yet.
+ */
+export function decodeWildEncounter(value: unknown): WildEncounter | undefined {
+  if (!isObject(value)) return undefined
+  const id = lenientOptional(value, 'id', isString)
+  const speciesID = lenientOptional(value, 'speciesID', isInt)
+  const captureRate = lenientOptional(value, 'captureRate', isInt)
+  const rarity = lenientOptional(value, 'rarity', isRarity)
+  if (id === undefined || speciesID === undefined || captureRate === undefined || rarity === undefined) {
+    return undefined
+  }
+
+  const encounter: WildEncounter = {
+    id,
+    speciesID,
+    captureRate,
+    rarity,
+    isShiny: lenient(value, 'isShiny', isBool, false),
+    appearedAt: lenient(value, 'appearedAt', isNumber, 0),
+    // Defaults to zero, the *player-favourable* direction: a corrupt count must not arrive as
+    // "already thrown at four times" and hand them a near-certain flee.
+    throws: Math.max(0, lenient(value, 'throws', isInt, 0)),
+  }
+  const names = lenientOptional(value, 'names', isStringRecord)
+  if (names !== undefined) encounter.names = names
+  return encounter
 }
 
 /**
@@ -153,6 +193,15 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     inventory: lenient(value, 'inventory', isNumberRecord, {}),
     candyGrantTier: lenient(value, 'candyGrantTier', isNumberRecord, {}),
     candyFeatureSeeded: lenient(value, 'candyFeatureSeeded', isBool, false),
+    encounterUsage: Math.max(0, lenient(value, 'encounterUsage', isInt, 0)),
+    // Per-item isolation, as with the Pokédex: one corrupt encounter must not empty the queue.
+    wild: (Array.isArray(value['wild']) ? value['wild'] : [])
+      .map(decodeWildEncounter)
+      .filter((e): e is WildEncounter => e !== undefined)
+      .slice(0, EncounterBalance.maxQueue),
+    // A save predating encounters decodes to 0, so its owner gets the cheap first encounter
+    // too — the alternative is punishing existing players for having installed early.
+    encountersSeen: Math.max(0, lenient(value, 'encountersSeen', isInt, 0)),
   }
 
   // An unknown rawValue degrades to "no guarantee" — the safe direction, since inventing a
@@ -161,6 +210,14 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   if (eggTier !== undefined) state.eggTier = eggTier
   const pendingHatchID = lenientOptional(value, 'pendingHatchID', isInt)
   if (pendingHatchID !== undefined) state.pendingHatchID = pendingHatchID
+
+  // Not validated against the roster here: this module knows nothing about which sprites exist,
+  // and an unknown slug already falls back to the default at render time. `sanitized()` is where
+  // an imported save gets its slug checked.
+  const trainerID = lenientOptional(value, 'trainerID', isString)
+  if (trainerID !== undefined) state.trainerID = trainerID
+  const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
+  if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 
   // Corrupt active (empty pathIDs and friends) falls back to an egg while the Pokédex and
   // inventory survive.

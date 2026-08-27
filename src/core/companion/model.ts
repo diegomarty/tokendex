@@ -150,8 +150,27 @@ export const PokemonBalance = {
 
 // MARK: - Items
 
-export const ITEM_KINDS = ['rareCandy', 'mint', 'shinyCharm'] as const
+export const ITEM_KINDS = [
+  'rareCandy',
+  'mint',
+  'shinyCharm',
+  'pokeBall',
+  'greatBall',
+  'ultraBall',
+  'masterBall',
+] as const
 export type ItemKind = (typeof ITEM_KINDS)[number]
+
+/**
+ * The four throwable items, in ascending power. A separate union from `ItemKind` so a function
+ * that resolves a capture cannot be handed a Rare Candy: `isBallKind` is the only way in.
+ */
+export const BALL_KINDS = ['pokeBall', 'greatBall', 'ultraBall', 'masterBall'] as const
+export type BallKind = (typeof BALL_KINDS)[number]
+
+export function isBallKind(kind: ItemKind): kind is BallKind {
+  return (BALL_KINDS as readonly string[]).includes(kind)
+}
 
 /** Rare Candy balance. */
 export const RareCandy = {
@@ -190,6 +209,54 @@ export const ShinyCharm = {
    * Doubling it (1/32) was too strong. Never retroactive — shininess is fixed at hatch.
    */
   shinyDenominator: 48,
+} as const
+
+/**
+ * Pokéball balance — the only items bought to be *thrown*, at a wild encounter.
+ *
+ * Priced against the encounter rate rather than against the other items: one encounter costs
+ * `EncounterBalance.threshold` (2.5M) of spend, so a Poké Ball at 5M means roughly two
+ * encounters' worth of work per throw. That is a real cost without ever gating the feature —
+ * whereas pricing balls next to a Mint (100M) would make the whole tab unreachable.
+ *
+ * The Master Ball is deliberately half a Shiny Charm: a legendary is ~3.6% per Poké Ball, so
+ * the guaranteed catch has to be a decision, not a purchase.
+ */
+export const Pokeball = {
+  price: {
+    pokeBall: 5_000_000,
+    greatBall: 15_000_000,
+    ultraBall: 40_000_000,
+    masterBall: 1_500_000_000,
+  } as Record<BallKind, number>,
+
+  /**
+   * Multiplier on the species capture rate. `Infinity` is not a magic number here: the Master
+   * Ball's real behaviour *is* an unconditional catch, and expressing it as a multiplier keeps
+   * `catchValue` a single formula instead of a formula plus a special case.
+   */
+  multiplier: {
+    pokeBall: 1,
+    greatBall: 1.5,
+    ultraBall: 2,
+    masterBall: Infinity,
+  } as Record<BallKind, number>,
+
+  /**
+   * Bundle offered beside the single unit, at 9x the price for 10 balls. Buying ten balls one
+   * native confirmation modal at a time is unusable, and the Master Ball is sold singly on
+   * purpose — a ten-pack of guaranteed catches is not a thing worth pricing.
+   */
+  bundleSize: 10,
+  bundleMultiplier: 9,
+
+  /**
+   * Poké Balls a fresh save starts with. The first encounter arrives at 500k tokens but a ball
+   * costs 5M, so without these a new user meets their first wild Pokémon and can do nothing
+   * about it for ~4.5M more tokens — turning the moment this feature exists for into a
+   * frustration. Five is enough for the first few encounters, not enough to skip the shop.
+   */
+  starterCount: 5,
 } as const
 
 /** Fresh egg (reroll) balance — discards the current Pokémon and starts a new egg. */
@@ -236,6 +303,14 @@ export function itemSpriteName(kind: ItemKind): string | undefined {
       return undefined // PokéAPI has no mint sprite (gen 8 item) -> emoji fallback
     case 'shinyCharm':
       return 'shiny-charm'
+    case 'pokeBall':
+      return 'poke-ball'
+    case 'greatBall':
+      return 'great-ball'
+    case 'ultraBall':
+      return 'ultra-ball'
+    case 'masterBall':
+      return 'master-ball'
   }
 }
 
@@ -248,9 +323,19 @@ export function itemEmoji(kind: ItemKind): string {
       return '🌿'
     case 'shinyCharm':
       return '✨'
+    case 'pokeBall':
+    case 'greatBall':
+    case 'ultraBall':
+    case 'masterBall':
+      return '⚪'
   }
 }
 
+/**
+ * `undefined` would make the item **free**: `shopEntryPrice` falls back to 0. Every kind must
+ * therefore be answered here, and `test/companion-shop.test.ts` walks `ITEM_KINDS` to prove it —
+ * a new item added without a price is the mistake that guard exists to stop.
+ */
 export function itemShopPrice(kind: ItemKind): number | undefined {
   switch (kind) {
     case 'rareCandy':
@@ -259,6 +344,11 @@ export function itemShopPrice(kind: ItemKind): number | undefined {
       return Mint.price
     case 'shinyCharm':
       return ShinyCharm.price
+    case 'pokeBall':
+    case 'greatBall':
+    case 'ultraBall':
+    case 'masterBall':
+      return Pokeball.price[kind]
   }
 }
 
@@ -269,10 +359,22 @@ export function itemIsPassive(kind: ItemKind): boolean {
 
 // MARK: - Shop
 
-export type ShopEntry = { kind: 'item'; item: ItemKind } | { kind: 'egg'; tier: Rarity | undefined }
+export type ShopEntry =
+  /** `quantity` absent means one; a bundle row carries its size and pays `bundleMultiplier`. */
+  { kind: 'item'; item: ItemKind; quantity?: number } | { kind: 'egg'; tier: Rarity | undefined }
+
+export function shopEntryQuantity(entry: ShopEntry): number {
+  return entry.kind === 'item' ? (entry.quantity ?? 1) : 1
+}
 
 export function shopEntryPrice(entry: ShopEntry): number {
-  return entry.kind === 'item' ? (itemShopPrice(entry.item) ?? 0) : FreshEgg.price_(entry.tier)
+  if (entry.kind === 'egg') return FreshEgg.price_(entry.tier)
+  const unit = itemShopPrice(entry.item) ?? 0
+  const quantity = entry.quantity ?? 1
+  if (quantity <= 1) return unit
+  // Per-unit discount rather than a flat bundle price, so the two constants stay independent:
+  // changing `bundleSize` alone must not silently change what a bundle costs per ball.
+  return Math.round((unit * quantity * Pokeball.bundleMultiplier) / Pokeball.bundleSize)
 }
 
 // MARK: - Candy grants
@@ -298,6 +400,20 @@ export interface CandyGrant {
 }
 
 // MARK: - Sprite availability
+
+/**
+ * Still-sprite URL for one species — the 96px PNG, not the animated GIF.
+ *
+ * The status bar tooltip is the one *core* consumer of a sprite URL (Markdown can embed an
+ * image where a StatusBarItem cannot). It mirrors `spriteURL(id, shiny, false)` in
+ * `src/webview/sprite.ts`, which cannot be imported across the bundle boundary;
+ * `test/sprite.test.ts` pins the two together, the same arrangement `ANIMATED_SPECIES_MAX`
+ * already lives under.
+ */
+export function stillSpriteURL(speciesID: number, shiny: boolean): string {
+  const base = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon'
+  return `${base}/${shiny ? 'shiny/' : ''}${speciesID}.png`
+}
 
 /** PokéAPI's Gen-V animated assets only exist for national dex #1...649. */
 export const ANIMATED_SPECIES_MAX = 649
@@ -496,6 +612,41 @@ export interface DexEntry {
    * a network call and follows a language switch. Older saves lack it; the view backfills.
    */
   names?: Record<number, Record<string, string>>
+  /**
+   * How the entry was obtained. Absent means raised to its final form — the original and still
+   * the default, so old saves need no migration. `'wild'` is a single species caught from an
+   * encounter, which is why such an entry never touches `collectedFinals`: that set steers
+   * evolution-branch diversity and a one-species catch is not a completed line.
+   */
+  source?: 'wild'
+}
+
+/**
+ * A wild Pokémon that has appeared and not yet been resolved.
+ *
+ * Persisted, so the queue survives a restart — including `throws`, or closing the window would
+ * be a free way to reset flee pressure.
+ */
+export interface WildEncounter {
+  /**
+   * Stable id echoed back by the UI. The webview is a separate bundle and may be stale after an
+   * update, so it is never trusted: an unknown id fails closed rather than hitting the queue.
+   */
+  id: string
+  speciesID: number
+  /**
+   * 3 (Mewtwo-class) to 255 (Caterpie-class). With the ball, the only input to the catch
+   * formula — stored on the encounter so resolving a throw needs no network.
+   */
+  captureRate: number
+  rarity: Rarity
+  isShiny: boolean
+  /** Epoch milliseconds. */
+  appearedAt: number
+  /** Balls already thrown at it. Drives escalating flee pressure. */
+  throws: number
+  /** langCode -> name, so the tab renders and follows a language switch offline. */
+  names?: Record<string, string>
 }
 
 export interface CompanionState {
@@ -540,6 +691,22 @@ export interface CompanionState {
   candyGrantTier: Record<string, number>
   /** First-run seed done, blocking retroactive grants for windows already at 100%. */
   candyFeatureSeeded: boolean
+  /**
+   * Tokens accrued toward the next wild encounter.
+   *
+   * Independent of `eggUsage` and `active.usedAtStage` on purpose: an encounter must accrue
+   * whether you are incubating an egg or raising a Pokémon, so it cannot ride on either.
+   * Carries its remainder across a spawn — never reset, or usage is silently lost.
+   */
+  encounterUsage: number
+  /** Unresolved encounters, oldest first. */
+  wild: WildEncounter[]
+  /** Lifetime encounters spawned, so the cheaper first-encounter threshold applies exactly once. */
+  encountersSeen: number
+  /** Pokémon Showdown trainer slug. Absent = the roster default. */
+  trainerID?: string
+  /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
+  lastEncounterToastAt?: number
 }
 
 export function freshCompanionState(hostLanguage?: string): CompanionState {
@@ -552,8 +719,13 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     dex: [],
     collectedFinals: [],
     language: systemDefaultLanguage(hostLanguage),
-    inventory: {},
+    // See `Pokeball.starterCount`: without these, the first encounter (500k tokens) arrives
+    // ~4.5M tokens before the player can afford their first ball.
+    inventory: { pokeBall: Pokeball.starterCount },
     candyGrantTier: {},
     candyFeatureSeeded: false,
+    encounterUsage: 0,
+    wild: [],
+    encountersSeen: 0,
   }
 }

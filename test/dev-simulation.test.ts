@@ -4,14 +4,18 @@ import {
   applyDevOffsets,
   clearOffsets,
   freshDevState,
+  grantBalls,
   grantItem,
   setDittoDisguise,
   setEggTier,
   setShiny,
+  spawnTestEncounter,
   tokensToGraduation,
   tokensToMilestone,
   parseAmount,
 } from '../src/core/dev/simulation.js'
+import { EncounterBalance } from '../src/core/companion/encounters.js'
+import { BALL_KINDS } from '../src/core/companion/model.js'
 import {
   PokemonBalance,
   freshCompanionState,
@@ -135,6 +139,44 @@ describe('direct pokes', () => {
   it('sets and removes an egg guarantee', () => {
     expect(setEggTier(state(), 'rare').eggTier).toBe('rare')
     expect(setEggTier(state({ eggTier: 'rare' }), undefined).eggTier).toBeUndefined()
+  })
+})
+
+describe('wild encounter pokes', () => {
+  it('grants a stock of every ball at once', () => {
+    const after = grantBalls(state({ inventory: { pokeBall: 2 } }), 10)
+    expect(after.inventory['pokeBall']).toBe(12)
+    for (const kind of BALL_KINDS) expect(after.inventory[kind] ?? 0).toBeGreaterThanOrEqual(10)
+  })
+
+  it('queues a synthetic encounter of the requested variant', () => {
+    const rare = spawnTestEncounter(state(), 'rare', 1_700_000_000_000)
+    expect(rare.wild).toHaveLength(1)
+    expect(rare.wild[0]).toMatchObject({ rarity: 'rare', captureRate: 45, isShiny: false })
+
+    const shiny = spawnTestEncounter(state(), 'shiny', 1_700_000_000_000)
+    expect(shiny.wild[0]).toMatchObject({ isShiny: true, rarity: 'common' })
+  })
+
+  it('falls back to common for a variant a stale webview might echo', () => {
+    const after = spawnTestEncounter(state(), 'ultra-mega', 1_700_000_000_000)
+    expect(after.wild[0]?.rarity).toBe('common')
+  })
+
+  // The dev spawn goes through the real enqueue, so twelve-in-a-row proves the cap in the UI.
+  it('respects the queue cap through the real enqueue', () => {
+    let s = state()
+    for (let i = 0; i < EncounterBalance.maxQueue + 3; i++) {
+      s = spawnTestEncounter(s, 'common', 1_700_000_000_000 + i * 1000)
+    }
+    expect(s.wild).toHaveLength(EncounterBalance.maxQueue)
+  })
+
+  it('mints unique ids even at the same clock tick', () => {
+    let s = state()
+    s = spawnTestEncounter(s, 'common', 1_700_000_000_000)
+    s = spawnTestEncounter(s, 'common', 1_700_000_000_000)
+    expect(new Set(s.wild.map((e) => e.id)).size).toBe(2)
   })
 })
 

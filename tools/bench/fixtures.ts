@@ -21,45 +21,54 @@ import type {
   PanelDexSpecies,
   PanelShopItem,
   PanelState,
+  PanelWild,
+  PanelWildEncounter,
 } from '../../src/webview/protocol.js'
 import {
   APP_LANGUAGES,
   type AppLanguage,
+  BALL_KINDS,
   FreshEgg,
   ITEM_KINDS,
   type ItemKind,
-  Mint,
-  RareCandy,
-  ShinyCharm,
   itemEmoji,
+  itemShopPrice,
+  itemSpriteName,
   languageLabel,
 } from '../../src/core/companion/model.js'
+import { DEFAULT_TRAINER_ID, TRAINER_IDS } from '../../src/core/companion/trainers.js'
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { panelStrings } from '../../src/core/i18n/panelStrings.js'
 import { s } from '../../src/core/i18n/strings.js'
 import { compact, cost, grouped } from '../../src/core/tokenFormatter.js'
 
-const PRICES: Record<ItemKind, number> = {
-  rareCandy: RareCandy.price,
-  mint: Mint.price,
-  shinyCharm: ShinyCharm.price,
-}
+// Read from `itemShopPrice` rather than re-listed here: a hand-written map is a second price
+// table, and the typecheck only catches a *missing* kind, never a wrong number.
+const PRICES: Record<ItemKind, number> = Object.fromEntries(
+  ITEM_KINDS.map((kind) => [kind, itemShopPrice(kind) ?? 0]),
+) as Record<ItemKind, number>
 
 function shop(
   lang: AppLanguage,
   options: { spendable: number; hasActive: boolean; owns?: ItemKind[] },
 ): PanelShopItem[] {
   const owns = new Set(options.owns ?? [])
-  const items: PanelShopItem[] = ITEM_KINDS.map((kind) => ({
-    id: `item:${kind}`,
-    emoji: itemEmoji(kind),
-    title: D.itemName(lang, kind),
-    description: D.itemDescription(lang, kind),
-    priceText: compact(PRICES[kind]),
-    enabled: options.spendable >= PRICES[kind] && !owns.has(kind),
-    owned: owns.has(kind),
-  }))
+  const items: PanelShopItem[] = ITEM_KINDS.map((kind) => {
+    const entry: PanelShopItem = {
+      id: `item:${kind}`,
+      emoji: itemEmoji(kind),
+      title: D.itemName(lang, kind),
+      description: D.itemDescription(lang, kind),
+      priceText: compact(PRICES[kind]),
+      enabled: options.spendable >= PRICES[kind] && !owns.has(kind),
+      owned: owns.has(kind),
+      group: (BALL_KINDS as readonly string[]).includes(kind) ? 'balls' : 'items',
+    }
+    const sprite = itemSpriteName(kind)
+    if (sprite !== undefined) entry.sprite = sprite
+    return entry
+  })
   if (!options.hasActive) return items
   for (const tier of FreshEgg.shopTiers) {
     items.push({
@@ -70,6 +79,7 @@ function shop(
       priceText: compact(FreshEgg.price_(tier)),
       enabled: options.spendable >= FreshEgg.price_(tier),
       owned: false,
+      group: 'eggs',
     })
   }
   return items
@@ -160,7 +170,7 @@ function species(
 
 function log(
   lang: AppLanguage,
-  rows: { id: number; days: number; shiny?: boolean; active?: boolean }[],
+  rows: { id: number; days: number; shiny?: boolean; active?: boolean; wild?: boolean }[],
 ): PanelDexEntry[] {
   const day = 86_400_000
   // Fixed epoch, not `Date.now()`: a bench that renders a different string every reload makes
@@ -176,10 +186,50 @@ function log(
         row.id === 150 ? 'legendary' : row.id % 7 === 0 ? 'rare' : 'common',
       ),
       isActive: row.active ?? false,
+      isWild: row.wild ?? false,
     }
     if (!row.active) entry.caughtText = new Date(base - row.days * day).toLocaleDateString('en-US')
     return entry
   })
+}
+
+// MARK: - Wild encounters
+
+function wildEncounter(
+  lang: AppLanguage,
+  over: Partial<PanelWildEncounter> & { speciesID: number },
+): PanelWildEncounter {
+  const rarity = over.rarity ?? 'common'
+  return {
+    id: `w-${over.speciesID}`,
+    name: NAMES[over.speciesID] ?? `#${over.speciesID}`,
+    rarityText: D.rarityLabel(lang, rarity as never),
+    rarity,
+    isShiny: false,
+    appearedText: '10:24',
+    ...over,
+  }
+}
+
+/** The Wild tab exactly as the worker shapes it, with a controllable rack. */
+function wildSection(
+  lang: AppLanguage,
+  encounters: PanelWildEncounter[],
+  counts: Partial<Record<string, number>> = {},
+): PanelWild {
+  return {
+    encounters,
+    waitingText: D.wildBadgeTooltip(lang, encounters.length),
+    emptyText: D.wildEmptyText(lang, compact(1_200_000)),
+    progressPercent: 52,
+    balls: BALL_KINDS.map((kind) => ({
+      kind,
+      name: D.itemName(lang, kind),
+      count: counts[kind] ?? 0,
+      sprite: itemSpriteName(kind) ?? 'poke-ball',
+    })),
+    noBallsText: D.wildNoBallsText(lang),
+  }
 }
 
 interface BaseOptions {
@@ -222,6 +272,9 @@ function base(options: BaseOptions = {}): PanelState {
       { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' },
     ],
     spendableText: compact(spendable),
+    wild: wildSection(lang, [], { pokeBall: 5 }),
+    trainerID: DEFAULT_TRAINER_ID,
+    trainers: [...TRAINER_IDS],
     shop: shop(lang, { spendable, hasActive: true }),
     bag: bag(lang, { rareCandy: 3 }, true),
     dexSpecies: [],
@@ -281,6 +334,40 @@ export const FIXTURES: Fixture[] = [
     id: 'no-limits',
     label: 'Sin límites conocidos (sección ausente)',
     state: { ...base(), limits: [] },
+  },
+  {
+    id: 'wild-queue',
+    label: 'Home scene: queue with a shiny and a legendary, full rack',
+    state: {
+      ...base(),
+      wild: wildSection(
+        'en',
+        [
+          wildEncounter('en', { speciesID: 10 }),
+          wildEncounter('en', { speciesID: 129, isShiny: true }),
+          wildEncounter('en', { speciesID: 147, rarity: 'rare' }),
+          wildEncounter('en', { speciesID: 150, rarity: 'legendary' }),
+        ],
+        { pokeBall: 7, greatBall: 2, ultraBall: 1, masterBall: 1 },
+      ),
+      dexLog: log('en', [
+        { id: 129, days: 0, wild: true },
+        { id: 3, days: 12 },
+      ]),
+    },
+  },
+  {
+    id: 'wild-no-balls',
+    label: 'Home scene: encounter waiting, empty rack (shop hint)',
+    state: {
+      ...base(),
+      wild: wildSection('en', [wildEncounter('en', { speciesID: 133 })]),
+    },
+  },
+  {
+    id: 'wild-empty',
+    label: 'Home scene: nothing waiting, companion on stage',
+    state: { ...base() },
   },
   {
     id: 'egg-early',
@@ -526,6 +613,7 @@ export const FIXTURES: Fixture[] = [
             isShiny: false,
             rarityText: D.rarityLabel('ja', 'rare'),
             isActive: true,
+            isWild: false,
           },
         ],
       }
