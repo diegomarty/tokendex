@@ -16,6 +16,7 @@ import type {
   WorkerAction,
   WorkerRequest,
 } from './worker/scanWorker.js'
+import { REFRESH_PRESETS } from './worker/scanWorker.js'
 import { GamePanel } from './panel.js'
 import { GameViewProvider, VIEW_ID } from './view.js'
 /**
@@ -24,7 +25,13 @@ import { GameViewProvider, VIEW_ID } from './view.js'
  * users have dragged the view.
  */
 const AMBIENT_VIEW_ID = 'tokendex.ambient'
-import { type PanelRequestKind, anySurfaceOpen, reloadSurfaces, updateSurfaces } from './surface.js'
+import {
+  type PanelRequestKind,
+  anySurfaceOpen,
+  broadcastThrow,
+  reloadSurfaces,
+  updateSurfaces,
+} from './surface.js'
 import { pickScenario } from './dev.js'
 import { devScenarioByID } from './core/dev/scenarios.js'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
@@ -41,11 +48,13 @@ import {
   suggestedFileName,
   summarize,
 } from './core/companion/saveTransfer.js'
-import type { AppLanguage, ItemKind, Rarity } from './core/companion/model.js'
+import type { AppLanguage, Rarity } from './core/companion/model.js'
+import { BALL_KINDS, ITEM_KINDS, Pokeball } from './core/companion/model.js'
+import { isTrainerID } from './core/companion/trainers.js'
+import { systemDefaultLanguage } from './core/companion/model.js'
+import { openPanelLabel, welcomeToast } from './core/i18n/dispatch.js'
 
 const DEFAULT_REFRESH_SECONDS = 120
-/** Selectable refresh intervals, in seconds. */
-const REFRESH_PRESETS = [30, 60, 120, 300, 600]
 
 let statusBar: vscode.StatusBarItem | undefined
 let worker: Worker | undefined
@@ -159,6 +168,23 @@ export function activate(context: vscode.ExtensionContext): void {
   startWorker(context)
   scheduleTimer()
   void refresh(false)
+  welcomeOnFirstRun(context)
+}
+
+/**
+ * A one-time toast anchoring the mental model: the first scan can take seconds on a big
+ * corpus, and until it lands the only sign of life is a spinner in a corner of the status
+ * bar. Localised through the same tables as the rest of the UI; `globalState` (not the save)
+ * carries the flag, so resetting the game does not replay the welcome.
+ */
+function welcomeOnFirstRun(context: vscode.ExtensionContext): void {
+  const key = 'tokendex.welcomed'
+  if (context.globalState.get<boolean>(key) === true) return
+  void context.globalState.update(key, true)
+  const lang = systemDefaultLanguage(vscode.env.language)
+  void vscode.window.showInformationMessage(welcomeToast(lang), openPanelLabel(lang)).then((choice) => {
+    if (choice !== undefined) void vscode.commands.executeCommand('tokendex.open')
+  })
 }
 
 export function deactivate(): void {
@@ -295,7 +321,19 @@ function send(build: (id: number) => WorkerRequest): Promise<ScanResponse> {
 }
 
 const requestScan = (): Promise<ScanResponse> =>
-  send((id) => ({ id, type: 'scan', locale: vscode.env.language }))
+  send((id) => ({
+    id,
+    type: 'scan',
+    locale: vscode.env.language,
+    // Piggybacked on the request because the worker cannot read configuration. Sticky in the
+    // worker, so it also covers the action requests that trigger a scan.
+    encounterToasts: encounterToastsOn(),
+  }))
+
+/** `tokendex.encounterNotifications`: 'rare' (the default — shiny/legendary only) or 'off'. */
+function encounterToastsOn(): boolean {
+  return vscode.workspace.getConfiguration('tokendex').get<string>('encounterNotifications') !== 'off'
+}
 
 /**
  * Whether the development surface (the panel's Dev tab, the scenario menu, the `dist` watcher)
@@ -328,21 +366,44 @@ const requestPanel = (): Promise<ScanResponse> =>
  * real scan when it has nothing to re-render, so a first open is still correct.
  */
 const requestRender = (): Promise<ScanResponse> =>
-  send((id) => ({ id, type: 'render', locale: vscode.env.language, devMode: devModeOn() }))
+  send((id) => ({
+    id,
+    type: 'render',
+    locale: vscode.env.language,
+    devMode: devModeOn(),
+    refreshSeconds: refreshSeconds(),
+  }))
 
-const requestAction = (payload: WorkerAction): Promise<ScanResponse> =>
-  send((id) => ({ id, type: 'action', locale: vscode.env.language, devMode: devModeOn(), payload }))
+/**
+ * `fromLastScan` skips the disk pass after the action — set for the game actions whose reply an
+ * animation is waiting on (a ball throw). The usage half genuinely did not change in those.
+ */
+const requestAction = (payload: WorkerAction, fromLastScan = false): Promise<ScanResponse> =>
+  send((id) => ({
+    id,
+    type: 'action',
+    locale: vscode.env.language,
+    devMode: devModeOn(),
+    payload,
+    fromLastScan,
+  }))
 
 /**
  * Translates an opaque panel id back into a typed action. Unknown ids are ignored rather than
  * trusted: the webview is a separate bundle and could be stale after an update.
+ *
+ * The quantity segment (`item:pokeBall:10`) is accepted only when it names exactly the bundle
+ * size the shop sells — any other number is a stale or hand-crafted id and fails closed, so the
+ * bundle discount can never be claimed for an arbitrary count.
  */
 function parseEntryID(id: string): WorkerAction | undefined {
-  const [kind, value] = id.split(':')
+  const [kind, value, quantityRaw] = id.split(':')
   if (kind === 'item') {
-    const items: ItemKind[] = ['rareCandy', 'mint', 'shinyCharm']
-    const item = items.find((i) => i === value)
-    return item === undefined ? undefined : { action: 'buyItem', item }
+    const item = ITEM_KINDS.find((i) => i === value)
+    if (item === undefined) return undefined
+    if (quantityRaw === undefined) return { action: 'buyItem', item }
+    if (quantityRaw !== String(Pokeball.bundleSize) || item === 'masterBall') return undefined
+    return { action: 'buyItem', item, quantity: Pokeball.bundleSize }
   }
   if (kind === 'egg') {
     const tiers: Rarity[] = ['common', 'uncommon', 'rare', 'legendary']
@@ -365,13 +426,17 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       const action = parseEntryID(request.id)
       if (action === undefined) return
       // Confirmed with a native modal rather than inside the webview: this spends real
-      // progress, and a modal cannot be dismissed by a stray click on the page.
+      // progress, and a modal cannot be dismissed by a stray click on the page. The button's
+      // word travels with the message because the host does not know the game's language —
+      // display-only text in a modal the user still has to approve, so a stale webview can at
+      // worst mislabel a button, and the length cap keeps a hostile one from filling the modal.
+      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
       const confirm = await vscode.window.showWarningMessage(
         `${request.title} — ${request.priceText}`,
         { modal: true },
-        'Buy',
+        confirmLabel,
       )
-      if (confirm !== 'Buy') return
+      if (confirm !== confirmLabel) return
       response = await requestAction(action)
       break
     }
@@ -388,6 +453,53 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       const language = languages.find((l) => l === request.language)
       if (language === undefined) return
       response = await requestAction({ action: 'setLanguage', language })
+      break
+    }
+
+    case 'throw': {
+      // The ball slug comes from the webview and is validated here, not trusted: an unknown
+      // one would otherwise reach the store as an inventory key.
+      const ball = BALL_KINDS.find((b) => b === request.ball)
+      if (ball === undefined) return
+      // `fromLastScan`: the animation is airborne and waiting on this reply.
+      response = await requestAction(
+        { action: 'throwBall', encounterID: request.encounterID, ball },
+        true,
+      )
+      break
+    }
+
+    case 'run': {
+      // The core marks the encounters that hurt to lose (rare, legendary, shiny) with a
+      // pre-localised confirmation; a common stays one click. Display-only text from the
+      // webview, length-capped like the buy label.
+      if (request.confirmText !== undefined) {
+        const label = (request.confirmLabel ?? 'Run').slice(0, 30) || 'Run'
+        const choice = await vscode.window.showWarningMessage(
+          request.confirmText.slice(0, 160),
+          { modal: true },
+          label,
+        )
+        if (choice !== label) return
+      }
+      response = await requestAction({ action: 'runFrom', encounterID: request.encounterID }, true)
+      break
+    }
+
+    case 'setTrainer': {
+      if (!isTrainerID(request.trainerID)) return
+      response = await requestAction({ action: 'setTrainer', trainerID: request.trainerID }, true)
+      break
+    }
+
+    case 'setRefreshInterval': {
+      if (!REFRESH_PRESETS.includes(request.seconds)) return
+      await vscode.workspace
+        .getConfiguration('tokendex')
+        .update('refreshInterval', request.seconds, vscode.ConfigurationTarget.Global)
+      // The config listener reschedules the timer; this rebuild is what makes the picker in the
+      // panel reflect the new value immediately.
+      response = await requestRender()
       break
     }
 
@@ -408,7 +520,17 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     output?.error(`panel action failed: ${response.error}`)
     return
   }
-  if ('panel' in response) updateSurfaces(response.panel)
+  if ('panel' in response) {
+    updateSurfaces(response.panel)
+    // The outcome follows the state on purpose: the webview defers applying the new state
+    // until the animation this outcome drives has landed.
+    if ('extra' in response && response.extra !== undefined) broadcastThrow(response.extra)
+    // The status bar and its tooltip are built at scan time, so after a state-changing action
+    // (a catch bumps the dex count, a purchase moves the balance) they are up to two minutes
+    // stale. A background refresh closes that gap; `scanInFlight` already coalesces it with
+    // any timer scan running. Pure re-renders skip it — nothing changed.
+    if (request.kind !== 'refresh') void refresh(false)
+  }
 }
 
 /**
@@ -649,6 +771,9 @@ function render(snapshot: UsageSnapshot): void {
   // The sidebar's title carries the same summary, so the view answers "where am I" without the
   // user having to look at the bottom of the window. The title bar renders plain text only.
   view?.setDescription(plainText(snapshot.statusText))
+
+  // The encounter feature's primary signal: a count on the activity-bar icon, never a toast.
+  view?.setBadge(snapshot.companion?.wildCount ?? 0, snapshot.companion?.wildTooltip ?? '')
 
   const current = statusBar.tooltip
   if (typeof current === 'string' || current?.value !== snapshot.tooltipMarkdown) {

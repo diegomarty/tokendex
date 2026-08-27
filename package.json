@@ -86,6 +86,19 @@
           ],
           "description": "Where the compact companion card lives. You can also drag the view anywhere by hand."
         },
+        "tokendex.encounterNotifications": {
+          "type": "string",
+          "default": "rare",
+          "enum": [
+            "rare",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Toast only when a shiny or legendary wild Pok\u00e9mon appears, at most once per hour.",
+            "Never toast for encounters. The activity bar badge and the Wild tab still update."
+          ],
+          "description": "When a wild Pok\u00e9mon encounter may show a notification."
+        },
         "tokendex.devMode": {
           "type": "boolean",
           "default": false,
@@ -152,6 +165,42 @@
         }
       ]
     },
+    "walkthroughs": [
+      {
+        "id": "tokendex.gettingStarted",
+        "title": "Meet your Tokendex companion",
+        "description": "Your AI coding tokens hatch a companion that grows in the status bar.",
+        "steps": [
+          {
+            "id": "tokendex.step.statusBar",
+            "title": "Find it in the status bar",
+            "description": "Bottom-right: your usage and your companion's mood. Hover for the full breakdown.",
+            "media": {
+              "markdown": "media/walkthrough/status-bar.md"
+            }
+          },
+          {
+            "id": "tokendex.step.panel",
+            "title": "Open the panel",
+            "description": "The whole game and the full usage breakdown live in the Tokendex view.\n[Open Tokendex](command:tokendex.open)",
+            "media": {
+              "markdown": "media/walkthrough/panel.md"
+            },
+            "completionEvents": [
+              "onCommand:tokendex.open"
+            ]
+          },
+          {
+            "id": "tokendex.step.game",
+            "title": "Hatch, evolve, catch",
+            "description": "Real tokens incubate the egg; wild Pok\u00e9mon appear as you work.",
+            "media": {
+              "markdown": "media/walkthrough/game.md"
+            }
+          }
+        ]
+      }
+    ],
     "menus": {
       "view/title": [
         {

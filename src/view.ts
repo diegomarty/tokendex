@@ -59,4 +59,16 @@ export class GameViewProvider implements vscode.WebviewViewProvider {
     if (this.view === undefined) return
     this.view.description = text
   }
+
+  /**
+   * The activity-bar badge: how many wild encounters are waiting.
+   *
+   * This is the encounter feature's *primary* signal — a number on the icon, not a toast — so
+   * ordinary encounters never interrupt anyone. Zero clears it; a permanent "0" would read as
+   * noise.
+   */
+  setBadge(count: number, tooltip: string): void {
+    if (this.view === undefined) return
+    this.view.badge = count > 0 ? { value: count, tooltip } : undefined
+  }
 }

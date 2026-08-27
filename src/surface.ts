@@ -12,17 +12,21 @@
  */
 
 import * as vscode from 'vscode'
-import type { PanelMessage, PanelState } from './webview/protocol.js'
+import type { PanelMessage, PanelState, PanelThrowResult } from './webview/protocol.js'
 import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export type PanelRequestKind =
   | { kind: 'refresh' }
-  | { kind: 'buy'; id: string; title: string; priceText: string }
+  | { kind: 'buy'; id: string; title: string; priceText: string; confirmLabel?: string }
   | { kind: 'use'; id: string }
   | { kind: 'setLanguage'; language: string }
   | { kind: 'exportSave' }
   | { kind: 'importSave' }
   | { kind: 'dev'; id: string; value?: string }
+  | { kind: 'throw'; encounterID: string; ball: string }
+  | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
+  | { kind: 'setTrainer'; trainerID: string }
+  | { kind: 'setRefreshInterval'; seconds: number }
 
 /** Every live surface, so a refresh reaches the sidebar and the editor tab in one call. */
 const surfaces = new Set<PanelSurface>()
@@ -66,6 +70,11 @@ export class PanelSurface {
     void this.webview.postMessage({ type: 'state', state })
   }
 
+  postThrow(result: PanelThrowResult): void {
+    if (this.disposed) return
+    void this.webview.postMessage({ type: 'throw', result })
+  }
+
   /** Rebuilds the page, picking up a freshly built bundle without restarting the host. */
   reload(): void {
     if (this.disposed) return
@@ -80,14 +89,17 @@ export class PanelSurface {
         if (lastState !== undefined) this.setState(lastState)
         this.onRequest({ kind: 'refresh' })
         break
-      case 'buy':
-        this.onRequest({
+      case 'buy': {
+        const request: PanelRequestKind = {
           kind: 'buy',
           id: message.id,
           title: message.title,
           priceText: message.priceText,
-        })
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
         break
+      }
       case 'use':
         this.onRequest({ kind: 'use', id: message.id })
         break
@@ -108,6 +120,24 @@ export class PanelSurface {
         this.onRequest(request)
         break
       }
+      case 'throw':
+        // The ball slug is validated on the extension side against `BALL_KINDS`; the encounter
+        // id fails closed in the core if the queue no longer holds it.
+        this.onRequest({ kind: 'throw', encounterID: message.encounterID, ball: message.ball })
+        break
+      case 'run': {
+        const request: PanelRequestKind = { kind: 'run', encounterID: message.encounterID }
+        if (message.confirmText !== undefined) request.confirmText = message.confirmText
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
+      case 'setTrainer':
+        this.onRequest({ kind: 'setTrainer', trainerID: message.trainerID })
+        break
+      case 'setRefreshInterval':
+        this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })
+        break
     }
   }
 
@@ -127,15 +157,16 @@ export class PanelSurface {
     const codicons = asset('codicons', 'codicon.css')
     const nonce = makeNonce()
 
-    // Strict CSP. Sprites are the single remote source, and they are fetched from PokéAPI at
-    // runtime rather than bundled — a licence obligation, not a size decision. `font-src` is
-    // required for the codicon font; without it the glyphs silently fall back to boxes.
+    // Strict CSP. Sprites are the only remote sources, fetched at runtime rather than bundled —
+    // a licence obligation, not a size decision. Two image hosts exactly: PokéAPI (species and
+    // item sprites) and Pokémon Showdown (the trainer avatar). `font-src` is required for the
+    // codicon font; without it the glyphs silently fall back to boxes.
     const csp = [
       "default-src 'none'",
       `style-src ${webview.cspSource}`,
       `font-src ${webview.cspSource}`,
       `script-src 'nonce-${nonce}'`,
-      `img-src ${webview.cspSource} https://raw.githubusercontent.com data:`,
+      `img-src ${webview.cspSource} https://raw.githubusercontent.com https://play.pokemonshowdown.com data:`,
     ].join('; ')
 
     return `<!DOCTYPE html>
@@ -160,6 +191,16 @@ ${PANEL_BODY_HTML}
 export function updateSurfaces(state: PanelState): void {
   lastState = state
   for (const surface of surfaces) surface.setState(state)
+}
+
+/**
+ * Delivers a throw's outcome. Sent *after* the state push and never remembered: a surface that
+ * opens later must not replay an animation for a die cast minutes ago. The webview defers
+ * applying the accompanying state until the animation lands, so the order here is what lets it
+ * pair the two.
+ */
+export function broadcastThrow(result: PanelThrowResult): void {
+  for (const surface of surfaces) surface.postThrow(result)
 }
 
 /** True when at least one surface exists, so a scan can skip building the panel state. */
