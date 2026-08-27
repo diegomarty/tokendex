@@ -132,21 +132,38 @@ section[hidden] {
   );
   pointer-events: none;
 }
-/* Native size only: `pixelated` is exact at whole multiples, and these sprites are 96px. */
+/* No fixed size here: the Gen-V animated GIFs come in wildly different native dimensions
+   (Caterpie 34px, Mewtwo 84px, Slowpoke 63x43), and forcing a 96px square stretched every
+   non-square one. main.ts integer-scales each sprite on load — whole multiples only, which is
+   the condition under which `pixelated` is exact. */
 .stage img {
-  width: 96px;
-  height: 96px;
   image-rendering: pixelated;
   position: relative;
 }
-.stage img.bob {
+.stage img.bob,
+.wild-mon img.bob,
+.companion-mon img.bob {
   animation: bob 1.6s ease-in-out infinite;
 }
-body.paused .stage img.bob {
+/* The keyframes the idle bob always referenced — and, until the wild tab landed, never had. */
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+body.paused .stage img.bob,
+body.paused .wild-mon img.bob,
+body.paused .companion-mon img.bob {
   animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
-  .stage img.bob {
+  .stage img.bob,
+  .wild-mon img.bob,
+  .companion-mon img.bob {
     animation: none;
   }
 }
@@ -587,6 +604,540 @@ h2.section {
   opacity: 1;
 }
 
+/* ---- wild encounters ----
+   The scene is pure CSS theatre driven by classes from main.ts. The JS constants ARC_MS /
+   ABSORB_MS / SHAKE_MS mirror the durations here — a stylesheet cannot share constants with a
+   script, so if you change one, change both. Everything honours `body.paused` and
+   prefers-reduced-motion: hidden or reduced, the throw resolves as text. */
+
+/* Waiting count on the tab icon, so the queue is visible from any tab. */
+.tab {
+  position: relative;
+}
+.tab[data-count]:not([data-count=''])::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 6px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.wild-scene {
+  position: relative;
+  min-height: 180px;
+  transition: min-height 200ms ease;
+  padding: 12px 12px 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Sprites at native size only: the trainer is 80px, the ball 30px — `pixelated` is exact
+   at whole multiples and mush everywhere else, the same rule the hero follows. */
+.wild-scene .trainer {
+  position: absolute;
+  left: 10%;
+  top: 38px;
+  width: 80px;
+  height: 80px;
+  image-rendering: pixelated;
+}
+/* Idle days need no room for a rack or a title — just the team standing there. */
+.wild-scene:not(.has-wild) {
+  min-height: 132px;
+  margin-bottom: 10px;
+}
+
+/* The companion at the trainer's side: a 48px still (half the 96px sheet — the documented
+   clean scale), feet on the same ground line as the trainer (70 + 48 = 118). One GIF per
+   scene, and it belongs to the wild. */
+.companion-mon {
+  position: absolute;
+  left: calc(10% + 78px);
+  top: 70px;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.companion-mon img {
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+}
+.companion-mon .egg-small {
+  font-size: 28px;
+  line-height: 1;
+}
+
+/* The companion block under a quiet scene: the old hero's content without its box —
+   the scene above already frames the subject. */
+.scene-info {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.next-encounter {
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  margin-top: 2px;
+}
+.next-encounter .desc {
+  opacity: 0.6;
+  font-size: 0.85em;
+  text-align: center;
+}
+.next-encounter .bar {
+  width: 60%;
+}
+
+/* Both sprites stand on the same ground line: the trainer's feet end at 38+80=118px, and the
+   mon's container bottom sits at 22+96=118px with the image flex-aligned to it. The image
+   itself renders at native ×1 — Gen-V sprites carry their own relative scale (Aron 32px,
+   Wailord 103px), and an 80px Showdown trainer is drawn at exactly that human scale. */
+.wild-mon {
+  position: absolute;
+  right: 12%;
+  top: 22px;
+  height: 96px;
+  min-width: 64px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.wild-mon img {
+  image-rendering: pixelated;
+}
+
+/* The flying ball: X on the outer element, the parabola's Y on the inner one, spin on the
+   image — three axes, three elements, because one transform cannot ease each independently. */
+.throw-ball {
+  position: absolute;
+  left: 18%;
+  top: 78px;
+  opacity: 0;
+  pointer-events: none;
+}
+.throw-ball img {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+  display: block;
+}
+.wild-scene.throwing .throw-ball,
+.wild-scene.absorbing .throw-ball,
+.wild-scene.landed .throw-ball,
+.wild-scene.caught .throw-ball {
+  opacity: 1;
+}
+.wild-scene.throwing .throw-ball {
+  animation: ball-x 550ms linear forwards;
+}
+.wild-scene.throwing .throw-ball-y {
+  display: block;
+  animation: ball-y 550ms ease-out forwards;
+}
+.wild-scene.throwing .throw-ball img {
+  animation: ball-spin 550ms linear;
+}
+/* Where the arc ends, the later phases hold. */
+.wild-scene.absorbing .throw-ball,
+.wild-scene.landed .throw-ball,
+.wild-scene.caught .throw-ball {
+  transform: translateX(var(--throw-distance, 170px));
+}
+@keyframes ball-x {
+  to {
+    transform: translateX(var(--throw-distance, 170px));
+  }
+}
+@keyframes ball-y {
+  0% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-64px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes ball-spin {
+  to {
+    rotate: 720deg;
+  }
+}
+
+/* The Pokémon is pulled into the ball… */
+.wild-scene.absorbing .wild-mon img {
+  transform-origin: 10% 90%;
+  animation: suck-in 300ms ease-in forwards;
+}
+.wild-scene.landed .wild-mon,
+.wild-scene.caught .wild-mon {
+  opacity: 0;
+}
+@keyframes suck-in {
+  to {
+    transform: scale(0.05);
+    filter: brightness(4);
+    opacity: 0;
+  }
+}
+
+/* …the ball wobbles (main.ts restarts this class once per rolled shake)… */
+.wild-scene.shake-now .throw-ball img {
+  transform-origin: 50% 90%;
+  animation: ball-shake 450ms ease-in-out;
+}
+@keyframes ball-shake {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  30% {
+    rotate: -24deg;
+  }
+  70% {
+    rotate: 24deg;
+  }
+}
+
+/* …and it ends one of three ways. */
+.wild-scene.caught .throw-ball img {
+  animation: caught-click 600ms ease-out;
+}
+.wild-scene.caught .throw-ball::after {
+  content: '✨';
+  position: absolute;
+  top: -14px;
+  left: 6px;
+  animation: caught-stars 600ms ease-out forwards;
+}
+@keyframes caught-click {
+  0% {
+    filter: brightness(2.5);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
+@keyframes caught-stars {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.wild-scene.broke-out .throw-ball,
+.wild-scene.fled-out .throw-ball {
+  opacity: 0;
+}
+.wild-scene.broke-out .wild-mon img {
+  animation: break-out 300ms ease-out;
+}
+@keyframes break-out {
+  from {
+    transform: scale(0.05);
+    filter: brightness(4);
+  }
+  to {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+.wild-scene.fled-out .wild-mon img {
+  animation: flee-out 500ms ease-in forwards;
+}
+@keyframes flee-out {
+  to {
+    transform: translateX(90px);
+    opacity: 0;
+  }
+}
+
+body.paused .wild-scene *,
+body.paused .wild-scene *::after {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wild-scene *,
+  .wild-scene *::after {
+    animation: none !important;
+  }
+}
+
+.wild-title {
+  margin-top: 108px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wild-title .desc {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+/* An empty rack is the moment of highest purchase intent: a real button, not a footnote. */
+.no-balls {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.no-balls .desc {
+  margin: 0;
+  opacity: 0.7;
+  font-size: 0.85em;
+  text-align: center;
+}
+/* Rarity tints the name, quietly, using the editor's own chart palette. */
+.wild-scene.rarity-uncommon .wild-title .title {
+  color: var(--vscode-charts-green);
+}
+.wild-scene.rarity-rare .wild-title .title {
+  color: var(--vscode-charts-blue);
+}
+.wild-scene.rarity-legendary .wild-title .title {
+  color: var(--vscode-charts-purple);
+}
+.wild-result {
+  min-height: 1.2em;
+  margin: 0;
+  font-weight: 600;
+  text-align: center;
+}
+
+.ball-rack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ball-rack .ball {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.ball-rack .ball:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+.ball-rack .ball:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ball-rack .ball.none {
+  opacity: 0.25;
+  border-style: dashed;
+}
+.ball-rack .ball img {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+}
+.ball-rack .ball .count {
+  font-size: 0.75em;
+  opacity: 0.8;
+}
+/* The catch chance for the encounter on stage — the same maths the throw will roll. */
+.ball-rack .ball .odds {
+  font-size: 0.7em;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+/* How many more are waiting — a count only, never the species: the next one is a surprise. */
+.wild-more {
+  margin: -6px 0 10px;
+  text-align: center;
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+
+/* The companion's progress in one line, kept visible while a capture occupies the stage. */
+.companion-strip {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 3px 10px;
+  margin-bottom: 14px;
+}
+.companion-strip .name {
+  font-weight: 600;
+  font-size: 0.95em;
+}
+.companion-strip .desc {
+  opacity: 0.6;
+  font-size: 0.82em;
+  text-align: right;
+}
+.companion-strip .bar {
+  grid-column: 1 / -1;
+}
+
+.badge.wild {
+  font-size: 0.75em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  align-self: center;
+}
+
+/* ---- shop chrome ---- */
+.shop-wallet {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 7px 0;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.shop-wallet .label {
+  opacity: 0.7;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.shop-wallet .value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+#shop h2.section {
+  margin: 14px 0 8px;
+}
+/* PokéAPI item sprites are 30px; shown as-is, like every other sprite. */
+.row .icon img {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+  display: block;
+}
+/* A price the wallet cannot cover, told by the price itself rather than only by a grey button. */
+.row .price.cant {
+  opacity: 0.45;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* The core's hatch/evolve/graduate window (4-6s): the subject pops and sparkles where you are
+   already looking, alongside the toast. Declared after the bob rules on purpose — equal
+   specificity, so source order is what lets the celebration take over the animation slot. */
+.companion-mon.celebrate img,
+.companion-mon.celebrate .egg-small,
+.stage.celebrate img,
+.stage.celebrate .egg {
+  animation: celebrate-pop 700ms ease-in-out 3;
+}
+/* `::before`, not `::after`: the hero's `.stage::after` is already its elliptical shadow, and
+   putting the sparkle there would replace the shadow for the length of the celebration. */
+.companion-mon.celebrate::before,
+.stage.celebrate::before {
+  content: '✨';
+  position: absolute;
+  top: -12px;
+  right: -6px;
+  animation: caught-stars 700ms ease-out forwards;
+}
+@keyframes celebrate-pop {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  30% {
+    transform: scale(1.22) rotate(-4deg);
+  }
+  65% {
+    transform: scale(1.08) rotate(3deg);
+  }
+}
+body.paused .companion-mon.celebrate img,
+body.paused .stage.celebrate img {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .companion-mon.celebrate img,
+  .companion-mon.celebrate .egg-small,
+  .stage.celebrate img,
+  .stage.celebrate .egg,
+  .companion-mon.celebrate::before,
+  .stage.celebrate::before {
+    animation: none;
+  }
+}
+
+/* Pokédex completion: the number the wild encounters exist to move. */
+.dex-progress {
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  margin: 2px 0 12px;
+}
+.dex-progress .desc {
+  opacity: 0.65;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.dex-progress .bar {
+  width: 100%;
+}
+
+/* The trainer picker in Settings. */
+.trainer-setting {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.trainer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+.trainer-cell {
+  padding: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.trainer-cell:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+.trainer-cell[aria-selected='true'] {
+  border-color: var(--vscode-focusBorder);
+}
+.trainer-cell img {
+  width: 40px;
+  height: 40px;
+  image-rendering: pixelated;
+  display: block;
+  margin: 0 auto;
+}
+
 /* ================================================================================
    Responsive layers. The panel renders in three very different containers — the
    activity-bar sidebar (~300 px, the narrow-first baseline above), the Explorer's
@@ -604,14 +1155,15 @@ h2.section {
     row-gap: 0;
     align-items: start;
   }
-  #home .hero {
+  /* The whole game — scene, companion block or capture controls, and the queue — is one
+     wrapper, and that wrapper is the sticky left rail; the numbers read beside it. */
+  #home .game {
     grid-column: 1;
     /* Far more rows than the right column will ever produce; empty implicit rows
        collapse to zero height, and row-gap is 0 so they cost nothing. */
     grid-row: 1 / span 40;
     position: sticky;
     top: 12px;
-    margin-bottom: 0;
   }
   #home .stats,
   #home h2.section,
