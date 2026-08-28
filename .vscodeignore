@@ -19,3 +19,5 @@ image.png
 .gitignore
 .prettierignore
 media/make_icon.py
+media/readme/**
+.vscode-test/**

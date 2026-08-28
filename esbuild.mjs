@@ -68,6 +68,14 @@ const development = [
     format: 'iife',
   },
   {
+    // The README screenshot harness (shot.html) — one fixture, full window, screenshot-clean.
+    ...shared,
+    entryPoints: ['tools/bench/shot.ts'],
+    outfile: 'dist/bench/shot.js',
+    platform: 'browser',
+    format: 'iife',
+  },
+  {
     ...shared,
     entryPoints: ['tools/status-preview.ts'],
     outfile: 'dist/tools/status-preview.mjs',

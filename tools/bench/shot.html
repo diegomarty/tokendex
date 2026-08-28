@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  Screenshot harness for the README captures.
+
+  One fixture, one tab, full window - unlike the bench's iframe grid, which is built for
+  eyeballing many states at once and cannot be screenshotted cleanly. Serve with `npm run bench`,
+  then e.g.:
+
+    npx playwright screenshot --viewport-size=340,640 --wait-for-timeout=3000 \
+      "http://localhost:4321/tools/bench/shot.html?fixture=wild-queue&tab=home" shot.png
+
+  `fixture` is a fixture id from fixtures.ts; `tab` lands on that tab (the webview restores it
+  through the stubbed getState, the same mechanism VS Code uses to restore a serialised panel).
+  Sprites load live from PokeAPI / Showdown, so give the wait-for-timeout a couple of seconds.
+-->
+<html lang="en" data-vscode-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link href="/dist/codicons/codicon.css" rel="stylesheet" />
+    <link href="/tools/bench/theme.css" rel="stylesheet" />
+    <link href="/dist/webview.css" rel="stylesheet" />
+  </head>
+  <body class="vscode-dark">
+    <script>
+      // The stub must exist before the webview bundle evaluates, exactly as in the bench.
+      // getState seeds the tab from the query string - the webview's own restore path.
+      const query = new URLSearchParams(location.search)
+      const wantedTab = query.get('tab') ?? 'home'
+      const wantedDex = Number(query.get('dex'))
+      let persisted = {
+        tab: wantedTab,
+        dexSelected: Number.isInteger(wantedDex) && wantedDex > 0 ? wantedDex : undefined,
+      }
+      window.acquireVsCodeApi = () => ({
+        postMessage: () => {},
+        getState: () => persisted,
+        setState: (state) => {
+          persisted = state
+        },
+      })
+    </script>
+    <script id="shell" src="/dist/bench/shot.js"></script>
+  </body>
+</html>
