@@ -128,16 +128,35 @@ export function enqueueEncounter(
 // MARK: - Capture
 
 /**
- * The catch value `a`: the species capture rate scaled by the ball, clamped to 1...255.
+ * Difficulty knobs on the catch, tuned after playtesting the first cut.
+ *
+ * `difficulty` scales every capture rate down before the ball multiplies it. `maxCatchValue`
+ * caps what any ball short of the Master can reach: at the raw formula a 235+ species was a
+ * guaranteed, wobble-less catch with the cheapest ball, which made most commons a formality —
+ * the cap keeps the best non-Master throw at ~84%, so every ball can wobble out and the
+ * guaranteed catch stays what the Master Ball is for.
+ *
+ * Resulting odds per Poké Ball throw: Caterpie-class 84%, Magnemite-class ~71%, uncommon ~50%,
+ * rare ~24% (41% with an Ultra), legendary ~3% — see `test/wild-encounters.test.ts`, which
+ * pins these against the formula.
+ */
+export const Capture = {
+  difficulty: 0.85,
+  maxCatchValue: 200,
+} as const
+
+/**
+ * The catch value `a`: the species capture rate scaled by difficulty and the ball, capped.
  *
  * The mainline formula also weighs current HP and status, neither of which exists here — there
  * is no battle, only a throw. That is a deliberate simplification, not an omission: `a` stays a
- * single expression, and the Master Ball's `Infinity` multiplier collapses to the 255 ceiling,
- * so an unconditional catch needs no special case.
+ * single expression. The Master Ball's `Infinity` multiplier is the one path allowed past the
+ * cap, collapsing to 255 — the guaranteed catch.
  */
 export function catchValue(captureRate: number, ball: BallKind): number {
-  const scaled = Math.round(captureRate * Pokeball.multiplier[ball])
-  return Math.max(1, Math.min(255, scaled))
+  const scaled = Math.round(captureRate * Capture.difficulty * Pokeball.multiplier[ball])
+  const ceiling = ball === 'masterBall' ? 255 : Capture.maxCatchValue
+  return Math.max(1, Math.min(ceiling, scaled))
 }
 
 /** Rolls per throw, as in the mainline games: four wobbles, all four must pass. */

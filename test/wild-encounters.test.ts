@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  Capture,
   EncounterBalance,
   addEncounterUsage,
   catchChance,
@@ -121,11 +122,18 @@ describe('enqueueEncounter', () => {
 })
 
 describe('catchValue', () => {
-  it('scales the capture rate by the ball and clamps to 255', () => {
-    expect(catchValue(45, 'pokeBall')).toBe(45)
-    expect(catchValue(45, 'greatBall')).toBe(68)
-    expect(catchValue(45, 'ultraBall')).toBe(90)
-    expect(catchValue(200, 'ultraBall')).toBe(255)
+  it('scales the capture rate by difficulty and the ball', () => {
+    expect(catchValue(45, 'pokeBall')).toBe(38) // 45 × 0.85
+    expect(catchValue(45, 'greatBall')).toBe(57)
+    expect(catchValue(45, 'ultraBall')).toBe(77)
+  })
+
+  // [trigger branch] Without the cap, a 235+ species was a guaranteed wobble-less catch with
+  // the cheapest ball; the guaranteed catch is the Master Ball's job and nobody else's.
+  it('caps every ball short of the Master below certainty', () => {
+    expect(catchValue(255, 'pokeBall')).toBe(Capture.maxCatchValue)
+    expect(catchValue(200, 'ultraBall')).toBe(Capture.maxCatchValue)
+    expect(catchValue(3, 'masterBall')).toBe(255)
   })
 
   it('never returns less than 1', () => {
@@ -150,18 +158,25 @@ describe('shakeThreshold', () => {
 })
 
 describe('resolveThrow', () => {
-  // A guaranteed catch must not consume a die. Asserting the *outcome* here would prove
-  // nothing: `shakeThreshold(255)` saturates the range, so the four rolls always pass anyway
-  // and deleting the short-circuit is invisible. What it actually guarantees is that no draw is
-  // spent — which is the difference a future change could break.
-  it('catches at 255 without consuming a roll', () => {
+  // A guaranteed catch must not consume a die — and with the difficulty cap, only the Master
+  // Ball can reach 255 at all. Asserting the *outcome* would prove nothing (`shakeThreshold`
+  // saturates at 255 anyway); what this pins is that no draw is spent.
+  it('the Master Ball catches without consuming a roll', () => {
     const exploding = () => {
       throw new Error('resolveThrow drew a die for a guaranteed catch')
     }
-    expect(resolveThrow(wild({ captureRate: 255 }), 'pokeBall', exploding)).toEqual({
+    expect(resolveThrow(wild({ captureRate: 255 }), 'masterBall', exploding)).toEqual({
       caught: true,
       shakes: 4,
     })
+  })
+
+  // The cap's visible consequence: even a Caterpie can wobble out of a Poké Ball now.
+  it('a full-rate species is no longer an automatic catch with a Poké Ball', () => {
+    const b = shakeThreshold(catchValue(255, 'pokeBall'))
+    expect(b).toBeLessThan(65_536)
+    const outcome = resolveThrow(wild({ captureRate: 255 }), 'pokeBall', fixedRNG(65_500))
+    expect(outcome.caught).toBe(false)
   })
 
   it('always catches with a Master Ball, whatever the rolls say', () => {
@@ -188,17 +203,20 @@ describe('resolveThrow', () => {
 })
 
 describe('catchChance', () => {
-  it('is certain for a full-rate species and for the Master Ball', () => {
-    expect(catchChance(255, 'pokeBall')).toBe(1)
+  it('is certain only for the Master Ball', () => {
     expect(catchChance(3, 'masterBall')).toBe(1)
+    expect(catchChance(255, 'pokeBall')).toBeLessThan(1)
   })
 
-  // The rack shows these numbers; they must be the same maths the throw rolls.
+  // The rack shows these numbers; they must be the same maths the throw rolls. The pinned
+  // values are the tuned difficulty curve — change `Capture` and these say what it did.
   it('matches the shake threshold raised to the four rolls', () => {
     const b = shakeThreshold(catchValue(45, 'pokeBall'))
     expect(catchChance(45, 'pokeBall')).toBeCloseTo(Math.pow(b / 65_536, 4), 10)
-    expect(catchChance(45, 'pokeBall')).toBeCloseTo(0.27, 1)
-    expect(catchChance(3, 'pokeBall')).toBeCloseTo(0.036, 2)
+    expect(catchChance(255, 'pokeBall')).toBeCloseTo(0.83, 2) // common ceiling
+    expect(catchChance(45, 'pokeBall')).toBeCloseTo(0.24, 2) // rare
+    expect(catchChance(45, 'ultraBall')).toBeCloseTo(0.41, 2)
+    expect(catchChance(3, 'pokeBall')).toBeCloseTo(0.036, 2) // legendary
   })
 
   it('is monotonic in ball tier', () => {
