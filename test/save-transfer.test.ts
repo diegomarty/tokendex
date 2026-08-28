@@ -13,7 +13,13 @@ import {
   suggestedFileName,
   summarize,
 } from '../src/core/companion/saveTransfer.js'
-import { freshCompanionState, type CompanionState, type MonState } from '../src/core/companion/model.js'
+import {
+  COMPANION_STATE_SCHEMA,
+  freshCompanionState,
+  type CompanionState,
+  type MonState,
+} from '../src/core/companion/model.js'
+import { decodeCompanionState } from '../src/core/companion/persistence.js'
 import { EncounterBalance } from '../src/core/companion/encounters.js'
 
 // Losing a save is the worst failure this app has, so these are the guards that matter most.
@@ -198,6 +204,18 @@ describe('sanitized', () => {
   it('drops a trainer slug outside the roster and keeps a valid one', () => {
     expect(sanitized(state({ trainerID: 'not-a-trainer' })).trainerID).toBeUndefined()
     expect(sanitized(state({ trainerID: 'lyra' })).trainerID).toBe('lyra')
+  })
+
+  // The version stamp exists for the day a field changes *meaning*: leniency absorbs absent
+  // fields, but only this number lets a future migration branch. A pre-versioning save (no
+  // field) must normalise to the current schema rather than crash or stay unstamped.
+  it('stamps the save schema and normalises old saves to it', () => {
+    expect(freshCompanionState('en').saveSchema).toBe(COMPANION_STATE_SCHEMA)
+
+    const old = state()
+    delete (old as Partial<CompanionState>).saveSchema
+    const decoded = decodeCompanionState(JSON.parse(JSON.stringify(old)), 'en')
+    expect(decoded.saveSchema).toBe(COMPANION_STATE_SCHEMA)
   })
 
   // A save written before this feature has none of these keys at all, and `sanitized` runs on

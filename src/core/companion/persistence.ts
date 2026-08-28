@@ -9,6 +9,7 @@
 
 import {
   APP_LANGUAGES,
+  COMPANION_STATE_SCHEMA,
   type AppLanguage,
   type CompanionState,
   type DexEntry,
@@ -179,6 +180,10 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   const fresh = freshCompanionState(hostLanguage)
 
   const state: CompanionState = {
+    // Normalised to the current schema on the way in: decoding IS the migration point, so a
+    // state that leaves here is always current-shape. A future breaking change reads the raw
+    // value first and branches before this normalisation.
+    saveSchema: COMPANION_STATE_SCHEMA,
     installBaselineSet: lenient(value, 'installBaselineSet', isBool, false),
     usedSinceInstall: lenient(value, 'usedSinceInstall', isInt, 0),
     spentTokens: lenient(value, 'spentTokens', isInt, 0),

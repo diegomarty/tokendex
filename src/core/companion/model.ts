@@ -649,7 +649,19 @@ export interface WildEncounter {
   names?: Record<string, string>
 }
 
+/**
+ * Version of the persisted `CompanionState` shape.
+ *
+ * Lenient decoding absorbs *missing* fields, but it cannot express "this field changed
+ * meaning" — the day a migration is needed, this number is what it branches on, and adding it
+ * then would be too late: every save in the wild would already be indistinguishable. History:
+ * 1 = pre-versioning saves (the field is absent), 2 = the field exists.
+ */
+export const COMPANION_STATE_SCHEMA = 2
+
 export interface CompanionState {
+  /** See `COMPANION_STATE_SCHEMA`. Absent on disk = 1. */
+  saveSchema: number
   /** Tokens are only counted from install onwards. */
   installBaselineSet: boolean
   usedSinceInstall: number
@@ -711,6 +723,7 @@ export interface CompanionState {
 
 export function freshCompanionState(hostLanguage?: string): CompanionState {
   return {
+    saveSchema: COMPANION_STATE_SCHEMA,
     installBaselineSet: false,
     usedSinceInstall: 0,
     spentTokens: 0,
