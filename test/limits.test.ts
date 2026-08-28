@@ -1,3 +1,8 @@
+import { CRIT_THRESHOLD, WARN_THRESHOLD, limitSeverity } from '../src/core/limits/windows.js'
+import {
+  CRIT_THRESHOLD as POLLER_CRIT,
+  WARN_THRESHOLD as POLLER_WARN,
+} from '../src/core/limits/poller.js'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -618,5 +623,25 @@ describe('limits poller', () => {
     poller.refresh()
     await waitFor(() => calls >= 2)
     expect(calls).toBe(2)
+  })
+})
+
+// Appended alongside the move of the thresholds into the pure windows module: the severity
+// mapping lived in the worker, outside the suite, until its own TODO called it out.
+describe('limitSeverity', () => {
+  it('classifies against the shared thresholds, boundaries included', () => {
+    expect(limitSeverity(0)).toBe('normal')
+    expect(limitSeverity(WARN_THRESHOLD - 1)).toBe('normal')
+    expect(limitSeverity(WARN_THRESHOLD)).toBe('warn')
+    expect(limitSeverity(CRIT_THRESHOLD - 1)).toBe('warn')
+    expect(limitSeverity(CRIT_THRESHOLD)).toBe('crit')
+    expect(limitSeverity(250)).toBe('crit')
+  })
+
+  // The poller re-exports the constants so its callers need not know the split; if the two
+  // copies ever diverge, the bar colour and the status-bar background disagree.
+  it('keeps the poller re-exports identical to the source of truth', () => {
+    expect(POLLER_CRIT).toBe(CRIT_THRESHOLD)
+    expect(POLLER_WARN).toBe(WARN_THRESHOLD)
   })
 })

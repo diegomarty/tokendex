@@ -26,9 +26,10 @@ export const STATUS_INTERVAL_MS = 30 * 60_000
 /** Fallback backoff for a 429 that names no Retry-After. */
 export const RATE_LIMIT_BACKOFF_MS = 15 * 60_000
 
-/** The defaults. Not user-settable here yet — one place to change when they become so. */
-export const CRIT_THRESHOLD = 95
-export const WARN_THRESHOLD = 80
+// Imported from `windows.ts`, their real home since the severity mapping moved there, and
+// re-exported so the poller's callers need not know the split.
+import { CRIT_THRESHOLD, WARN_THRESHOLD } from './windows.js'
+export { CRIT_THRESHOLD, WARN_THRESHOLD }
 
 export interface LimitsSnapshot {
   sources: LimitSources

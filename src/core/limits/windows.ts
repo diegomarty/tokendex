@@ -14,6 +14,21 @@
  */
 
 import type { AppLanguage, CandyWindow, WindowClass } from '../companion/model.js'
+
+/**
+ * Alarm thresholds for a limit window's utilisation, in percent. One source for the status
+ * bar's warning background, the panel's bar colours and the tooltip — they lived in the poller
+ * (and the severity mapping in the worker, untested) until the worker's TODO called it out.
+ */
+export const CRIT_THRESHOLD = 95
+export const WARN_THRESHOLD = 80
+
+/** How alarming a window is. The same thresholds everywhere, or the surfaces disagree. */
+export function limitSeverity(percent: number): 'normal' | 'warn' | 'crit' {
+  if (percent >= CRIT_THRESHOLD) return 'crit'
+  if (percent >= WARN_THRESHOLD) return 'warn'
+  return 'normal'
+}
 import { codexWindow } from '../i18n/dispatch.js'
 import { s as str } from '../i18n/strings.js'
 import {
