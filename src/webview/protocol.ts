@@ -192,12 +192,10 @@ export interface PanelStrings {
   segmentSpecies: string
   segmentLog: string
   raisingBadge: string
-  confirmBuy: string
   exportSave: string
   importSave: string
   incubating: string
   language: string
-  settingsHint: string
   /** The Run button in the wild scene. */
   run: string
   /** The trainer picker's label in Settings. */

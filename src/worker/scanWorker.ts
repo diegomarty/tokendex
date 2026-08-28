@@ -24,14 +24,8 @@ import { LocalUsageCache } from '../core/usage/cache.js'
 import { type Entry, enrichmentScanStart, todayKey } from '../core/usage/entry.js'
 import { claudeProjectRoots, codexSessionsDir } from '../core/usage/roots.js'
 import { CompanionStore } from '../core/companion/store.js'
-import {
-  CRIT_THRESHOLD,
-  LimitsPoller,
-  WARN_THRESHOLD,
-  highestUtilization,
-  isLimitWarning,
-} from '../core/limits/poller.js'
-import { candyEligibleWindows } from '../core/limits/windows.js'
+import { LimitsPoller, highestUtilization, isLimitWarning } from '../core/limits/poller.js'
+import { candyEligibleWindows, limitSeverity } from '../core/limits/windows.js'
 import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
@@ -66,52 +60,11 @@ import { f } from '../core/i18n/strings.js'
 import { stage as stageLabel } from '../core/i18n/dispatch.js'
 import { type CelebrationEvent, celebrationText, openPanelLabel } from '../core/i18n/dispatch.js'
 import * as D from '../core/i18n/dispatch.js'
-import { s as str } from '../core/i18n/strings.js'
 import { panelStrings } from '../core/i18n/panelStrings.js'
-import { grouped } from '../core/tokenFormatter.js'
 import { cost } from '../core/tokenFormatter.js'
-import {
-  APP_LANGUAGES,
-  BALL_KINDS,
-  type BallKind,
-  FreshEgg,
-  ITEM_KINDS,
-  Pokeball,
-  itemEmoji,
-  itemIsPassive,
-  itemSpriteName,
-  languageLabel,
-  localizedName,
-  natureName,
-  shopEntryPrice,
-} from '../core/companion/model.js'
-import {
-  catchChance,
-  encounterThresholdFor,
-  tokensToNextEncounter,
-} from '../core/companion/encounters.js'
-import { TRAINER_IDS, trainerIDOrDefault } from '../core/companion/trainers.js'
+import { type BallKind } from '../core/companion/model.js'
 import { spawnTestEncounter, grantBalls } from '../core/dev/simulation.js'
-import {
-  canBuyEgg,
-  canBuyItem,
-  canUseMint,
-  canUseRareCandy,
-  itemCount,
-  ownedItems,
-} from '../core/companion/shop.js'
-import { spendableBalance } from '../core/companion/ledger.js'
-import type {
-  PanelDevControl,
-  PanelState,
-  PanelShopItem,
-  PanelBagItem,
-  PanelDexEntry,
-  PanelDexSpecies,
-  PanelThrowResult,
-  PanelWild,
-} from '../webview/protocol.js'
-import { dexEntriesSorted, dexSpecies, entryName, lineItems } from '../core/companion/dexView.js'
+import type { PanelDevControl, PanelState, PanelThrowResult } from '../webview/protocol.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -192,9 +145,9 @@ interface WorkerConfig {
 
 const config = (workerData ?? {}) as WorkerConfig
 
-/** Selectable refresh intervals, in seconds. One list for the host's timer, the setting's enum
- *  and the panel's picker — three copies would drift. */
-export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
+// Re-exported from the core panel builder, its real home, so the host's import keeps working.
+export { REFRESH_PRESETS } from '../core/panel/build.js'
+import { buildPanelState } from '../core/panel/build.js'
 
 /**
  * Whether an encounter may toast at all (`tokendex.encounterNotifications`). Carried on every
@@ -400,20 +353,6 @@ async function scan(locale: string | undefined) {
     limitWarning,
     limitRows,
   })
-}
-
-/**
- * How alarming a window is, from the same thresholds the status bar's warning background uses.
- *
- * TODO: `WARN_THRESHOLD`/`CRIT_THRESHOLD` live in `limits/poller.ts`, which cannot be imported by
- * the pure `limits/windows.ts` (that would be circular), so this mapping sits in the worker and is
- * outside the test suite. Moving the two constants to `windows.ts` would let the row builder move
- * there with them and be covered.
- */
-function limitSeverity(percent: number): LimitRow['severity'] {
-  if (percent >= CRIT_THRESHOLD) return 'crit'
-  if (percent >= WARN_THRESHOLD) return 'warn'
-  return 'normal'
 }
 
 /**
@@ -648,237 +587,24 @@ async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | un
 }
 
 /**
- * Everything the panel renders, already formatted and localised. Ids are opaque tokens the
- * webview echoes back — it never parses them, so a rename here cannot break the UI silently.
+ * Thin wrapper over the core's pure `buildPanelState`: this side only collects what is impure —
+ * the store's live readings, the clock, the piggybacked settings and the dev tab.
  */
 function buildPanel(
   usage: ReturnType<typeof buildSnapshot>,
   locale: string | undefined,
   devMode = false,
 ): PanelState {
-  const state = companion.snapshot()
-  const lang = state.language
-  const line = companion.currentLine()
-  const spendable = spendableBalance(state)
-
-  // The discount is derived, not written: `shopEntryPrice` charges bundleMultiplier/bundleSize,
-  // and copy that said a different percentage would be lying about the till.
-  const bundleDiscount = Math.round(100 * (1 - Pokeball.bundleMultiplier / Pokeball.bundleSize))
-  const shop: PanelShopItem[] = []
-  for (const kind of ITEM_KINDS) {
-    const owned = itemIsPassive(kind) && itemCount(state, kind) > 0
-    const isBall = (BALL_KINDS as readonly string[]).includes(kind)
-    const row: PanelShopItem = {
-      id: `item:${kind}`,
-      emoji: itemEmoji(kind),
-      title: D.itemName(lang, kind),
-      description: D.itemDescription(lang, kind),
-      priceText: compact(shopEntryPrice({ kind: 'item', item: kind })),
-      enabled: canBuyItem(state, kind),
-      owned,
-      group: isBall ? 'balls' : 'items',
-    }
-    const sprite = itemSpriteName(kind)
-    if (sprite !== undefined) row.sprite = sprite
-    shop.push(row)
-    // Ball ten-packs, straight after their single row. The Master Ball is deliberately not
-    // bundled — a ten-pack of guaranteed catches is not a thing worth pricing.
-    if (kind !== 'masterBall' && isBall) {
-      const quantity = Pokeball.bundleSize
-      const bundle: PanelShopItem = {
-        id: `item:${kind}:${quantity}`,
-        emoji: itemEmoji(kind),
-        title: `${D.itemName(lang, kind)} ×${quantity}`,
-        description: D.bundleDescription(lang, quantity, bundleDiscount),
-        priceText: compact(shopEntryPrice({ kind: 'item', item: kind, quantity })),
-        enabled: canBuyItem(state, kind, quantity),
-        owned: false,
-        group: 'balls',
-      }
-      if (sprite !== undefined) bundle.sprite = sprite
-      shop.push(bundle)
-    }
-  }
-  if (state.active !== undefined) {
-    for (const tier of FreshEgg.shopTiers) {
-      shop.push({
-        id: `egg:${tier ?? 'any'}`,
-        emoji: '🥚',
-        title: D.eggName(lang, tier),
-        description: D.eggDescription(lang, tier),
-        priceText: compact(FreshEgg.price_(tier)),
-        enabled: canBuyEgg(state, tier),
-        owned: false,
-        group: 'eggs',
-      })
-    }
-  }
-  // Sorted within each group by price, owned passives last; the webview renders group by group.
-  shop.sort((a, b) => Number(a.owned) - Number(b.owned))
-
-  const bag: PanelBagItem[] = ownedItems(state).map((item) => {
-    const usable =
-      item.kind === 'rareCandy'
-        ? canUseRareCandy(state, line !== undefined)
-        : item.kind === 'mint'
-          ? canUseMint(state)
-          : false
-    const entry: PanelBagItem = {
-      id: `item:${item.kind}`,
-      emoji: itemEmoji(item.kind),
-      ...(itemSpriteName(item.kind) !== undefined ? { sprite: itemSpriteName(item.kind) } : {}),
-      title: D.itemName(lang, item.kind),
-      description: D.itemDescription(lang, item.kind),
-      count: item.count,
-      usable,
-    }
-    if (!usable && itemIsPassive(item.kind)) entry.hint = str(lang, 'shinyCharmEffectHint')
-    return entry
+  return buildPanelState({
+    usage,
+    state: companion.snapshot(),
+    line: companion.currentLine(),
+    isCelebrating: companion.isCelebrating(),
+    now: Date.now(),
+    locale,
+    refreshSeconds: refreshSecondsSetting,
+    dev: devMode ? buildDevPanel() : undefined,
   })
-
-  const activeID =
-    state.active === undefined
-      ? undefined
-      : `active-${state.active.baseID}-${currentSpeciesID(state.active)}`
-  const dexLog: PanelDexEntry[] = dexEntriesSorted(state, line).map((e) => {
-    const row: PanelDexEntry = {
-      finalID: e.finalID,
-      name: entryName(e, lang, line),
-      isShiny: e.isShiny,
-      rarityText: D.rarityLabel(lang, e.rarity),
-      isActive: e.id === activeID,
-      isWild: e.source === 'wild',
-    }
-    if (e.caughtAt !== undefined) {
-      row.caughtText = new Date(e.caughtAt).toLocaleDateString(locale)
-    }
-    return row
-  })
-
-  const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => ({
-    id: sp.id,
-    name: sp.name,
-    isShiny: sp.isShiny,
-    isRaising: sp.isRaising,
-    rarityText: D.rarityLabel(lang, sp.rarity),
-  }))
-
-  const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
-  const threshold = encounterThresholdFor(state.encountersSeen)
-  // The head of the queue is the one on stage: its capture rate prices every ball's odds, and
-  // its rarity decides whether letting it go deserves a native confirmation.
-  const staged = state.wild[0]
-  const wild: PanelWild = {
-    encounters: state.wild.map((e) => {
-      const row: PanelWild['encounters'][number] = {
-        id: e.id,
-        speciesID: e.speciesID,
-        name: e.names?.[lang] ?? `#${e.speciesID}`,
-        rarityText: D.rarityLabel(lang, e.rarity),
-        rarity: e.rarity,
-        isShiny: e.isShiny,
-        appearedText:
-          todayKey(e.appearedAt) === todayKey(Date.now())
-            ? new Date(e.appearedAt).toLocaleTimeString(locale, {
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : new Date(e.appearedAt).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
-      }
-      // Running from a common stays one click; discarding what hurts to lose asks first.
-      if (e.rarity === 'rare' || e.rarity === 'legendary' || e.isShiny) {
-        row.runConfirmText = D.runAwayConfirm(lang, row.name)
-      }
-      return row
-    }),
-    waitingText: D.wildBadgeTooltip(lang, state.wild.length),
-    emptyText: D.wildEmptyText(lang, compact(toNext)),
-    progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
-    balls: BALL_KINDS.map((kind) => {
-      const ball: PanelWild['balls'][number] = {
-        kind,
-        name: D.itemName(lang, kind),
-        count: itemCount(state, kind),
-        sprite: itemSpriteName(kind) ?? 'poke-ball',
-      }
-      if (staged !== undefined) {
-        // Same maths the throw rolls (`catchChance`), so the number shown is the number played.
-        const pct = catchChance(staged.captureRate, kind) * 100
-        ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
-      }
-      return ball
-    }),
-    noBallsText: D.wildNoBallsText(lang),
-  }
-
-  const panel: PanelState = {
-    totals: {
-      todayText: compact(usage.totals.todayTokens),
-      todayExactText: grouped(usage.totals.todayTokens, locale),
-      todayCostText: cost(usage.totals.todayCost),
-      monthText: compact(usage.totals.monthTokens),
-      monthExactText: grouped(usage.totals.monthTokens, locale),
-      monthCostText: cost(usage.totals.monthCost),
-    },
-    providers: usage.providers.map((p) => {
-      const row: PanelState['providers'][number] = {
-        displayName: p.displayName,
-        todayText: compact(p.today?.totalTokens ?? 0),
-        monthText: compact(p.month?.totalTokens ?? 0),
-      }
-      // The same trailing-window burn the tooltip shows — one source, two surfaces.
-      if (p.tokensPerMinute !== undefined && p.tokensPerMinute > 0) {
-        row.burnText = `${compact(Math.round(p.tokensPerMinute))}/min`
-      }
-      return row
-    }),
-    spendableText: compact(spendable),
-    shop,
-    bag,
-    dexSpecies: species,
-    dexLog,
-    wild,
-    trainerID: trainerIDOrDefault(state.trainerID),
-    trainers: [...TRAINER_IDS],
-    language: lang,
-    languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
-    limits: usage.limits,
-    strings: panelStrings(lang),
-    errors: usage.errors,
-  }
-  const view = usage.companion
-  if (view !== undefined) {
-    const c: NonNullable<PanelState['companion']> = {
-      isShiny: view.isShiny,
-      progress: view.progress,
-      toNextText: view.toNextText,
-      line: lineItems(state.active, line).map((item) =>
-        item.content.kind === 'species'
-          ? { speciesID: item.content.id, state: item.state }
-          : { state: item.state },
-      ),
-    }
-    if (view.state === 'levelUp') c.celebrating = true
-    if (view.name !== undefined) c.name = view.name
-    if (view.speciesID !== undefined) c.speciesID = view.speciesID
-    if (view.stageText !== undefined) c.stageText = view.stageText
-    if (state.active !== undefined) {
-      c.rarityText = D.rarityLabel(lang, state.active.rarity)
-      if (state.active.nature !== undefined) c.natureText = natureName(state.active.nature, lang)
-    }
-    panel.companion = c
-  }
-  if (refreshSecondsSetting !== undefined) {
-    panel.refresh = {
-      seconds: refreshSecondsSetting,
-      options: REFRESH_PRESETS.map((seconds) => ({
-        seconds,
-        label: D.intervalLabel(lang, seconds),
-      })),
-    }
-  }
-  if (devMode) panel.dev = buildDevPanel()
-  return panel
 }
 
 /**

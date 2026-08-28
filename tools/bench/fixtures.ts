@@ -8,9 +8,9 @@
  * Titles, prices and labels come from the **real** i18n and formatter modules rather than
  * hand-typed strings, so switching a fixture's language exercises the actual tables.
  *
- * TODO: `buildPanel` in `scanWorker.ts` is the one thing still not shared — it reads the store
- * and imports node builtins, so the bench cannot call it. Extracting its pure part into the
- * core would let the bench (and unit tests) render exactly what the extension sends.
+ * The panel itself is now built by the core's pure `buildPanelState` (covered by
+ * `test/panel-build.test.ts`), so these fixtures only have to produce interesting *states*;
+ * drift between what the bench shows and what the extension sends is a unit test away.
  */
 
 import type {
@@ -41,7 +41,8 @@ import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { panelStrings } from '../../src/core/i18n/panelStrings.js'
 import { s } from '../../src/core/i18n/strings.js'
-import { compact, cost, grouped } from '../../src/core/tokenFormatter.js'
+import { compact, cost, grouped, percent } from '../../src/core/tokenFormatter.js'
+import { catchChance } from '../../src/core/companion/encounters.js'
 
 // Read from `itemShopPrice` rather than re-listed here: a hand-written map is a second price
 // table, and the typecheck only catches a *missing* kind, never a wrong number.
@@ -216,18 +217,27 @@ function wildSection(
   lang: AppLanguage,
   encounters: PanelWildEncounter[],
   counts: Partial<Record<string, number>> = {},
+  /** Capture rate of the encounter on stage, pricing the rack's odds like the worker does. */
+  stagedCaptureRate?: number,
 ): PanelWild {
   return {
     encounters,
     waitingText: D.wildBadgeTooltip(lang, encounters.length),
     emptyText: D.wildEmptyText(lang, compact(1_200_000)),
     progressPercent: 52,
-    balls: BALL_KINDS.map((kind) => ({
-      kind,
-      name: D.itemName(lang, kind),
-      count: counts[kind] ?? 0,
-      sprite: itemSpriteName(kind) ?? 'poke-ball',
-    })),
+    balls: BALL_KINDS.map((kind) => {
+      const ball: PanelWild['balls'][number] = {
+        kind,
+        name: D.itemName(lang, kind),
+        count: counts[kind] ?? 0,
+        sprite: itemSpriteName(kind) ?? 'poke-ball',
+      }
+      if (stagedCaptureRate !== undefined) {
+        const pct = catchChance(stagedCaptureRate, kind) * 100
+        ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
+      }
+      return ball
+    }),
     noBallsText: D.wildNoBallsText(lang),
   }
 }
@@ -343,13 +353,24 @@ export const FIXTURES: Fixture[] = [
       wild: wildSection(
         'en',
         [
-          wildEncounter('en', { speciesID: 10 }),
-          wildEncounter('en', { speciesID: 129, isShiny: true }),
           wildEncounter('en', { speciesID: 147, rarity: 'rare' }),
+          wildEncounter('en', { speciesID: 129, isShiny: true }),
+          wildEncounter('en', { speciesID: 10 }),
           wildEncounter('en', { speciesID: 150, rarity: 'legendary' }),
         ],
         { pokeBall: 7, greatBall: 2, ultraBall: 1, masterBall: 1 },
+        45, // Dratini's capture rate: the rack reads 27% / 38% / 46% / 100%
       ),
+      companion: {
+        name: 'Pikachu',
+        speciesID: 25,
+        isShiny: false,
+        progress: 0.71,
+        stageText: D.stage('en', 2, 3),
+        toNextText: '21.7M to next evolution',
+        rarityText: D.rarityLabel('en', 'common'),
+        line: [],
+      },
       dexLog: log('en', [
         { id: 129, days: 0, wild: true },
         { id: 3, days: 12 },
