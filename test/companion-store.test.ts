@@ -222,6 +222,25 @@ describe('update flow', () => {
   })
 })
 
+describe('celebration window', () => {
+  // [trigger branch] The panel reads this live because `render` requests reuse a frozen
+  // snapshot: trusting the snapshot's `levelUp` kept a sparkle parked on the companion for up
+  // to a whole refresh interval after the window closed.
+  it('opens on hatch and closes when the window elapses', async () => {
+    let clock = 1_700_000_000_000
+    const s = store({ now: () => clock })
+    await s.update(obs(0))
+    expect(s.isCelebrating()).toBe(false)
+
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    expect(s.snapshot().active).toBeDefined()
+    expect(s.isCelebrating()).toBe(true)
+
+    clock += 6_500 // past both event windows
+    expect(s.isCelebrating()).toBe(false)
+  })
+})
+
 describe('wild encounters', () => {
   const readyForOne = EncounterBalance.firstThreshold
 

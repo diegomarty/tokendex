@@ -192,6 +192,18 @@ export class CompanionStore {
     return computeDisplayState(this.state, { ...inputs, eventActive: this.now < this.eventUntil })
   }
 
+  /**
+   * Whether the hatch/evolve/graduate celebration window is open **right now**.
+   *
+   * The panel must read this live rather than trust the snapshot's `levelUp`: `render`-type
+   * requests reuse the last scan verbatim, so a display state frozen there kept the panel
+   * celebrating — sparkle parked over the companion — for up to a full refresh interval after
+   * the window had closed.
+   */
+  isCelebrating(): boolean {
+    return this.now < this.eventUntil
+  }
+
   displayName(): string | undefined {
     if (this.state.active === undefined || this.line === undefined) return undefined
     return localizedName(this.line, currentSpeciesID(this.state.active), this.state.language)
