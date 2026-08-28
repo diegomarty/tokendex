@@ -18,7 +18,7 @@
 export const TRAINER_IDS = [
   'red',
   'blue',
-  'leaf',
+  'leaf-gen3',
   'ethan',
   'lyra',
   'brendan',
