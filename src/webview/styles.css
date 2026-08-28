@@ -90,6 +90,11 @@ nav button.tab[aria-selected='true'] {
 section[hidden] {
   display: none;
 }
+/* The author-level `display: grid` on tabs overrides the user agent's `[hidden]` rule, so the
+   hidden Dev tab was showing in production builds — an empty section behind a beaker icon. */
+nav button.tab[hidden] {
+  display: none;
+}
 
 /* ---- companion hero ----
    The card is the one place with a border: it is the subject of the panel. Everything inside it
@@ -359,25 +364,167 @@ button.action.secondary {
   grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
   gap: 10px;
 }
+/* Cells are buttons now — every slot opens the detail card, locked ones included. */
 .dex .cell {
+  position: relative;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 7px;
   padding: 8px 4px;
   text-align: center;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+.dex .cell:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+.dex .cell.selected {
+  border-color: var(--vscode-focusBorder);
 }
 .dex img {
   width: 56px;
   height: 56px;
   image-rendering: pixelated;
 }
+.dex .cell .num {
+  font-size: 0.7em;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
 .dex .cell .name {
   font-size: 0.78em;
   opacity: 0.8;
-  margin-top: 3px;
+  margin-top: 1px;
   word-break: break-word;
 }
 .dex .cell.shiny {
   border-color: var(--vscode-charts-yellow, gold);
+}
+/* The shiny star, pinned to the cell's corner — the games' own marker. */
+.dex .cell .star,
+.star-inline {
+  color: var(--vscode-charts-yellow, gold);
+}
+.dex .cell .star {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+/* Not caught yet: the classic silhouette. `brightness(0)` flattens the sprite to a black
+   shape; on dark themes an `invert` lifts it to a dark grey so it still reads against the
+   editor background. VS Code stamps the theme class on the webview body (the bench mirrors it). */
+.dex .cell.locked {
+  border-color: color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
+}
+.dex .cell.locked img {
+  filter: brightness(0);
+  opacity: 0.8;
+}
+body.vscode-dark .dex .cell.locked img,
+body.vscode-high-contrast .dex .cell.locked img {
+  filter: brightness(0) invert(0.32);
+}
+.dex .cell.locked .num {
+  opacity: 0.35;
+}
+
+/* ---- dex detail: a bottom sheet ----
+   Fixed to the viewport, not placed above the grid: the click that opens it can happen four
+   screens deep into 649 cells, and a card that appears off-screen at the top reads as nothing
+   having happened. A solid background is required — the widget colour can be transparent and
+   this floats over cells. */
+.dex-detail {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  z-index: 10;
+  max-width: 720px;
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 40px 12px 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 10px;
+  background: var(--vscode-editor-background);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  animation: sheet-up 180ms ease-out;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dex-detail {
+    animation: none;
+  }
+}
+/* Room for the sheet, so the grid's last row can still scroll clear of it. */
+#dex:has(.dex-detail) {
+  padding-bottom: 110px;
+}
+.dex-detail.shiny {
+  border-color: var(--vscode-charts-yellow, gold);
+}
+.dex-detail .portrait {
+  width: 84px;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.dex-detail .portrait img {
+  image-rendering: pixelated;
+}
+.dex-detail.locked .portrait img {
+  filter: brightness(0);
+  opacity: 0.8;
+}
+body.vscode-dark .dex-detail.locked .portrait img,
+body.vscode-high-contrast .dex-detail.locked .portrait img {
+  filter: brightness(0) invert(0.32);
+}
+.dex-detail .body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dex-detail .title {
+  font-weight: 600;
+}
+.dex-detail .title .num {
+  opacity: 0.5;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.dex-detail .desc {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+.dex-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-foreground);
+  opacity: 0.6;
+  cursor: pointer;
+  font: inherit;
+}
+.dex-close:hover {
+  opacity: 1;
 }
 
 .empty {
@@ -978,25 +1125,54 @@ body.paused .wild-scene *::after {
   font-size: 0.85em;
 }
 
-/* The companion's progress in one line, kept visible while a capture occupies the stage. */
-.companion-strip {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: baseline;
-  gap: 3px 10px;
+/* The companion's progress as a small card, kept visible while a capture occupies the stage:
+   portrait at half scale (48px — exactly half the 96px sheet), identity and the bar. */
+.companion-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
   margin-bottom: 14px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, transparent);
 }
-.companion-strip .name {
+.companion-card .thumb {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.companion-card .thumb img {
+  width: 48px;
+  height: 48px;
+  image-rendering: pixelated;
+}
+.companion-card .thumb .egg-small {
+  font-size: 30px;
+  line-height: 1;
+}
+.companion-card .body {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.companion-card .title {
   font-weight: 600;
   font-size: 0.95em;
 }
-.companion-strip .desc {
+.companion-card .desc {
   opacity: 0.6;
   font-size: 0.82em;
-  text-align: right;
 }
-.companion-strip .bar {
-  grid-column: 1 / -1;
+.companion-card .progress {
+  margin-top: 1px;
+}
+.companion-card .progress .meta {
+  font-size: 0.78em;
+  margin-bottom: 3px;
 }
 
 .badge.wild {
@@ -1054,14 +1230,32 @@ body.paused .wild-scene *::after {
   animation: celebrate-pop 700ms ease-in-out 3;
 }
 /* `::before`, not `::after`: the hero's `.stage::after` is already its elliptical shadow, and
-   putting the sparkle there would replace the shadow for the length of the celebration. */
+   putting the sparkle there would replace the shadow for the length of the celebration.
+   Base opacity 0 and a finite, non-`forwards` animation: the class can legitimately outlive
+   the burst (the window is 4-6s), and `forwards` parked a static ✨ on the sprite — which read
+   as a shiny mark on a companion that was not shiny. */
 .companion-mon.celebrate::before,
 .stage.celebrate::before {
   content: '✨';
   position: absolute;
   top: -12px;
   right: -6px;
-  animation: caught-stars 700ms ease-out forwards;
+  opacity: 0;
+  animation: celebrate-stars 700ms ease-out 3;
+}
+@keyframes celebrate-stars {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 @keyframes celebrate-pop {
   0%,

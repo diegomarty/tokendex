@@ -23,12 +23,16 @@ type DexSegment = 'species' | 'log'
 let current: PanelState | undefined
 let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
+/** The species opened in the dex detail card. Locked ones are selectable too — number only. */
+let dexSelected: number | undefined
 /**
  * The last throw's result line, plus the encounter it belongs to. Shown only while that
  * encounter is still (or was last) on stage: without the pairing, "Gotcha! Meowth was caught!"
  * kept standing under the *next* Pokémon that stepped up.
  */
 let wildResult: { text: string; encounterID: string } | undefined
+/** The last state actually painted, serialised — identical pushes skip the re-render. */
+let lastRenderedState: string | undefined
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 
@@ -418,15 +422,37 @@ function renderGame(state: PanelState): string {
   if (selected !== undefined) {
     const more =
       wild.encounters.length < 2 ? '' : `<p class="desc wild-more">${escapeHTML(wild.waitingText)}</p>`
-    const strip =
+    // A miniature of the compact card: portrait, name, stage line and the bar. The bare
+    // one-line strip it replaces read as a caption, not as "your companion is still here".
+    const meta =
       c === undefined
         ? ''
-        : `<div class="companion-strip">
-        <span class="name">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' ✨' : ''}</span>
-        <span class="desc">${escapeHTML(c.toNextText)}</span>
-        <div class="bar"><i data-fill="${Math.round(c.progress * 100)}"></i></div>
+        : [c.stageText, c.rarityText]
+            .filter((part): part is string => part !== undefined && part !== '')
+            .map(escapeHTML)
+            .join(' · ')
+    const card =
+      c === undefined
+        ? ''
+        : `<div class="companion-card">
+        <div class="thumb">${
+          c.speciesID === undefined
+            ? '<span class="egg-small">🥚</span>'
+            : `<img src="${spriteURL(c.speciesID, c.isShiny, false)}" alt="">`
+        }</div>
+        <div class="body">
+          <div class="title">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</div>
+          ${meta === '' ? '' : `<div class="desc">${meta}</div>`}
+          <div class="progress">
+            <div class="meta">
+              <span>${escapeHTML(c.toNextText)}</span>
+              <span class="pct">${Math.round(c.progress * 100)}%</span>
+            </div>
+            <div class="bar"><i data-fill="${Math.round(c.progress * 100)}"></i></div>
+          </div>
+        </div>
       </div>`
-    return `${scene}${more}${strip}`
+    return `${scene}${more}${card}`
   }
 
   return `${scene}
@@ -510,6 +536,62 @@ function renderBag(state: PanelState): string {
     .join('')
 }
 
+/** The dex number the games print: three digits, hash first. */
+const dexNumber = (id: number): string => `#${String(id).padStart(3, '0')}`
+
+/**
+ * The card above the grid for the selected species. For an unlocked one: the animated sprite,
+ * number, name, rarity, a gold star when shiny, and its catch-log entries. For a locked one:
+ * the silhouette and its number — enough to want it, not enough to spoil it.
+ */
+function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number] | undefined): string {
+  if (dexSelected === undefined) return ''
+  const close = `<button class="dex-close" data-dex-close aria-label="close">✕</button>`
+
+  if (sp === undefined) {
+    return `
+    <div class="dex-detail locked">
+      <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+      <div class="body">
+        <div class="title">${dexNumber(dexSelected)}</div>
+        <div class="desc">?????</div>
+      </div>
+      ${close}
+    </div>`
+  }
+
+  // Every catch-log entry whose final form is this species: dates, wild badge, shiny star —
+  // all pre-formatted fields, laid out here rather than re-derived.
+  const entries = state.dexLog
+    .filter((e) => e.finalID === sp.id)
+    .slice(0, 4)
+    .map((e) => {
+      const parts = [
+        e.isActive ? escapeHTML(state.strings.raisingBadge) : (e.caughtText ?? ''),
+        e.isWild ? escapeHTML(state.strings.wildBadge) : '',
+      ].filter((part) => part !== '')
+      return `<div class="desc">${parts.map(escapeHTML).join(' · ')}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>`
+    })
+    .join('')
+
+  return `
+    <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
+      <div class="portrait">
+        <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
+             data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+      </div>
+      <div class="body">
+        <div class="title">
+          <span class="num">${dexNumber(sp.id)}</span> ${escapeHTML(sp.name)}
+          ${sp.isShiny ? '<span class="star-inline" title="shiny">★</span>' : ''}
+        </div>
+        <div class="desc">${escapeHTML(sp.rarityText)}${sp.isRaising ? ` · ${escapeHTML(state.strings.raisingBadge)}` : ''}</div>
+        ${entries}
+      </div>
+      ${close}
+    </div>`
+}
+
 function renderDex(state: PanelState): string {
   const segments = `
     <div class="segments">
@@ -521,34 +603,57 @@ function renderDex(state: PanelState): string {
       </button>
     </div>`
 
-  const list = state.dexSpecies.length === 0 && state.dexLog.length === 0
-  if (list) {
-    return `${segments}
-      <p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
-      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
-  }
-
   if (dexSegment === 'species') {
-    // The denominator is the huntable pool (the Gen-V animated ceiling both hatches and wilds
-    // draw from), so this is a real completion figure, not decoration.
+    // The whole huntable pool, silhouettes included: an all-caught-species list reads as an
+    // archive, but 625 dark shapes read as a goal. Locked cells carry only the silhouette and
+    // the number — what is behind them stays a surprise, the same rule the wild queue follows.
     const done = state.dexSpecies.length
+    const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
     const completion = `
       <div class="dex-progress">
         <span class="desc">${done} / ${ANIMATED_SPRITE_MAX}</span>
         <div class="bar"><i data-fill="${Math.min(100, Math.round((100 * done) / ANIMATED_SPRITE_MAX))}"></i></div>
       </div>`
-    const cells = state.dexSpecies
-      .map(
-        (sp) => `
-        <div class="cell${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}"
-             title="${escapeHTML(sp.rarityText)}">
+    const hint =
+      done === 0
+        ? `<p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
+      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
+        : ''
+
+    const cells: string[] = []
+    for (let id = 1; id <= ANIMATED_SPRITE_MAX; id++) {
+      const sp = byID.get(id)
+      const selected = id === dexSelected ? ' selected' : ''
+      // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
+      // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
+      const tabIndex = ` tabindex="${id === (dexSelected ?? 1) ? 0 : -1}"`
+      if (sp === undefined) {
+        cells.push(`
+        <button class="cell locked${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
+          <img src="${spriteURL(id, false, false)}" alt="" loading="lazy">
+          <div class="num">${dexNumber(id)}</div>
+        </button>`)
+      } else {
+        cells.push(`
+        <button class="cell${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
+                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.rarityText)}">
+          ${sp.isShiny ? '<span class="star" title="shiny">★</span>' : ''}
           <img src="${spriteURL(sp.id, sp.isShiny, false)}" alt="" loading="lazy">
+          <div class="num">${dexNumber(id)}</div>
           <div class="name">${escapeHTML(sp.name)}</div>
           ${sp.isRaising ? `<div class="badge">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
-        </div>`,
-      )
-      .join('')
-    return `${segments}${completion}<div class="dex">${cells}</div>`
+        </button>`)
+      }
+    }
+    // The detail renders after the grid but floats fixed at the bottom of the view: a card at
+    // the top of a 649-cell grid opens off-screen when the click happened four screens down.
+    return `${segments}${completion}${hint}<div class="dex">${cells.join('')}</div>${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
+  }
+
+  if (state.dexLog.length === 0) {
+    return `${segments}
+      <p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
+      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
   }
 
   const rows = state.dexLog
@@ -557,7 +662,7 @@ function renderDex(state: PanelState): string {
       <div class="row${e.isActive ? ' active' : ''}">
         <img class="thumb" src="${spriteURL(e.finalID, e.isShiny, false)}" alt="" loading="lazy">
         <div class="body">
-          <div class="title">${escapeHTML(e.name)}${e.isShiny ? ' ✨' : ''}</div>
+          <div class="title">${escapeHTML(e.name)}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>
           <div class="desc">${escapeHTML(e.rarityText)}${e.caughtText === undefined ? '' : ` · ${escapeHTML(e.caughtText)}`}</div>
         </div>
         ${e.isActive ? `<span class="desc">${escapeHTML(state.strings.raisingBadge)}</span>` : ''}
@@ -612,8 +717,7 @@ function renderSettings(state: PanelState): string {
     <div class="setting">
       <button class="action secondary" id="export">${escapeHTML(state.strings.exportSave)}</button>
       <button class="action secondary" id="import">${escapeHTML(state.strings.importSave)}</button>
-    </div>
-    <p class="desc">${escapeHTML(state.strings.settingsHint)}</p>`
+    </div>`
 }
 
 /**
@@ -680,6 +784,11 @@ function render(): void {
   const state = current
   if (state === undefined) return
 
+  // innerHTML replacement can shift the page (images collapse until they re-load); putting the
+  // scroll back is what keeps a refresh from stealing the reader's place mid-Pokédex.
+  const scroller = document.scrollingElement
+  const scrollTop = scroller?.scrollTop ?? 0
+
   el('errors').innerHTML =
     state.errors.length === 0
       ? ''
@@ -717,7 +826,9 @@ function render(): void {
     button.title = label
     button.setAttribute('aria-label', label)
   }
-  vscode.setState({ tab, dexSegment })
+  vscode.setState({ tab, dexSegment, dexSelected })
+
+  if (scroller !== null && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop
 
   // Measured only now, after the section visibility flags above: inside a hidden section every
   // offset reads 0, and measuring there was exactly how the first throw's arc came out 60px
@@ -754,6 +865,19 @@ document.addEventListener('click', (event) => {
   const segment = target.closest('[data-seg]')
   if (segment !== null) {
     dexSegment = (segment as HTMLElement).dataset['seg'] as DexSegment
+    render()
+    return
+  }
+  if (target.closest('[data-dex-close]') !== null) {
+    dexSelected = undefined
+    render()
+    return
+  }
+  const dexCell = target.closest('[data-dex]')
+  if (dexCell !== null) {
+    const id = Number((dexCell as HTMLElement).dataset['dex'])
+    // Clicking the open one closes it — the card has a ✕, but this is the gesture people try.
+    dexSelected = Number.isInteger(id) && id !== dexSelected ? id : undefined
     render()
     return
   }
@@ -830,6 +954,34 @@ document.addEventListener('change', (event) => {
   }
 })
 
+// Arrow keys walk the Pokédex grid (roving tabindex: the cells share one tab stop). The column
+// count comes from the rendered grid, so it stays honest across every width breakpoint.
+document.addEventListener('keydown', (event) => {
+  const cell = (event.target as HTMLElement | null)?.closest?.('.dex [data-dex]')
+  if (cell == null) return
+  const grid = cell.parentElement
+  if (grid === null) return
+
+  let delta = 0
+  if (event.key === 'ArrowRight') delta = 1
+  else if (event.key === 'ArrowLeft') delta = -1
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const columns = getComputedStyle(grid).gridTemplateColumns.split(' ').length
+    delta = event.key === 'ArrowDown' ? columns : -columns
+  } else {
+    return
+  }
+  event.preventDefault()
+
+  const cells = Array.from(grid.querySelectorAll<HTMLElement>('[data-dex]'))
+  const next = cells[cells.indexOf(cell as HTMLElement) + delta]
+  if (next === undefined) return
+  ;(cell as HTMLElement).tabIndex = -1
+  next.tabIndex = 0
+  next.focus()
+  next.scrollIntoView({ block: 'nearest' })
+})
+
 // The panel keeps rendering while hidden unless told otherwise, and an always-running sprite
 // animation was measured as the single biggest idle cost.
 document.addEventListener('visibilitychange', () => {
@@ -902,6 +1054,12 @@ window.addEventListener(
         throwing.deferred = event.data.state
         return
       }
+      // Idle refreshes usually deliver a byte-identical state; rebuilding the whole DOM for
+      // them made the page jump under the reader every two minutes — worst four screens deep
+      // into the Pokédex. One string compare (~50KB, every ~2min) is far cheaper than a paint.
+      const incoming = JSON.stringify(event.data.state)
+      if (incoming === lastRenderedState) return
+      lastRenderedState = incoming
       current = event.data.state
       render()
     }
@@ -916,7 +1074,8 @@ window.addEventListener(
 
 // Restore the tab the user was on when the panel was serialised. A compact surface (the
 // Explorer's mini card) has no tab strip, so it always renders Home.
-const saved = vscode.getState() as { tab?: string; dexSegment?: DexSegment } | undefined
+const saved = vscode.getState() as
+  { tab?: string; dexSegment?: DexSegment; dexSelected?: number } | undefined
 // Validated, not cast: a session serialised before a tab was removed (the old Wild tab) would
 // otherwise restore into a tab that no longer exists and hide every section.
 const KNOWN_TABS: readonly TabID[] = ['home', 'shop', 'bag', 'dex', 'settings', 'dev']
@@ -924,6 +1083,14 @@ if (saved?.tab !== undefined && (KNOWN_TABS as readonly string[]).includes(saved
   tab = saved.tab as TabID
 }
 if (saved?.dexSegment !== undefined) dexSegment = saved.dexSegment
+if (
+  typeof saved?.dexSelected === 'number' &&
+  Number.isInteger(saved.dexSelected) &&
+  saved.dexSelected >= 1 &&
+  saved.dexSelected <= ANIMATED_SPRITE_MAX
+) {
+  dexSelected = saved.dexSelected
+}
 if (document.body.classList.contains('compact')) tab = 'home'
 
 // Until the first state arrives the page is blank, and on a first-ever install that can last
