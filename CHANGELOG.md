@@ -31,7 +31,8 @@
 - The shop is grouped into Poké Balls / Items / Eggs with your spendable balance on top, real
   PokéAPI item sprites (emoji as fallback), the ten-pack's discount spelled out in its
   description, and unaffordable prices struck through.
-- A slim companion-progress strip stays on Home while a capture occupies the scene.
+- A compact companion card (portrait, stage, progress bar) stays on Home while a capture
+  occupies the scene — the egg's incubation included.
 - Per-provider burn (`/min`) column in the breakdown table while a session is active — the
   same number the tooltip shows.
 - **Catch odds on every ball** in the rack, computed from the same Gen-IV maths the throw
@@ -43,6 +44,31 @@
 - **Run asks first for what hurts to lose**: letting a rare, legendary or shiny go raises a
   native confirmation naming it; a common stays one click.
 - An empty ball rack shows a real "Get Poké Balls" button into the shop, not a footnote.
+- **The Pokédex is the full 649 now**: every slot renders, uncaught species as classic
+  silhouettes with their number only — what is behind them stays a surprise. Clicking any
+  slot opens a detail sheet pinned to the bottom of the view — visible wherever in the 649
+  cells the click happened — with the animated sprite, number, name, rarity, catch dates with
+  the wild badge, and a gold ★ for shinies (on the cell, the sheet and the catch log).
+
+- **Catch difficulty retuned.** A capture-rate cap for every ball short of the Master (~84%
+  best case) plus a global 0.85 difficulty factor: a 235+ common used to be a guaranteed,
+  wobble-less catch with the cheapest ball. Every throw can wobble out now; the guaranteed
+  catch is the Master Ball's job. Rare: 24% Poké / 41% Ultra; legendary: ~3.6%.
+- **An animated hero GIF** in the README, recorded from the real shipped bundles (the capture
+  choreography end to end), via a new `tools/bench/record.mjs` harness.
+- **E2E smoke test**: CI now boots a real VS Code under xvfb, activates the extension and
+  round-trips a refresh through the worker — `extension.ts` finally has a safety net.
+- The panel builder moved into the core as the pure `buildPanelState` (14 new tests): the
+  single largest piece of UI-shaping code is no longer outside the suite.
+- A save-schema version is stamped into every save, so a future migration has something to
+  branch on before it is too late to add one.
+- The limit severity thresholds moved to the pure `limits/windows.ts` with boundary tests —
+  they sat untested in the worker.
+- Panel repaints skip byte-identical states and preserve the scroll position: the two-minute
+  refresh no longer yanks the page while you browse the Pokédex.
+- The Pokédex grid is one tab stop with arrow-key navigation (roving tabindex) instead of 649
+  tab stops.
+- Removed dead UI strings (`confirmBuy`, and Settings' misplaced "spend tokens to hatch" hint).
 
 ### Fixed
 
@@ -57,6 +83,14 @@
   localised label.
 - The status bar and its tooltip refresh right after a purchase, a catch or a language change,
   instead of up to two minutes later.
+- The hidden Dev tab button was visible in production builds: the tab strip's own `display`
+  rule overrode the `hidden` attribute, leaving a beaker icon over an empty section.
+- A celebration sparkle could stay parked over the companion for up to a whole refresh
+  interval: panel repaints reuse the last scan, which had the celebration state frozen in, and
+  the sparkle's animation ended at full opacity. The window is now read live from the store and
+  the sparkle bursts and fades.
+- The Leaf trainer sprite never loaded — Showdown serves it as `leaf-gen3`; the whole roster
+  is now verified against Showdown's live listing.
 
 ## [0.1.0] - 2026-08-20
 
