@@ -9,3 +9,4 @@ out/
 docs/
 PORTED-THROUGH
 .claude/
+.vscode-test/

@@ -22,6 +22,8 @@ jobs:
       - run: npm test
       - name: Build bundles
         run: node esbuild.mjs
+      - name: E2E smoke (real VS Code under xvfb)
+        run: xvfb-run -a npm run test:e2e
       - name: Package
         run: npx --yes @vscode/vsce package --no-dependencies
       - uses: actions/upload-artifact@v4

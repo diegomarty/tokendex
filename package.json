@@ -94,10 +94,10 @@
             "off"
           ],
           "enumDescriptions": [
-            "Toast only when a shiny or legendary wild Pok\u00e9mon appears, at most once per hour.",
+            "Toast only when a shiny or legendary wild Pokémon appears, at most once per hour.",
             "Never toast for encounters. The activity bar badge and the Wild tab still update."
           ],
-          "description": "When a wild Pok\u00e9mon encounter may show a notification."
+          "description": "When a wild Pokémon encounter may show a notification."
         },
         "tokendex.devMode": {
           "type": "boolean",
@@ -193,7 +193,7 @@
           {
             "id": "tokendex.step.game",
             "title": "Hatch, evolve, catch",
-            "description": "Real tokens incubate the egg; wild Pok\u00e9mon appear as you work.",
+            "description": "Real tokens incubate the egg; wild Pokémon appear as you work.",
             "media": {
               "markdown": "media/walkthrough/game.md"
             }
@@ -253,13 +253,16 @@
     "bench": "node tools/bench/serve.mjs",
     "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
     "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
-    "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies"
+    "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies",
+    "test:e2e": "node esbuild.mjs && node tools/e2e/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
     "@types/vscode": "^1.85.0",
     "@vscode/codicons": "^0.0.46-24",
+    "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.25.0",
+    "playwright-core": "^1.62.1",
     "prettier": "^3.9.6",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
