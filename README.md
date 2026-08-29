@@ -138,11 +138,11 @@ steps, the gitmoji commit convention, and the extension points for adding a new 
 
 ## Credits
 
-Pokémon and Pokémon character names are trademarks of Nintendo. This project is a fan work,
-is not affiliated with or endorsed by Nintendo, Creatures Inc. or GAME FREAK Inc., and bundles
-no Pokémon assets — Pokémon and item sprites are fetched from [PokéAPI](https://pokeapi.co)
-at runtime, trainer sprites from [Pokémon Showdown](https://play.pokemonshowdown.com); the
-icon artwork is first-party.
+Pokémon and Pokémon character names are trademarks of Nintendo. This project is a fan work
+and is not affiliated with or endorsed by Nintendo, Creatures Inc. or GAME FREAK Inc. No game
+sprites are bundled — Pokémon and item sprites are fetched from [PokéAPI](https://pokeapi.co)
+at runtime, trainer sprites from [Pokémon Showdown](https://play.pokemonshowdown.com). The
+extension icon is original fan artwork.
 
 ## Licence
 
