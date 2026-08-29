@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1] - 2026-08-29
+
+### Changed
+
+- New extension icon: the Pokédex device with Lugia, in pixel art. It replaces the abstract
+  egg-and-bolt drawing, which the 0.2.0 marketplace listing shipped with.
+
 ## [0.2.0] - 2026-08-28
 
 ### Added
