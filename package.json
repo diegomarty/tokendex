@@ -2,7 +2,7 @@
   "name": "tokendex",
   "displayName": "Tokendex",
   "description": "Track your local AI-CLI token usage as a creature that grows in the status bar.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
