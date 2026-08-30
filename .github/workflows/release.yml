@@ -1,14 +1,16 @@
-# Publishes a tagged release to both marketplaces.
+# Cuts a tagged release: runs the full gates, packages, and attaches the `.vsix` to a GitHub
+# release. Marketplace publishing is manual by choice — the maintainer uploads the `.vsix` at
+# https://marketplace.visualstudio.com/manage (Tokendex → ⋯ → Update), because the automated
+# path needs an Azure DevOps organization, which Microsoft increasingly gates behind an Azure
+# subscription. Two minutes per release beats handing Azure a credit card.
 #
-# Two of them on purpose: the VS Code Marketplace serves VS Code itself, and Open VSX serves
-# everything else people actually run this in — VSCodium, Cursor, Windsurf, Gitpod. Publishing to
-# only the first leaves those users installing a `.vsix` by hand.
-#
-# Secrets required (Settings → Secrets and variables → Actions):
+# The publish steps stay wired for the day that trade flips: set the secrets and the next tag
+# publishes itself — each step is skipped, not failed, while its secret is absent.
 #   VSCE_PAT  Azure DevOps token, scope "Marketplace: Manage", org "All accessible organizations".
 #   OVSX_PAT  open-vsx.org access token. The `diegomarty` namespace must exist first:
 #             `npx ovsx create-namespace diegomarty -p $OVSX_PAT` (one-off, after signing the
-#             Eclipse Foundation Publisher Agreement).
+#             Eclipse Foundation Publisher Agreement). Open VSX serves VSCodium, Cursor,
+#             Windsurf and Gitpod — worth publishing to when releases are frequent.
 #
 # Run it by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
 
@@ -50,7 +52,11 @@ jobs:
       - name: Package
         run: npm run package
 
+      # Skipped, not failed, while the secret is absent — publishing is manual until then (see
+      # the header). A skip keeps the GitHub release below happening; `continue-on-error` here
+      # would instead hide a real publish failure on the day the secret exists.
       - name: Publish to the VS Code Marketplace
+        if: ${{ secrets.VSCE_PAT != '' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: npx --yes @vscode/vsce publish --no-dependencies --packagePath *.vsix
@@ -58,6 +64,7 @@ jobs:
       # Never blocks the release: Open VSX rejecting a duplicate or a pending agreement must not
       # undo a successful publish on the other side.
       - name: Publish to Open VSX
+        if: ${{ secrets.OVSX_PAT != '' }}
         continue-on-error: true
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
