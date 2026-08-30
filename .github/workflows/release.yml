@@ -25,6 +25,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Hoisted to job env because the `secrets` context is not available in a step-level `if` —
+    # referencing it there is a workflow *parse* error, which fails the run in zero seconds.
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,18 +61,14 @@ jobs:
       # the header). A skip keeps the GitHub release below happening; `continue-on-error` here
       # would instead hide a real publish failure on the day the secret exists.
       - name: Publish to the VS Code Marketplace
-        if: ${{ secrets.VSCE_PAT != '' }}
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        if: ${{ env.VSCE_PAT != '' }}
         run: npx --yes @vscode/vsce publish --no-dependencies --packagePath *.vsix
 
       # Never blocks the release: Open VSX rejecting a duplicate or a pending agreement must not
       # undo a successful publish on the other side.
       - name: Publish to Open VSX
-        if: ${{ secrets.OVSX_PAT != '' }}
+        if: ${{ env.OVSX_PAT != '' }}
         continue-on-error: true
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: npx --yes ovsx publish *.vsix -p "$OVSX_PAT"
 
       - name: Attach the .vsix to the GitHub release
