@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Catching or running from a wild Pokémon now visibly shrinks the queue. Usage spent while the
+  queue was full used to be banked (up to thirteen spawns' worth), so for a heavy user every
+  resolved encounter was silently replaced on the very next scan and the waiting count never
+  went down. A full queue now pauses encounter progress instead: a freed slot is earned back
+  with a fresh threshold of new spend, never from a bank.
+- The "Turn it on" prompt on the dev scenarios command wrote `tokendex.devMode` into the
+  **global** settings, which the Extension Development Host shares with the real VS Code on the
+  same machine — so a marketplace install there showed the Dev tab, looking exactly like a
+  build shipped in dev mode. It now writes the workspace setting, which stays in the repo.
+
 ## [0.2.1] - 2026-08-29
 
 ### Changed

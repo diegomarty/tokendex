@@ -703,9 +703,12 @@ async function runDevScenario(): Promise<void> {
   if (!devModeOn()) {
     const enable = await vscode.window.showWarningMessage('Development mode is off.', 'Turn it on')
     if (enable !== 'Turn it on') return
+    // Workspace, never Global: settings are shared between the dev host and the user's real
+    // VS Code, so a Global write here leaked the Dev tab into a marketplace install of the
+    // extension on the same machine — it looked exactly like a build shipped in dev mode.
     await vscode.workspace
       .getConfiguration('tokendex')
-      .update('devMode', true, vscode.ConfigurationTarget.Global)
+      .update('devMode', true, vscode.ConfigurationTarget.Workspace)
   }
 
   const actions = await pickScenario()
