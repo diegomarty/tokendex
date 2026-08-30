@@ -12,10 +12,10 @@
 [![100% local](https://img.shields.io/badge/data-100%25%20local-444d56)](#privacy)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
-
-<!-- Once published to the marketplaces, add:
 [![Version](https://img.shields.io/visual-studio-marketplace/v/diegomarty.tokendex?label=Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/diegomarty.tokendex)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
+
+<!-- Once published to Open VSX, add:
 [![Open VSX](https://img.shields.io/open-vsx/v/diegomarty/tokendex?label=Open%20VSX)](https://open-vsx.org/extension/diegomarty/tokendex)
 -->
 
