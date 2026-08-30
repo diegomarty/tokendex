@@ -82,7 +82,25 @@ describe('accrual', () => {
   // meaningless as well as unbounded.
   it('bounds a single absurd delta rather than banking encounters for ever', () => {
     const usage = addEncounterUsage(0, 1_500_000_000)
-    expect(owedEncounters(usage, 1)).toBeLessThanOrEqual(EncounterBalance.maxQueue + 1)
+    expect(owedEncounters(usage, 1)).toBeLessThanOrEqual(EncounterBalance.maxQueue)
+  })
+
+  // [trigger branch] The old fixed ceiling banked 13 spawns' worth of usage. A heavy user's
+  // bank was therefore permanently full, so every catch was replaced on the very next scan
+  // and the queue count never visibly dropped — reported as "catching doesn't reduce the
+  // waiting count". With no room there is no progress to make, so nothing accrues.
+  it('accrues nothing while the queue is full', () => {
+    expect(addEncounterUsage(0, 10_000_000, EncounterBalance.maxQueue)).toBe(0)
+  })
+
+  it('clamps an already-banked surplus away when the queue has filled', () => {
+    expect(addEncounterUsage(30_000_000, 1, EncounterBalance.maxQueue)).toBe(0)
+  })
+
+  it('banks at most one threshold per free slot', () => {
+    const usage = addEncounterUsage(0, 1_500_000_000, EncounterBalance.maxQueue - 2)
+    expect(usage).toBe(EncounterBalance.threshold * 2)
+    expect(owedEncounters(usage, 1)).toBe(2)
   })
 
   it('ignores a negative delta', () => {

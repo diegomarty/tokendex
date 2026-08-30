@@ -318,10 +318,12 @@ describe('wild encounters', () => {
     expect(events[0]).toMatchObject({ name: 'Mewtwo', rarity: 'legendary' })
   })
 
-  // [trigger branch] Minting into a full queue pays the threshold and lets the cap drop an
-  // encounter nobody saw — possibly the newcomer itself, right after announcing it. A full
-  // queue banks the usage instead; clearing a slot is what releases the spawn.
-  it('banks encounters while the queue is full and releases them as it empties', async () => {
+  // [trigger branch] Usage banked while the queue was full used to refill every resolved
+  // encounter on the very next scan: a heavy user's bank was permanently topped up, so the
+  // waiting count never visibly dropped — reported as "catching doesn't reduce the wild
+  // Pokémon waiting". A full queue pauses accrual instead, so a freed slot is earned back
+  // with a fresh threshold of new spend, never from a bank.
+  it('does not refill a resolved encounter from usage spent while the queue was full', async () => {
     const s = store()
     await s.update(obs(0))
 
@@ -329,14 +331,20 @@ describe('wild encounters', () => {
     const fillAll = readyForOne + EncounterBalance.threshold * (EncounterBalance.maxQueue + 3)
     await s.update(obs(fillAll))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
-    const bankedSeen = s.snapshot().encountersSeen
-    expect(bankedSeen).toBe(EncounterBalance.maxQueue) // the surplus was not paid for
 
-    // Nothing new accrues, but working through the queue releases a banked spawn.
+    // Keep spending while full: none of it accrues.
+    const whileFull = fillAll + EncounterBalance.threshold * 4
+    await s.update(obs(whileFull))
+    expect(s.snapshot().encounterUsage).toBe(0)
+
+    // Working through the queue visibly shrinks it — small further spend changes nothing.
     await s.runFrom(s.snapshot().wild[0]!.id)
-    await s.update(obs(fillAll))
+    await s.update(obs(whileFull + 1_000))
+    expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue - 1)
+
+    // The freed slot is refilled only once a fresh threshold of new spend lands.
+    await s.update(obs(whileFull + 1_000 + EncounterBalance.threshold))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
-    expect(s.snapshot().encountersSeen).toBe(bankedSeen + 1)
   })
 
   // Wild catches never enter `collectedFinals`, so the variety bias needs its own memory: a

@@ -267,10 +267,12 @@ export class CompanionStore {
       if (this.state.active !== undefined) this.grow(0)
       // Accrued beside `creditDelta`, not inside it: that function routes a delta to exactly one
       // of two destinations (the egg or the current stage), while an encounter accrues in either
-      // case. Folding it in would make a two-way choice a three-way one it is not.
+      // case. Folding it in would make a two-way choice a three-way one it is not. The queue
+      // length caps the accumulator: a full queue accrues nothing, so a resolved encounter is
+      // never instantly replaced out of a bank.
       this.state = {
         ...this.state,
-        encounterUsage: addEncounterUsage(this.state.encounterUsage, delta),
+        encounterUsage: addEncounterUsage(this.state.encounterUsage, delta, this.state.wild.length),
       }
     }
 
@@ -294,10 +296,11 @@ export class CompanionStore {
    */
   private async spawnEncountersIfNeeded(): Promise<void> {
     const owed = owedEncounters(this.state.encounterUsage, this.state.encountersSeen)
-    // A full queue banks the usage instead of minting: paying the threshold and letting
-    // `enqueueEncounter` drop something would waste tokens on encounters nobody sees — and could
-    // announce a Pokémon that was itself the one dropped. Working through the queue is what
-    // releases the banked spawns.
+    // Never mint into a full queue: paying the threshold and letting `enqueueEncounter` drop
+    // something would waste tokens on encounters nobody sees — and could announce a Pokémon
+    // that was itself the one dropped. Accrual is already capped by the queue's room, but owed
+    // usage can still exceed it (an imported save, or a spawn deferred by a network failure
+    // while the queue filled), so the guard stays.
     const room = EncounterBalance.maxQueue - this.state.wild.length
     if (owed === 0 || room <= 0) return
 

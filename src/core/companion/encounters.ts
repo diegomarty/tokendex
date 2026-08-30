@@ -52,18 +52,28 @@ export function encounterThresholdFor(encountersSeen: number): number {
 }
 
 /**
- * Ceiling on the accumulator.
- *
- * A dev scenario granting 1.5B would otherwise owe ~600 encounters and keep minting them out of
- * a single injection for ever. Clamping on the way *in* bounds `owedEncounters` structurally,
- * and it puts the discarded surplus at the one place it is easy to see rather than hiding it in
- * a post-hoc fixup on the loop.
+ * Hard bound used when reading the accumulator, for values that bypassed `addEncounterUsage`
+ * (an imported save, a hand-edited file). One threshold per queue slot is the most that can
+ * ever be spent, so anything above it is meaningless.
  */
-const USAGE_CEILING = EncounterBalance.threshold * (EncounterBalance.maxQueue + 1)
+const USAGE_CEILING = EncounterBalance.threshold * EncounterBalance.maxQueue
 
-/** Adds a token delta to the accumulator. Negative deltas are ignored, not subtracted. */
-export function addEncounterUsage(encounterUsage: number, delta: number): number {
-  return Math.min(encounterUsage + Math.max(0, delta), USAGE_CEILING)
+/**
+ * Adds a token delta to the accumulator. Negative deltas are ignored, not subtracted.
+ *
+ * The cap is **one threshold per free queue slot** (`queued` is how many encounters are
+ * waiting). Two behaviours fall out of that, both deliberate:
+ *
+ * - A dev scenario granting 1.5B cannot owe ~600 encounters and keep minting them out of one
+ *   injection for ever — the accumulator is bounded structurally, on the way in.
+ * - **A full queue accrues nothing.** The previous fixed ceiling banked spawns beyond the
+ *   queue, so a heavy user's bank was permanently topped up and every catch was silently
+ *   replaced on the next scan — the waiting count never went down. With no room there is no
+ *   progress to make; a freed slot is earned back with fresh spend, never from a bank.
+ */
+export function addEncounterUsage(encounterUsage: number, delta: number, queued = 0): number {
+  const room = Math.max(0, EncounterBalance.maxQueue - queued)
+  return Math.min(encounterUsage + Math.max(0, delta), EncounterBalance.threshold * room)
 }
 
 /** How many encounters the accumulated usage has paid for but not yet received. */
