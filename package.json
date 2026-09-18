@@ -251,6 +251,8 @@
     "format:check": "prettier --check .",
     "test:watch": "vitest",
     "bench": "node tools/bench/serve.mjs",
+    "readme:shots": "node tools/bench/shots.mjs",
+    "readme:hero": "node tools/bench/record.mjs",
     "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
     "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
     "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies",

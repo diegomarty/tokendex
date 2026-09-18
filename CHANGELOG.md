@@ -113,6 +113,11 @@
 - Settings groups the save buttons under their own heading instead of leaving them flush
   against the trainer roster, and the egg screen's two progress bars are one component rather
   than two shapes for two meanings.
+- The README's captures are regenerated from the current build, and regenerating them is now a
+  command rather than folklore: `npm run readme:shots` and `npm run readme:hero`. The shipped
+  images were showing copy, prices and a shop layout the extension had stopped sending — the
+  still captures had no tool at all, and the GIF recorder looked for Chromium only under Linux
+  paths, so it could not run on the machine that ships them.
 - `npm run test:e2e` runs again. VS Code 1.110 renamed the macOS binary from
   `Contents/MacOS/Electron` to `Code`, which `@vscode/test-electron` 2.x could not find
   (`spawn … ENOENT`), so the end-to-end gate had been silently unrunnable on macOS with

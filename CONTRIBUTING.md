@@ -37,6 +37,20 @@ To try your change, press <kbd>F5</kbd> to launch an Extension Development Host.
 `TOKENDEX_STATE_DIR` to a throwaway directory first if you are touching game state: the
 development scenarios behind the `tokendex.dev` command mutate the real save.
 
+For UI work, `npm run bench` serves the real webview bundle against fixture states in a plain
+browser — every surface, theme and width, rebuilt at esbuild speed. If a change alters what the
+README shows, regenerate its captures from that same bundle rather than cropping a screenshot
+by hand:
+
+```bash
+npm run readme:shots    # the four stills; pass a name to redo one (… shots.mjs dex)
+npm run readme:hero     # the capture GIF
+```
+
+Both drive Chrome through `playwright-core`, which ships no browser of its own: they use a
+Playwright-managed Chromium when there is one (`npx playwright install chromium ffmpeg`) and
+fall back to whatever Chrome is installed. The GIF step also needs `ffmpeg` on `PATH`.
+
 ## Contribution workflow
 
 1. Create a feature branch off `main` (fork the repo if you don't have write access).
