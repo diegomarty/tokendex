@@ -547,6 +547,12 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       break
     }
 
+    case 'openPanel':
+      // The compact card asking to be taken to the real thing. `tokendex.open` focuses the
+      // sidebar view, which is also what the status bar item does.
+      await vscode.commands.executeCommand('tokendex.open')
+      return
+
     case 'dev':
       await runDevControl(request.id, request.value)
       return

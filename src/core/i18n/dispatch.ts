@@ -278,8 +278,22 @@ export function tooltipMonth(lang: AppLanguage): string {
 }
 
 /**
- * Status bar label for an egg. The panel's `eggIncubating` carries a 🥚 emoji, which would sit
- * next to the egg codicon and read as two eggs, so the bar gets its own plain word.
+ * The bare noun, for lines that already carry their own number.
+ *
+ * The existing keys are whole phrases (`todayTokens`, `spendableTokens`), so the status bar
+ * tooltip had the English word hard-coded in all four languages: a Japanese user read
+ * `今日 · 253,400,000 tokens`.
+ */
+export function tokensNoun(lang: AppLanguage): string {
+  return t(lang, '토큰', 'tokens', 'トークン', 'tokens')
+}
+
+/**
+ * Status bar label for an egg.
+ *
+ * Separate from the panel's `eggIncubating` because the two say different things in different
+ * places: the bar has room for a noun beside its codicon, the panel for a state under a drawn
+ * egg. Neither carries an emoji of its own — both surfaces already draw one.
  */
 export const statusEgg = (lang: AppLanguage): string => t(lang, '알', 'Egg', 'タマゴ', 'Huevo')
 
@@ -367,14 +381,62 @@ export function welcomeToast(lang: AppLanguage): string {
   )
 }
 
-export function wildEmptyText(lang: AppLanguage, toNextAmount: string): string {
+/**
+ * Label on the progress bar toward the next wild encounter.
+ *
+ * It used to be a sentence announcing the empty state as well ("No wild Pokémon right now —
+ * … tokens to the next."), from when it was a standalone paragraph. Beside a bar with its own
+ * percentage it wrapped to two lines in a sidebar, and it was saying twice over what the empty
+ * scene above it already shows. What is left is the half only this line can tell you, phrased
+ * like its sibling `toNextEvolution` so the two read as one system.
+ */
+export function wildNextEncounterText(lang: AppLanguage, toNextAmount: string): string {
   return t(
     lang,
-    `지금은 야생 포켓몬이 없어요 — 다음 출현까지 ${toNextAmount} 토큰.`,
-    `No wild Pokémon right now — ${toNextAmount} tokens to the next.`,
-    `いまは野生のポケモンがいません — 次の出現まで${toNextAmount}トークン。`,
-    `No hay Pokémon salvajes ahora mismo — ${toNextAmount} tokens hasta el siguiente.`,
+    `다음 출현까지 ${toNextAmount}`,
+    `${toNextAmount} to the next encounter`,
+    `次の出現まで${toNextAmount}`,
+    `${toNextAmount} al siguiente encuentro`,
   )
+}
+
+// MARK: - Pokédex browsing
+
+/**
+ * The Pokédex is 649 cells — roughly 217 rows in a sidebar — so finding one entry by scrolling
+ * is not a thing anyone does twice. These name the controls that replace the scroll.
+ */
+export function dexSearchPlaceholder(lang: AppLanguage): string {
+  return t(lang, '이름 또는 번호', 'Name or number', '名前か番号', 'Nombre o número')
+}
+
+export function dexOwnedOnlyLabel(lang: AppLanguage): string {
+  return t(lang, '보유한 것만', 'Owned only', '所持のみ', 'Solo obtenidos')
+}
+
+/** The chip that clears the catch log's rarity narrowing. */
+export function dexFilterAllLabel(lang: AppLanguage): string {
+  return t(lang, '전체', 'All', 'すべて', 'Todos')
+}
+
+export function dexNoMatchesText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '조건에 맞는 포켓몬이 없어요.',
+    'No Pokémon match that.',
+    '条件に合うポケモンがいません。',
+    'Ningún Pokémon coincide.',
+  )
+}
+
+/** The detail card's dismiss button — an icon, so this is its accessible name. */
+export function closeLabel(lang: AppLanguage): string {
+  return t(lang, '닫기', 'Close', '閉じる', 'Cerrar')
+}
+
+/** Heading over save export/import, so those two buttons stop reading as part of the roster. */
+export function saveSectionTitle(lang: AppLanguage): string {
+  return t(lang, '저장 데이터', 'Save data', 'セーブデータ', 'Partida guardada')
 }
 
 export function wildNoBallsText(lang: AppLanguage): string {

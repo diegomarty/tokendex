@@ -90,6 +90,19 @@ nav button.tab[aria-selected='true'] {
 section[hidden] {
   display: none;
 }
+
+/* Announced, never drawn. `display: none` would take it out of the accessibility tree with it. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 /* The author-level `display: grid` on tabs overrides the user agent's `[hidden]` rule, so the
    hidden Dev tab was showing in production builds — an empty section behind a beaker icon. */
 nav button.tab[hidden] {
@@ -337,7 +350,9 @@ td.num {
 
 button.action {
   appearance: none;
-  border: 0;
+  /* Not `border: 0`: in a high contrast theme a button is supposed to be outlined, and Run
+     against a pure black editor was a soft grey rectangle with no edge. Transparent elsewhere. */
+  border: 1px solid var(--vscode-contrastBorder, transparent);
   border-radius: 4px;
   padding: 5px 13px;
   font: inherit;
@@ -379,6 +394,53 @@ button.action.secondary {
 .dex .cell:hover {
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
+/* Pokédex narrowing: a search field and toggle chips, sitting between the segments and the
+   grid so the thing they act on is always the next thing you see. */
+.dex-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.dex-search {
+  flex: 1 1 140px;
+  min-width: 0;
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+.dex-search:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.chip {
+  font: inherit;
+  font-size: 0.92em;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.chip:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+.chip[aria-pressed='true'] {
+  opacity: 1;
+  border-color: var(--vscode-focusBorder);
+  background: color-mix(in srgb, var(--vscode-focusBorder) 18%, transparent);
+}
+.chip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
 .dex .cell.selected {
   border-color: var(--vscode-focusBorder);
 }
@@ -761,17 +823,31 @@ h2.section {
 .tab {
   position: relative;
 }
+/* Anchored to the icon, not to the button: tabs are `flex: 1 1 auto`, so in an editor tab each
+   one is ~180px wide and a badge pinned to the button's right edge floated halfway to the next
+   icon, reading as a number belonging to nothing. */
 .tab[data-count]:not([data-count=''])::after {
   content: attr(data-count);
   position: absolute;
-  top: 1px;
-  right: 1px;
+  top: 2px;
+  /* The button is a centred grid, so its centre *is* the icon: offsetting from 50% pins the
+     badge to the glyph at any tab width. `attr()` only resolves against the element that
+     carries the attribute, which is why this stays on the button rather than moving to the
+     icon. */
+  left: 50%;
+  margin-left: 5px;
   font-size: 9px;
   line-height: 1;
   padding: 1px 3px;
   border-radius: 6px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+  /* High contrast themes are the only ones that define `contrastBorder`, so this resolves to
+     transparent everywhere else — and carrying it in every theme keeps the geometry identical
+     rather than growing the pill by 2px when someone switches. Without it the HC badge is a
+     black pill on a black editor background: only the white number survives, which reads as a
+     stray digit beside the icon rather than a count on it. */
+  border: 1px solid var(--vscode-contrastBorder, transparent);
 }
 
 .wild-scene {
@@ -837,20 +913,10 @@ h2.section {
   gap: 10px;
   margin-bottom: 14px;
 }
+/* Shares `.progress` with the companion; only the spacing is its own. */
 .next-encounter {
   width: 100%;
-  display: grid;
-  gap: 5px;
-  justify-items: center;
-  margin-top: 2px;
-}
-.next-encounter .desc {
-  opacity: 0.6;
-  font-size: 0.85em;
-  text-align: center;
-}
-.next-encounter .bar {
-  width: 60%;
+  margin-top: 10px;
 }
 
 /* Both sprites stand on the same ground line: the trainer's feet end at 38+80=118px, and the
@@ -1073,9 +1139,14 @@ body.paused .wild-scene *::after {
   text-align: center;
 }
 
+/* Wraps rather than overflowing: a VS Code sidebar narrows well past the four balls plus
+   Run, and without this the Run button was simply clipped off the right edge — the one
+   control that costs nothing to use, unreachable. */
 .ball-rack {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 6px;
 }
 .ball-rack .ball {
@@ -1213,11 +1284,12 @@ body.paused .wild-scene *::after {
   image-rendering: pixelated;
   display: block;
 }
-/* A price the wallet cannot cover, told by the price itself rather than only by a grey button. */
+/* A price the wallet cannot cover, told by the price itself rather than only by a grey button.
+   Dimmed, never struck through: a line through a price reads as a discount everywhere else on
+   the internet, which is the opposite of what it means here. */
 .row .price.cant {
-  opacity: 0.45;
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
+  opacity: 0.5;
+  font-style: italic;
 }
 
 /* The core's hatch/evolve/graduate window (4-6s): the subject pops and sparkles where you are
@@ -1476,8 +1548,62 @@ body.paused .stage.celebrate img {
 body.compact {
   padding: 8px;
 }
+/* Buttons in a row, under their own heading — they used to sit flush against the trainer grid
+   and read as part of it. */
+.save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 body.compact nav.tabs {
   display: none;
+}
+/* The compact card's way into the game: it can report the wild queue but not resolve it. */
+.wild-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.wild-strip:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+.wild-strip:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.wild-strip img {
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
+  flex: none;
+}
+.wild-strip .body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.wild-strip .title {
+  font-weight: 600;
+}
+.wild-strip .desc {
+  opacity: 0.7;
+  font-size: 0.92em;
+}
+.wild-strip .codicon {
+  opacity: 0.6;
+  flex: none;
 }
 body.compact .hero {
   grid-template-columns: auto 1fr;

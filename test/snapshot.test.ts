@@ -190,8 +190,39 @@ describe('buildSnapshot', () => {
           { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' as const },
         ],
       })
-      expect(snapshot.tooltipMarkdown).toContain('5-hour session — 91%')
-      expect(snapshot.tooltipMarkdown).toContain('Weekly — 37%')
+      expect(snapshot.tooltipMarkdown).toContain('| 🟡 5-hour session | ███████░ | 91% |')
+      expect(snapshot.tooltipMarkdown).toContain('| 🟢 Weekly | ███░░░░░ | 37% |')
+    })
+
+    // `severity` and `percent` used to be carried on every row and then ignored here, so the
+    // hover showed a 99% window exactly like a 3% one. The dot and the bar are the caller's
+    // numbers rendered, never a second set of thresholds decided here.
+    it('shows each window at its own severity, and the bar fills with the percentage', () => {
+      const of = (percent: number, severity: 'normal' | 'warn' | 'crit') =>
+        buildSnapshot([claude([entry(NOW, 10)])], {
+          now: NOW,
+          limitRows: [{ label: 'Weekly', value: `${percent}%`, percent, severity }],
+        }).tooltipMarkdown
+
+      expect(of(3, 'normal')).toContain('| 🟢 Weekly | ░░░░░░░░ | 3% |')
+      expect(of(80, 'warn')).toContain('| 🟡 Weekly | ██████░░ | 80% |')
+      expect(of(99, 'crit')).toContain('| 🔴 Weekly | ████████ | 99% |')
+      // A window can be reported past its own ceiling; the bar must fill, not overflow the cell.
+      expect(of(140, 'crit')).toContain('| 🔴 Weekly | ████████ | 140% |')
+    })
+
+    // A hover table is one stray character from collapsing, and neither a provider name read off
+    // disk nor `claudeLimitEntry`'s passthrough branch is ours to trust.
+    it('escapes a pipe in a window or provider name instead of splitting the row', () => {
+      const tooltip = buildSnapshot(
+        [{ providerID: 'x', displayName: 'a|b', entries: [entry(NOW, 10)] }],
+        {
+          now: NOW,
+          limitRows: [{ label: 'w|k', value: '9%', percent: 9, severity: 'normal' }],
+        },
+      ).tooltipMarkdown
+      expect(tooltip).toContain('| a\\|b |')
+      expect(tooltip).toContain('w\\|k')
     })
 
     it('carries the rows on the snapshot, so a re-render keeps them', () => {
@@ -222,6 +253,167 @@ describe('buildSnapshot', () => {
       expect(tooltip).toContain('(command:tokendex.refresh)')
       expect(tooltip).toContain('(command:tokendex.open)')
       expect(tooltip).toContain('(command:tokendex.showOutput)')
+    })
+
+    // The host's `isTrusted.enabledCommands` allowlist is exactly these three. A fourth
+    // `command:` link would render as dead text, which is worse than not offering it.
+    it('links to no command outside the host allowlist', () => {
+      const tooltip = buildSnapshot([claude([entry(NOW, 10)])], {
+        now: NOW,
+        companion: { ...egg, wildCount: 4, wildTooltip: '4 wild Pokémon are waiting' },
+      }).tooltipMarkdown
+      const linked = [...tooltip.matchAll(/command:([\w.]+)/g)].map((m) => m[1])
+      expect(new Set(linked)).toEqual(
+        new Set(['tokendex.refresh', 'tokendex.open', 'tokendex.showOutput']),
+      )
+    })
+
+    // [trigger branch] A queue of wild encounters sat unnoticed for five days behind a badge on a
+    // collapsed activity bar. The hover is the surface that is always one mouse-move away, so it
+    // has to say so — and the line has to be actionable, not just informative.
+    describe('the wild queue', () => {
+      const waiting = (wildCount: number, wildTooltip: string) =>
+        buildSnapshot([claude([entry(NOW, 10)])], {
+          now: NOW,
+          companion: { ...egg, wildCount, wildTooltip },
+        }).tooltipMarkdown
+
+      it('announces the encounters and links to the panel that can act on them', () => {
+        const tooltip = waiting(12, '12 wild Pokémon are waiting')
+        expect(tooltip).toContain('🌿 [**12 wild Pokémon are waiting**](command:tokendex.open)')
+      })
+
+      // The wording is localised by the worker and arrives ready; re-deriving it here would be a
+      // second source of truth, and an English one at that.
+      it('repeats the localised wording it was given rather than composing its own', () => {
+        expect(waiting(3, '野生のポケモンが3匹待っています')).toContain('野生のポケモンが3匹待っています')
+      })
+
+      // The count is the fact; the sentence is decoration. A snapshot built before the worker
+      // filled the text in must still tell the player something is out there.
+      it('still reports the count when the localised text has not arrived', () => {
+        expect(waiting(2, '')).toContain('🌿 [**× 2**](command:tokendex.open)')
+      })
+
+      it('says nothing when the queue is empty', () => {
+        expect(waiting(0, '')).not.toContain('🌿')
+      })
+
+      it('says nothing when there is no companion at all', () => {
+        expect(buildSnapshot([claude([entry(NOW, 10)])], { now: NOW }).tooltipMarkdown).not.toContain(
+          '🌿',
+        )
+      })
+    })
+
+    // A ragged bullet list per provider does not line its numbers up, and comparing the tools is
+    // the only reason to list them together.
+    describe('the per-provider table', () => {
+      // Earlier today but outside the trailing block, so neither provider reports a burn rate:
+      // the burn column is a separate branch and has to be entered deliberately.
+      const earlier = new Date(2026, 6, 15, 3).getTime()
+      const two = () => [
+        claude([entry(earlier, 182_500_000)]),
+        { providerID: 'codex', displayName: 'Codex', entries: [entry(earlier, 70_900_000, 'codex')] },
+      ]
+
+      it('aligns the providers in a table under localised headers', () => {
+        const tooltip = buildSnapshot(two(), { now: NOW, lang: 'en' }).tooltipMarkdown
+        expect(tooltip).toContain('| Tool | Today |')
+        expect(tooltip).toContain('| Claude Code | 182.5M |')
+        expect(tooltip).toContain('| Codex | 70.9M |')
+      })
+
+      // [trigger branch] The column is worth a third of the table's width, so it only appears
+      // when some provider is actually burning — same rule as the panel's own breakdown.
+      it('adds the burn column only when a provider is burning', () => {
+        expect(buildSnapshot(two(), { now: NOW }).tooltipMarkdown).not.toContain('/min')
+        const burning = buildSnapshot([claude([entry(NOW - 60_000, 600_000)])], { now: NOW })
+        expect(burning.tooltipMarkdown).toContain('/min')
+      })
+
+      // Ten supported CLIs, eight of them idle, would turn a hover card into a dashboard.
+      it('omits the tools that did nothing today', () => {
+        const tooltip = buildSnapshot(
+          [
+            claude([entry(NOW, 10)]),
+            { providerID: 'gemini', displayName: 'Gemini', entries: [] },
+            {
+              providerID: 'codex',
+              displayName: 'Codex',
+              entries: [entry(new Date(2026, 6, 2, 9).getTime(), 900, 'codex')],
+            },
+          ],
+          { now: NOW },
+        ).tooltipMarkdown
+        expect(tooltip).toContain('Claude Code')
+        expect(tooltip).not.toContain('Gemini')
+        expect(tooltip).not.toContain('Codex') // used this month, but not today
+      })
+
+      // The table header is the only thing left when every tool is idle, and a header over
+      // nothing reads as a failed scan.
+      it('drops the table entirely when nothing ran today', () => {
+        const tooltip = buildSnapshot([claude([])], { now: NOW, lang: 'en' }).tooltipMarkdown
+        expect(tooltip).not.toContain('| Tool |')
+      })
+    })
+
+    // `progress` was on the snapshot and unused: the hover said "21.7M to next evolution" and
+    // left the player to guess whether that was most of the way or none of it.
+    describe('the companion progress bar', () => {
+      const raised = (progress: number) =>
+        buildSnapshot([claude([entry(NOW, 10)])], {
+          now: NOW,
+          companion: {
+            state: 'working' as const,
+            name: 'Charmeleon',
+            speciesID: 5,
+            isShiny: false,
+            progress,
+            toNextText: '21.7M to next evolution',
+            stageText: 'Stage 2 / 3',
+            dexCount: 12,
+            spendableTokens: 1_240_000,
+            wildCount: 0,
+            wildTooltip: '',
+          },
+        }).tooltipMarkdown
+
+      it('fills with the progress through the current form', () => {
+        expect(raised(0)).toContain('░░░░░░░░ · 21.7M to next evolution')
+        expect(raised(0.5)).toContain('████░░░░ · 21.7M to next evolution')
+        expect(raised(1)).toContain('████████ · 21.7M to next evolution')
+      })
+
+      it('gives the egg the same bar next to its own emoji', () => {
+        const tooltip = buildSnapshot([claude([entry(NOW, 10)])], {
+          now: NOW,
+          companion: { ...egg, progress: 0.42 },
+        }).tooltipMarkdown
+        expect(tooltip).toContain('🥚 ███░░░░░ · 3M to hatch')
+      })
+
+      // The species line loads before its stage does, and ` — ` with nothing after it reads as a
+      // rendering bug.
+      it('drops the stage separator while the stage is still unknown', () => {
+        const tooltip = buildSnapshot([claude([entry(NOW, 10)])], {
+          now: NOW,
+          companion: {
+            state: 'idle' as const,
+            name: 'Charmander',
+            isShiny: false,
+            progress: 0.1,
+            toNextText: '1M to next',
+            dexCount: 1,
+            spendableTokens: 0,
+            wildCount: 0,
+            wildTooltip: '',
+          },
+        }).tooltipMarkdown
+        expect(tooltip).toContain('**Charmander**\n')
+        expect(tooltip).not.toContain('**Charmander** — ')
+      })
     })
   })
 

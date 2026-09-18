@@ -261,7 +261,9 @@ const STRINGS = {
     `次の進化先は不明`,
     `Próxima evolución desconocida`,
   ],
-  eggIncubating: [`🥚 부화 준비 중`, `🥚 Incubating`, `🥚 孵化の準備中`, `🥚 Incubando`],
+  // No 🥚 in the word: every surface that shows this label already draws an egg next to it
+  // (the panel's scene, the compact card's portrait), so the emoji read as two eggs.
+  eggIncubating: [`부화 준비 중`, `Incubating`, `孵化の準備中`, `Incubando`],
   dexEmptyTitle: [
     `아직 잡은 포켓몬이 없어요!`,
     `No Pokémon caught yet!`,

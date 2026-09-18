@@ -16,6 +16,7 @@ import type {
   PanelBagItem,
   PanelDev,
   PanelDexEntry,
+  PanelDexFilter,
   PanelDexSpecies,
   PanelShopItem,
   PanelState,
@@ -30,6 +31,7 @@ import {
   FreshEgg,
   ITEM_KINDS,
   Pokeball,
+  RARITIES,
   currentSpeciesID,
   itemEmoji,
   itemIsPassive,
@@ -47,7 +49,7 @@ import {
   ownedItems,
 } from '../companion/shop.js'
 import { spendableBalance } from '../companion/ledger.js'
-import { dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
+import { dexCount, dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
 import { catchChance, encounterThresholdFor, tokensToNextEncounter } from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
 import { todayKey } from '../usage/entry.js'
@@ -166,6 +168,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       finalID: e.finalID,
       name: entryName(e, lang, line),
       isShiny: e.isShiny,
+      rarity: e.rarity,
       rarityText: D.rarityLabel(lang, e.rarity),
       isActive: e.id === activeID,
       isWild: e.source === 'wild',
@@ -175,6 +178,19 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     }
     return row
   })
+
+  // Rarity chips over the catch log. The log is ordered by time because it is a record, so
+  // narrowing is what replaced rarity as its sort key — this is the filter that comment always
+  // meant, and `dexCount` is the counter written for it. A tier with nothing in it is left out
+  // rather than shown as a zero: an empty chip is a control that does nothing.
+  const dexLogFilters: PanelDexFilter[] = [
+    { id: 'all', label: D.dexFilterAllLabel(lang), count: dexLog.length },
+    ...RARITIES.map((rarity) => ({
+      id: rarity,
+      label: D.rarityLabel(lang, rarity),
+      count: dexCount(state, line, rarity),
+    })).filter((chip) => chip.count > 0),
+  ]
 
   const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => ({
     id: sp.id,
@@ -213,7 +229,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       return row
     }),
     waitingText: D.wildBadgeTooltip(lang, state.wild.length),
-    emptyText: D.wildEmptyText(lang, compact(toNext)),
+    nextText: D.wildNextEncounterText(lang, compact(toNext)),
     progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
     balls: BALL_KINDS.map((kind) => {
       const ball: PanelWild['balls'][number] = {
@@ -258,6 +274,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     bag,
     dexSpecies: species,
     dexLog,
+    dexLogFilters,
     wild,
     trainerID: trainerIDOrDefault(state.trainerID),
     trainers: [...TRAINER_IDS],

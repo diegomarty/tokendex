@@ -14,7 +14,14 @@ import type { DailyUsage, PeriodUsage } from './models.js'
 import type { AppLanguage, CompanionStateKind } from './companion/model.js'
 import { stillSpriteURL } from './companion/model.js'
 import { s } from './i18n/strings.js'
-import { statusEgg, statusOpenPanel, tooltipMonth, tooltipToday } from './i18n/dispatch.js'
+import {
+  providerColumn,
+  statusEgg,
+  statusOpenPanel,
+  tokensNoun,
+  tooltipMonth,
+  tooltipToday,
+} from './i18n/dispatch.js'
 import { type Entry, activeBlock, daily, entryTotal, monthKey, period, todayKey } from './usage/entry.js'
 
 export const SNAPSHOT_SCHEMA = 1
@@ -244,6 +251,37 @@ const MOOD_ICON: Record<CompanionStateKind, string> = {
   levelUp: '$(star-full)',
 }
 
+/** Cells in the hover's little unicode bars. Eight stays narrower than a long species name. */
+const BAR_CELLS = 8
+
+/**
+ * A proportion is read faster than a number is, and the hover is read at a glance. Block elements
+ * rather than geometric shapes because they are the glyphs least likely to fall back to another
+ * font mid-bar, which is what makes a bar look broken.
+ */
+function bar(fraction: number): string {
+  const filled = Math.max(0, Math.min(BAR_CELLS, Math.round(fraction * BAR_CELLS)))
+  return '█'.repeat(filled) + '░'.repeat(BAR_CELLS - filled)
+}
+
+/**
+ * A pipe inside a provider or window name would split the cell and collapse the whole table.
+ * Names reach here from disk and from `claudeLimitEntry`'s passthrough branch, so neither is
+ * ours to trust.
+ */
+const cell = (text: string): string => text.replaceAll('|', '\\|')
+
+/**
+ * The severity the caller already decided, as a glyph. Re-deriving it here from `percent` would
+ * be a second set of thresholds, and the day they drift the hover disagrees with the status bar's
+ * own colour.
+ */
+const SEVERITY_DOT: Record<LimitRow['severity'], string> = {
+  normal: '🟢',
+  warn: '🟡',
+  crit: '🔴',
+}
+
 function tooltipFor(args: {
   providers: ProviderReport[]
   totals: UsageSnapshot['totals']
@@ -251,35 +289,65 @@ function tooltipFor(args: {
   locale: string | undefined
   lang: AppLanguage
   companion: CompanionView | undefined
-  limitRows: { label: string; value: string }[]
+  limitRows: LimitRow[]
 }): string {
   const { providers, totals, now, locale, lang, companion, limitRows } = args
   const lines: string[] = ['**Tokendex**', '']
   // Localised rather than hard-coded: the companion's own lines arrive translated, so a fixed
   // language here would put two languages inside one tooltip.
   lines.push(
-    `${tooltipToday(lang)} · **${grouped(totals.todayTokens, locale)}** tokens · ${cost(totals.todayCost)}`,
+    `${tooltipToday(lang)} · **${grouped(totals.todayTokens, locale)}** ${tokensNoun(lang)} · ${cost(totals.todayCost)}`,
   )
   lines.push(
-    `${tooltipMonth(lang)} · **${grouped(totals.monthTokens, locale)}** tokens · ${cost(totals.monthCost)}`,
+    `${tooltipMonth(lang)} · **${grouped(totals.monthTokens, locale)}** ${tokensNoun(lang)} · ${cost(totals.monthCost)}`,
   )
-  lines.push('')
 
-  for (const p of providers) {
-    const todayTokens = p.today?.totalTokens ?? 0
-    const burn =
-      p.tokensPerMinute !== undefined && p.tokensPerMinute > 0
-        ? ` · ${compact(Math.round(p.tokensPerMinute))}/min`
-        : ''
+  // Near the top and on a line of its own. Waiting encounters are the game's active loop, and
+  // their only other announcement is a badge on an activity bar that is usually collapsed — a
+  // queue sat there unnoticed for five days. The hover is always one mouse-move away, so it is
+  // the surface that has to say it. The count and its wording arrive already localised; this
+  // only places them, and links to the one screen that can act on them.
+  if (companion !== undefined && companion.wildCount > 0) {
+    const waiting = companion.wildTooltip === '' ? `× ${companion.wildCount}` : companion.wildTooltip
+    lines.push('')
+    lines.push(`🌿 [**${waiting}**](command:tokendex.open)`)
+  }
+
+  // Only the tools that ran today. Ten providers with eight zeroes is a dashboard, and this has
+  // to stay small enough to read in a popup; the month total is already on the line above.
+  const active = providers.filter((p) => (p.today?.totalTokens ?? 0) > 0 || (p.tokensPerMinute ?? 0) > 0)
+  if (active.length > 0) {
+    // A table, not a bullet list: the reason to show several providers at once is to compare
+    // them, and ragged text defeats that. `/min` stays untranslated, as in the panel's own
+    // breakdown, and its column disappears when nothing is burning.
+    const anyBurn = active.some((p) => (p.tokensPerMinute ?? 0) > 0)
+    lines.push('')
     lines.push(
-      `- **${p.displayName}** — ${tooltipToday(lang).toLowerCase()} ${compact(todayTokens)}${burn}`,
+      `| ${cell(providerColumn(lang))} | ${cell(tooltipToday(lang))} |${anyBurn ? ' /min |' : ''}`,
     )
+    lines.push(`| --- | ---: |${anyBurn ? ' ---: |' : ''}`)
+    for (const p of active) {
+      const burn =
+        p.tokensPerMinute !== undefined && p.tokensPerMinute > 0
+          ? compact(Math.round(p.tokensPerMinute))
+          : '·'
+      lines.push(
+        `| ${cell(p.displayName)} | ${compact(p.today?.totalTokens ?? 0)} |${anyBurn ? ` ${burn} |` : ''}`,
+      )
+    }
   }
 
   if (limitRows.length > 0) {
     lines.push('')
-    lines.push(`**${s(lang, 'limitsOfficial')}**`)
-    for (const row of limitRows) lines.push(`- ${row.label} — ${row.value}`)
+    // The section title doubles as the table's first header cell: a heading plus a header row
+    // would spend two of the hover's few lines saying the same thing.
+    lines.push(`| **${cell(s(lang, 'limitsOfficial'))}** | | |`)
+    lines.push('| --- | --- | ---: |')
+    for (const row of limitRows) {
+      lines.push(
+        `| ${SEVERITY_DOT[row.severity]} ${cell(row.label)} | ${bar(row.percent / 100)} | ${cell(row.value)} |`,
+      )
+    }
   }
 
   if (companion !== undefined) {
@@ -291,11 +359,14 @@ function tooltipFor(args: {
     if (companion.state !== 'egg' && companion.speciesID !== undefined) {
       lines.push(`![](${stillSpriteURL(companion.speciesID, companion.isShiny)})`)
     }
-    lines.push(
-      companion.state === 'egg'
-        ? `🥚 ${companion.toNextText}`
-        : `**${label}**${companion.isShiny ? ' ✨' : ''} — ${companion.stageText ?? ''} · ${companion.toNextText}`,
-    )
+    if (companion.state === 'egg') {
+      lines.push(`🥚 ${bar(companion.progress)} · ${companion.toNextText}`)
+    } else {
+      // The stage is dropped rather than rendered as a dangling separator while it loads.
+      const stage = companion.stageText === undefined ? '' : ` — ${companion.stageText}`
+      lines.push(`**${label}**${companion.isShiny ? ' ✨' : ''}${stage}`)
+      lines.push(`${bar(companion.progress)} · ${companion.toNextText}`)
+    }
     lines.push(
       `${s(lang, 'dexTitle')} ${companion.dexCount} · ${compact(companion.spendableTokens)} ${s(lang, 'spendableTokens').toLowerCase()}`,
     )

@@ -46,9 +46,23 @@
   session is not thrown away and re-parsed on the next launch.
 - Turning `tokendex.devMode` off now stops the `dist` watcher instead of leaving it running
   until the window is reloaded.
+- A Pokédex entry's badges are escaped once rather than twice, so a translation containing an
+  apostrophe or an ampersand cannot render as `&amp;#39;`.
 
 ### Added
 
+- **The compact card finally mentions the wild queue.** `tokendex.companionLocation` defaults
+  to the Explorer, so the compact card is the surface most people actually look at — and it
+  said nothing at all about wild Pokémon, which is how a queue sits full for days without
+  anyone noticing. It now carries a row with the Pokémon on stage and how many are waiting,
+  and opens the full panel when clicked.
+- **The Pokédex can be searched.** 649 cells is roughly 217 rows in a sidebar, so finding one
+  entry meant scrolling past everything else. There is now a search field (a name, or a number
+  — a numeric query matches locked entries too, so you can look up #025 before you have ever
+  seen it) and an "owned only" toggle.
+- **The catch log can be narrowed by rarity.** Chips with per-tier counts, which is the filter
+  `dexView`'s own comment claimed existed: the counter written for it (`dexCount`) had been
+  sitting unused since the log stopped sorting by rarity.
 - **The egg pre-rolls its species.** `pendingHatchID` was documented as removing the network
   round trip from the hatch moment but nothing ever wrote it. Past the halfway mark the next
   species is chosen and its evolution line warmed, so hatching no longer stalls the scan the
@@ -56,8 +70,49 @@
 
 ### Changed
 
+- **The status bar's hover card was rebuilt.** It now leads with the wild queue (a link
+  straight into the panel), lays the per-tool numbers out as an aligned table instead of a
+  ragged bullet list, and draws each limit window and the companion's progress as a bar with a
+  severity dot — `percent`, `severity` and `progress` were all on the snapshot already and all
+  ignored. A guard test pins every `command:` link in it to the host's three-command allowlist.
+- **The panel renders only the tab you are looking at.** All six sections were rebuilt on every
+  state push, so a refresh re-parsed the Pokédex's 649 cells for a tab nobody had open.
+  Measured on the Home tab: 2,222 DOM nodes and 684 images before, 108 and 5 after.
+- **The panel is navigable by screen reader.** The tab strip is a real `tablist` with `tab`
+  roles, `aria-controls` and a roving tabindex (`aria-selected` on a bare button was not just
+  useless, it was invalid); every progress bar carries `role="progressbar"` and its value; and
+  a wild Pokémon arriving is announced through a live region that outlives the repaint.
+- The word "tokens" in the hover card was hard-coded in English in all four languages — a
+  Japanese user read `今日 · 253,400,000 tokens`.
+- Wild Pokémon no longer overflow the ball rack: at sidebar widths the Run button was clipped
+  off the right edge, which is the one control that costs nothing to use.
+- The tab count badge is anchored to its icon. In an editor tab each tab is ~180px wide, so a
+  badge pinned to the button's right edge floated halfway to the next icon.
+- Every tab is reachable from the keyboard again. The tab strip gained a roving tabindex when
+  it became a real ARIA tablist, which without arrow keys left five of the six tabs unreachable
+  — half a mechanism is worse than neither. Arrows (and Home/End) now walk it, wrapping, with
+  the panel following focus.
+- The Pokédex search no longer breaks IME input. Rebuilding the field on every keystroke
+  destroyed the composition with it, so in Korean and Japanese — two of the four languages this
+  ships in — a name could not be typed at all.
+- A tab painted before a ball was thrown is repainted after it lands. The state deferred during
+  the animation was applied without invalidating anything, so the Pokédex could be missing the
+  catch and the Bag still showing the spent ball until the next scan that differed.
 - Closing a window no longer rewrites the whole usage cache when nothing was parsed: the
   shutdown flush skips the throttle, not the "is there anything to write".
+- High contrast themes get their border back: the tab count badge was a black pill on a black
+  editor background (only the white number survived, reading as a stray digit beside the icon)
+  and buttons had no edge at all. Both now carry `contrastBorder`, which only high contrast
+  themes define, so nothing changes elsewhere.
+- The next-encounter line is one line again. It still opened by announcing the empty state —
+  copy from when it was a standalone paragraph — which the empty scene above it already shows,
+  and beside a bar with its own percentage that sentence wrapped at sidebar widths. It now
+  reads `1.2M to the next encounter`, phrased like the companion's own `to next evolution`.
+- An unaffordable price is dimmed rather than struck through — a line through a price reads as
+  a discount everywhere else.
+- Settings groups the save buttons under their own heading instead of leaving them flush
+  against the trainer roster, and the egg screen's two progress bars are one component rather
+  than two shapes for two meanings.
 - `src/core/models.ts` no longer carries a second copy of the official-limit domain or the
   ccusage report parsers the port replaced. `src/core/limits/models.ts` is the one limits
   model; what remains is the aggregate shapes the usage layer shares.

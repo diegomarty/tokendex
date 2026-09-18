@@ -98,12 +98,27 @@ export interface PanelDexEntry {
   finalID: number
   name: string
   isShiny: boolean
+  /** Style token (`common`…`legendary`), never shown as text — `rarityText` is the label. */
+  rarity: string
   rarityText: string
   caughtText?: string
   /** The Pokémon currently being raised, pinned at the top. */
   isActive: boolean
   /** Caught from a wild encounter rather than raised to its final form. */
   isWild: boolean
+}
+
+/**
+ * One rarity chip over the catch log.
+ *
+ * The log is ordered by time because it is a record, so rarity stopped being its sort key —
+ * narrowing is what replaces it. Counts come from the core: the webview shows what it is given.
+ */
+export interface PanelDexFilter {
+  /** `all`, or a rarity token matching `PanelDexEntry.rarity`. */
+  id: string
+  label: string
+  count: number
 }
 
 /** One queued wild encounter, ready to draw. */
@@ -142,9 +157,9 @@ export interface PanelWild {
   encounters: PanelWildEncounter[]
   /** Home's banner line: "3 wild Pokémon are waiting". */
   waitingText: string
-  /** Shown when the queue is empty: "No wild Pokémon right now — 1.2M tokens to the next." */
-  emptyText: string
-  /** 0..100 toward the next encounter, for the empty state's bar. */
+  /** Label on the progress bar toward the next encounter: "1.2M to the next encounter". */
+  nextText: string
+  /** 0..100 toward the next encounter, the bar that label sits on. */
   progressPercent: number
   balls: PanelBallOption[]
   /** Shown under the ball rack when every count is zero. */
@@ -212,6 +227,14 @@ export interface PanelStrings {
   shopEggs: string
   /** Home's empty state when no AI CLI usage has been found yet. */
   noUsage: string
+  /** Pokédex browsing: the search field, the owned-only toggle and their empty state. */
+  dexSearch: string
+  dexOwnedOnly: string
+  dexNoMatches: string
+  /** Accessible name of the detail card's dismiss button, which is an icon. */
+  close: string
+  /** Heading over save export/import in Settings. */
+  saveSection: string
 }
 
 /**
@@ -247,6 +270,8 @@ export interface PanelState {
   dexSpecies: PanelDexSpecies[]
   /** Chronological catch log. */
   dexLog: PanelDexEntry[]
+  /** Rarity chips over the catch log, counts included. */
+  dexLogFilters: PanelDexFilter[]
   /** The Wild tab. */
   wild: PanelWild
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
@@ -258,7 +283,7 @@ export interface PanelState {
   strings: PanelStrings
   /** Official limit windows, empty until a provider answers. */
   limits: PanelLimit[]
-  /** The refresh-interval picker; absent when the host did not say (the bench). */
+  /** The refresh-interval picker; absent until a request carries the host's setting. */
   refresh?: { seconds: number; options: { seconds: number; label: string }[] }
   /** Development surface, only when devMode is on. */
   dev?: PanelDev
@@ -279,3 +304,9 @@ export type PanelMessage =
   | { type: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { type: 'setRefreshInterval'; seconds: number }
   | { type: 'setTrainer'; trainerID: string }
+  /**
+   * Reveal the full panel. Sent by the compact card, which has no tab strip of its own: it can
+   * show that wild Pokémon are waiting but cannot resolve them, so the row that says so has to
+   * lead somewhere.
+   */
+  | { type: 'openPanel' }

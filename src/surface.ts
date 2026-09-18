@@ -27,6 +27,7 @@ export type PanelRequestKind =
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setRefreshInterval'; seconds: number }
+  | { kind: 'openPanel' }
 
 /** Every live surface, so a refresh reaches the sidebar and the editor tab in one call. */
 const surfaces = new Set<PanelSurface>()
@@ -137,6 +138,9 @@ export class PanelSurface {
         break
       case 'setRefreshInterval':
         this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })
+        break
+      case 'openPanel':
+        this.onRequest({ kind: 'openPanel' })
         break
     }
   }
