@@ -41,9 +41,15 @@
   --vscode-dropdown-background: #313131;
   --vscode-dropdown-foreground: #cccccc;
   --vscode-dropdown-border: #3c3c3c;
+  --vscode-badge-background: #616161;
+  --vscode-badge-foreground: #f8f8f8;
+  --vscode-textLink-foreground: #4daafc;
+  --vscode-textLink-activeForeground: #4daafc;
   --vscode-editorError-foreground: #f14c4c;
   --vscode-charts-blue: #3794ff;
   --vscode-charts-yellow: #d7ba7d;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-purple: #b180d7;
 }
 
 /* ---- Light Modern ---- */
@@ -61,9 +67,15 @@
   --vscode-dropdown-background: #ffffff;
   --vscode-dropdown-foreground: #3b3b3b;
   --vscode-dropdown-border: #cecece;
+  --vscode-badge-background: #cccccc;
+  --vscode-badge-foreground: #3b3b3b;
+  --vscode-textLink-foreground: #005fb8;
+  --vscode-textLink-activeForeground: #005fb8;
   --vscode-editorError-foreground: #e51400;
   --vscode-charts-blue: #1a85ff;
   --vscode-charts-yellow: #b89500;
+  --vscode-charts-green: #388a34;
+  --vscode-charts-purple: #652d90;
 }
 
 /* ---- High Contrast Dark. The one that exposes borders drawn with opacity instead of a token. ---- */
@@ -73,6 +85,9 @@
   --vscode-editorWidget-background: #0c141f;
   --vscode-panel-border: #6fc3df;
   --vscode-focusBorder: #f38518;
+  /* Defined by high contrast themes only. The panel's CSS falls back to `transparent`, so
+     leaving it out of the dark and light blocks above is what makes the bench honest here. */
+  --vscode-contrastBorder: #6fc3df;
   --vscode-button-background: #0078d4;
   --vscode-button-foreground: #ffffff;
   --vscode-button-hoverBackground: #026ec1;
@@ -81,7 +96,13 @@
   --vscode-dropdown-background: #000000;
   --vscode-dropdown-foreground: #ffffff;
   --vscode-dropdown-border: #6fc3df;
+  --vscode-badge-background: #000000;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-textLink-foreground: #21a6ff;
+  --vscode-textLink-activeForeground: #21a6ff;
   --vscode-editorError-foreground: #f48771;
   --vscode-charts-blue: #3794ff;
   --vscode-charts-yellow: #d7ba7d;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-purple: #b180d7;
 }
