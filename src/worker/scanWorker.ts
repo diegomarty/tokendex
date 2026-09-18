@@ -18,6 +18,7 @@ import {
   type ProviderReport,
   aggregateProviders,
   buildSnapshot,
+  todayTokensByProvider,
   totalsFor,
 } from '../core/snapshot.js'
 import { LocalUsageCache } from '../core/usage/cache.js'
@@ -120,9 +121,24 @@ export interface RenderRequest {
   type: 'render'
   locale?: string
   devMode?: boolean
+  /** The host's `tokendex.refreshInterval`, for the Settings picker. Sticky like the flag. */
+  refreshSeconds?: number
 }
 
-export type WorkerRequest = ScanRequest | PanelRequest | ActionRequest | RenderRequest
+/**
+ * Persist what is still buffered, and say when it is done.
+ *
+ * The usage cache throttles its writes to once a minute, so a window closed shortly after a
+ * scan that parsed something new would otherwise discard that work and re-parse it on the next
+ * launch. The host sends this from `deactivate`, bounded by a timeout — a flush queued behind a
+ * cold scan must never be what keeps a window open.
+ */
+export interface FlushRequest {
+  id: number
+  type: 'flush'
+}
+
+export type WorkerRequest = ScanRequest | PanelRequest | ActionRequest | RenderRequest | FlushRequest
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
@@ -132,6 +148,8 @@ export interface CelebrateBroadcast {
 
 export type ScanResponse =
   | { id: number; ok: true; snapshot: ReturnType<typeof buildSnapshot> }
+  /** Answer to a `flush`: everything buffered is on disk. */
+  | { id: number; ok: true; flushed: true }
   /** `extra` rides beside the panel on a throw reply — never inside `PanelState`, which is
    *  replayed to late-opening surfaces and would replay the animation. */
   | { id: number; ok: true; panel: PanelState; extra?: PanelThrowResult }
@@ -176,11 +194,29 @@ const limits = new LimitsPoller()
 const DEV_FILE = devJoin(ourData(), 'dev-state.json')
 const DEV_SNAPSHOT_FILE = devJoin(ourData(), 'dev-snapshot.json')
 let dev: DevState = freshDevState()
-let devLoaded = false
+/**
+ * The in-flight read, not a "loaded" flag. Same reason `LocalUsageCache.ensureLoaded` holds
+ * one: a flag flipped before the `await` lets a second caller run against the *fresh* dev
+ * state while the file is still being read, and a `saveDev()` on that path would then write
+ * the empty state over the user's offsets.
+ */
+let devLoading: Promise<void> | undefined
 
+/**
+ * Awaits the one read, then hands back the **current** state.
+ *
+ * Returning the memoised promise directly would resolve every later call with the object
+ * captured at first read, so a caller that wrote `const d = await loadDev()` would silently
+ * get pre-mutation offsets. Every call site happens to read the module variable today; this
+ * makes the signature tell the truth rather than relying on that.
+ */
 async function loadDev(): Promise<DevState> {
-  if (devLoaded) return dev
-  devLoaded = true
+  devLoading ??= readDev()
+  await devLoading
+  return dev
+}
+
+async function readDev(): Promise<void> {
   try {
     dev = {
       ...freshDevState(),
@@ -189,7 +225,6 @@ async function loadDev(): Promise<DevState> {
   } catch {
     dev = freshDevState()
   }
-  return dev
 }
 
 async function saveDev(): Promise<void> {
@@ -275,14 +310,12 @@ async function scan(locale: string | undefined) {
   let limitPercent: number | undefined
   let limitRows: LimitRow[] = []
   try {
-    const observed: Record<string, number> = {}
-    for (const p of providers) {
-      if (p.today !== undefined) observed[p.providerID] = p.today.totalTokens
-    }
     await loadDev()
-    const todayTokensByProvider = applyDevOffsets(observed, dev)
+    // Synthetic dev tokens ride on top of the real observation, so they travel the whole
+    // production pipeline (ledger, crediting, growth) instead of being written into the save.
+    const observed = applyDevOffsets(todayTokensByProvider(providers), dev)
     await companion.update({
-      todayTokensByProvider,
+      todayTokensByProvider: observed,
       todayDate: dev.dateOverride ?? todayKey(now),
       hasUsageData: providers.some((p) => p.entries > 0),
     })
@@ -647,6 +680,10 @@ const dispatch = createDispatcher<
   scan,
   applyAction,
   buildPanel,
+  // The companion store already saves on every change, so the usage cache — which throttles
+  // its writes — is the only thing that can still be holding work in memory. `flush`, not
+  // `save`: a window closed with nothing new parsed must not pay for a full rewrite.
+  flush: () => cache.flush(),
   post: (response) => parentPort?.postMessage(response),
 })
 

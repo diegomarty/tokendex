@@ -18,7 +18,7 @@ import type {
   Rarity,
   WildEncounter,
 } from '../companion/model.js'
-import { BALL_KINDS, PokemonBalance } from '../companion/model.js'
+import { BALL_KINDS, PokemonBalance, PokemonOdds } from '../companion/model.js'
 import { enqueueEncounter } from '../companion/encounters.js'
 
 export interface DevState {
@@ -26,9 +26,6 @@ export interface DevState {
   offsetByProvider: Record<string, number>
   /** Overrides the date fed to the ledger, for exercising the day-rollover branch. */
   dateOverride?: string
-  /** Forces the display state regardless of real burn rate. */
-  burnOverride?: 'idle' | 'normal' | 'fast' | 'blazing'
-  limitWarningOverride?: boolean
 }
 
 export function freshDevState(): DevState {
@@ -194,7 +191,7 @@ export function setNature(state: CompanionState, nature: PokemonNature): Compani
 export function setDittoDisguise(state: CompanionState, on: boolean): CompanionState {
   if (state.active === undefined) return state
   const active = { ...state.active, dittoRevealed: false }
-  if (on) active.dittoDisguise = 132
+  if (on) active.dittoDisguise = PokemonOdds.dittoSpeciesID
   else delete active.dittoDisguise
   return { ...state, active }
 }
@@ -203,5 +200,8 @@ export function setEggTier(state: CompanionState, tier: Rarity | undefined): Com
   const next: CompanionState = { ...state }
   if (tier === undefined) delete next.eggTier
   else next.eggTier = tier
+  // Same rule as `buyEgg`: a species pre-rolled under the old guarantee must not hatch under
+  // the new one, or the tier being tested is not the tier that gets honoured.
+  delete next.pendingHatchID
   return next
 }

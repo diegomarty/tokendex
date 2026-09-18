@@ -129,7 +129,7 @@ export class LocalUsageCache {
   private gemini: Record<string, Blob> = {}
   private grok: Record<string, Blob> = {}
   private incremental: Record<string, IncrementalCache> = {}
-  private loaded = false
+  private loading: Promise<void> | undefined
   private dirty = false
   private lastSave: number | undefined
   private saving: Promise<void> | undefined
@@ -424,10 +424,24 @@ export class LocalUsageCache {
 
   // MARK: - Persistence
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return
-    this.loaded = true
+  /**
+   * Loads the persisted snapshot once, and — the load-bearing half — makes every caller that
+   * arrives while that read is in flight wait for it.
+   *
+   * A boolean flipped before the `await` reads as equivalent and is not. `scan()` starts all
+   * ten providers with `Promise.all`, so the nine that follow the first would see "already
+   * loaded", run against empty maps, and write their freshly parsed blobs into the very
+   * objects this function is about to replace. The result was the cold parse this whole module
+   * exists to avoid — measured at ~30 s — happening on every single launch, silently.
+   *
+   * Holding the promise (rather than resetting it) also keeps the load to exactly one read.
+   */
+  private ensureLoaded(): Promise<void> {
+    this.loading ??= this.readSnapshot()
+    return this.loading
+  }
 
+  private async readSnapshot(): Promise<void> {
     let raw: Buffer
     try {
       raw = await fs.readFile(this.filePath)
@@ -490,6 +504,16 @@ export class LocalUsageCache {
         highWaterByPath: held.highWaterByPath,
       }
     }
+  }
+
+  /**
+   * Writes when there is something to write, ignoring the throttle. This is the shutdown path:
+   * `save()` on its own rewrites and re-gzips the whole snapshot even when the scan parsed
+   * nothing new, which is megabytes of JSON for no reason on every window close.
+   */
+  async flush(): Promise<void> {
+    if (!this.dirty) return
+    await this.save()
   }
 
   /** Writes when dirty, throttled to at most once a minute. */

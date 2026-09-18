@@ -11,6 +11,7 @@ import {
   type EvoNode,
   type MonState,
   PokemonBalance,
+  PokemonOdds,
   currentSpeciesID,
   evoFinalIDs,
   evoNodeWithID,
@@ -20,7 +21,14 @@ import {
 export type RNG = () => number
 
 export type GrowthEvent =
-  { kind: 'evolved'; toSpeciesID: number } | { kind: 'graduated' } | { kind: 'dittoRevealPending' }
+  | { kind: 'evolved'; toSpeciesID: number }
+  | { kind: 'graduated' }
+  /**
+   * The disguise dropped. It carries the species that was being impersonated because the
+   * state no longer holds it the instant the reveal lands, and the caller needs that name
+   * for the toast ("It was Ditto all along, disguised as Caterpie!").
+   */
+  | { kind: 'dittoRevealed'; disguisedAsSpeciesID: number }
 
 export interface GrowthResult {
   mon: MonState
@@ -130,6 +138,36 @@ export function normalizedEvolutionState(
   }
 }
 
+/**
+ * Drops the disguise: the companion *is* the Ditto it always was.
+ *
+ * Ditto has no evolutions, so the line collapses to a single form — and that is what keeps the
+ * economy honest. `totalForms = 1` makes `phaseThreshold` return the whole graduation total,
+ * while `usedAtStage` carries over untouched, so a revealed Ditto graduates for exactly what
+ * the line it was impersonating would have cost. Graduating on the spot would instead hand out
+ * a Pokédex entry at a third of the price.
+ *
+ * `rarity` is deliberately NOT changed to Ditto's own: it is what every threshold this
+ * Pokémon has already paid was computed against, and rewriting it mid-raise moves the
+ * goalposts in whichever direction the roll happened to fall.
+ *
+ * `baseID` becomes Ditto's. That is load-bearing twice over: it is what makes the caller
+ * refetch the evolution line (the disguise line does not contain species 132), and it is what
+ * keeps the disguise species out of `collectedFinals` at graduation — that line was never
+ * actually raised, so it must not bias future branch choices.
+ */
+export function revealedDitto(mon: MonState): MonState {
+  return {
+    ...mon,
+    baseID: PokemonOdds.dittoSpeciesID,
+    pathIDs: [PokemonOdds.dittoSpeciesID],
+    plannedPathIDs: [PokemonOdds.dittoSpeciesID],
+    stageIndex: 0,
+    totalForms: 1,
+    dittoRevealed: true,
+  }
+}
+
 /** Guard against a malformed tree spinning the evolution loop forever. */
 const MAX_EVOLUTION_STEPS = 50
 
@@ -161,16 +199,23 @@ export function applyUsage(
     )
     if (current.usedAtStage < threshold) break
 
-    const node = evoNodeWithID(line.tree, currentSpeciesID(current))
-    if (node === undefined) break
-
-    // A disguised Ditto can become a leaf after asset normalisation even though it hatched
-    // with several forms, so the reveal must come **before** the terminal graduation check —
-    // otherwise the disguise species graduates into the Pokédex by mistake.
+    // The reveal comes **before** anything that reads the loaded tree. Two reasons, and both
+    // have teeth: asset normalisation can turn a disguised multi-form line into a leaf, so a
+    // later check would graduate the disguise species into the Pokédex by mistake; and the
+    // revealed Ditto is not in the disguise line's tree at all, so a node lookup placed first
+    // would stall it here for ever.
     if (current.dittoDisguise !== undefined && !current.dittoRevealed) {
-      events.push({ kind: 'dittoRevealPending' })
+      const disguisedAsSpeciesID = currentSpeciesID(current)
+      current = revealedDitto(current)
+      events.push({ kind: 'dittoRevealed', disguisedAsSpeciesID })
+      // One reveal per pass: `line` still describes the disguise, so there is nothing here
+      // that could legitimately evolve or graduate a Ditto. Growth resumes once the caller
+      // has loaded Ditto's own line.
       break
     }
+
+    const node = evoNodeWithID(line.tree, currentSpeciesID(current))
+    if (node === undefined) break
 
     if (node.children.length === 0) {
       events.push({ kind: 'graduated' })

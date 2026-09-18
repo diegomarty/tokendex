@@ -9,7 +9,7 @@
 import { Worker } from 'node:worker_threads'
 import { join } from 'node:path'
 import * as vscode from 'vscode'
-import type { UsageSnapshot } from './core/snapshot.js'
+import { type UsageSnapshot, todayTokensByProvider } from './core/snapshot.js'
 import type {
   CelebrateBroadcast,
   ScanResponse,
@@ -37,13 +37,16 @@ import { devScenarioByID } from './core/dev/scenarios.js'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import { hostname, homedir } from 'node:os'
 import { ourData } from './core/appPaths.js'
-import { decodeCompanionState } from './core/companion/persistence.js'
+import { todayKey } from './core/usage/entry.js'
+import { parseCompanionState } from './core/companion/persistence.js'
 import {
   type SaveEnvelope,
   SaveTransferFailure,
   backupFileName,
   decodeSave,
   encodeSave,
+  pruneBackups,
+  rebasedForThisDevice,
   sanitized,
   suggestedFileName,
   summarize,
@@ -51,7 +54,7 @@ import {
 import type { AppLanguage, Rarity } from './core/companion/model.js'
 import { BALL_KINDS, ITEM_KINDS, Pokeball } from './core/companion/model.js'
 import { isTrainerID } from './core/companion/trainers.js'
-import { systemDefaultLanguage } from './core/companion/model.js'
+import { freshCompanionState, systemDefaultLanguage } from './core/companion/model.js'
 import { openPanelLabel, welcomeToast } from './core/i18n/dispatch.js'
 
 const DEFAULT_REFRESH_SECONDS = 120
@@ -118,18 +121,18 @@ export function activate(context: vscode.ExtensionContext): void {
         output?.warn(
           `the sidebar view is not registered yet (${error instanceof Error ? error.message : String(error)}) — relaunch the extension host; opening the editor tab instead`,
         )
-        GamePanel.show(context.extensionUri, (request) => void handlePanelRequest(request))
+        GamePanel.show(context.extensionUri, dispatchPanelRequest)
       }
     }),
     vscode.commands.registerCommand('tokendex.openInEditor', () => {
-      GamePanel.show(context.extensionUri, (request) => void handlePanelRequest(request))
+      GamePanel.show(context.extensionUri, dispatchPanelRequest)
     }),
     vscode.commands.registerCommand('tokendex.dev', () => void runDevScenario()),
     vscode.commands.registerCommand('tokendex.reloadWebview', () => reloadSurfaces()),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('tokendex.refreshInterval')) scheduleTimer()
       if (e.affectsConfiguration('tokendex.devMode')) {
-        watchBundles(context)
+        syncBundleWatcher(context)
         // The Dev tab exists only in a panel state built with devMode on, so the panel has to be
         // rebuilt for the toggle to show. Without this it appears at the next timer tick, up to
         // two minutes later, and the setting reads as having done nothing.
@@ -138,7 +141,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   )
 
-  view = new GameViewProvider(context.extensionUri, (request) => void handlePanelRequest(request))
+  view = new GameViewProvider(context.extensionUri, dispatchPanelRequest)
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(VIEW_ID, view, {
       // The state is small and replayed on `ready`, so holding the webview alive while the
@@ -154,7 +157,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ...[AMBIENT_VIEW_ID, 'tokendex.companionBar', 'tokendex.companionPanel'].map((id) =>
       vscode.window.registerWebviewViewProvider(
         id,
-        new GameViewProvider(context.extensionUri, (request) => void handlePanelRequest(request), {
+        new GameViewProvider(context.extensionUri, dispatchPanelRequest, {
           compact: true,
         }),
         {
@@ -164,7 +167,8 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   )
 
-  watchBundles(context)
+  context.subscriptions.push({ dispose: stopBundleWatcher })
+  syncBundleWatcher(context)
   startWorker(context)
   scheduleTimer()
   void refresh(false)
@@ -187,32 +191,49 @@ function welcomeOnFirstRun(context: vscode.ExtensionContext): void {
   })
 }
 
-export function deactivate(): void {
+/**
+ * Bound on the shutdown flush. A flush queued behind a cold scan must never be what keeps a
+ * window open, and the cost of losing it is one re-parse on the next launch.
+ */
+const FLUSH_TIMEOUT_MS = 1_500
+
+export async function deactivate(): Promise<void> {
   stopTimer()
-  workerStopping = true
-  void worker?.terminate()
-  worker = undefined
+  // The usage cache throttles its writes to once a minute, so without this a window closed
+  // shortly after a scan that parsed something new discards that work — the cold parse the
+  // cache exists to avoid, paid again on the next launch.
+  await Promise.race([requestFlush(), new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS))])
+  await stopWorker()
 }
 
 // MARK: - Development bundle watcher
 
 let bundleWatcher: FSWatcher | undefined
+let bundleDebounce: NodeJS.Timeout | undefined
 
 /**
- * With `tokendex.devMode` on, a rebuilt `dist/webview.{js,css}` repaints an open panel by
- * itself: UI work then iterates at esbuild speed with no keystroke and no host restart.
+ * Starts or stops the `dist` watcher to match `tokendex.devMode`.
  *
- * The host's own bundles cannot be swapped under a running extension, so those only log a
- * reminder — silently doing nothing is what makes you debug a change that was never loaded.
+ * Both directions, and that is the point: the previous version only ever started one, so
+ * turning dev mode off left a watcher running against `dist` until the window was reloaded.
+ * Called on activation and from the configuration listener, so the setting is the only state
+ * that decides whether the watcher exists.
  */
-function watchBundles(context: vscode.ExtensionContext): void {
-  if (!devModeOn() || bundleWatcher !== undefined) return
+function syncBundleWatcher(context: vscode.ExtensionContext): void {
+  if (!devModeOn()) {
+    stopBundleWatcher()
+    return
+  }
+  if (bundleWatcher !== undefined) return
 
-  let timer: NodeJS.Timeout | undefined
   let webviewChanged = false
   let hostChanged = false
 
   try {
+    // With dev mode on, a rebuilt `dist/webview.{js,css}` repaints an open panel by itself: UI
+    // work then iterates at esbuild speed with no keystroke and no host restart. The host's own
+    // bundles cannot be swapped under a running extension, so those only log a reminder —
+    // silently doing nothing is what makes you debug a change that was never loaded.
     bundleWatcher = watch(join(context.extensionPath, 'dist'), (_event, file) => {
       const name = typeof file === 'string' ? file : ''
       if (name === '' || name.endsWith('.map')) return
@@ -221,8 +242,8 @@ function watchBundles(context: vscode.ExtensionContext): void {
       else return
 
       // One rebuild writes several files; debouncing keeps it to a single repaint.
-      if (timer !== undefined) clearTimeout(timer)
-      timer = setTimeout(() => {
+      if (bundleDebounce !== undefined) clearTimeout(bundleDebounce)
+      bundleDebounce = setTimeout(() => {
         if (webviewChanged) {
           reloadSurfaces()
           output?.info('dev: webview reloaded')
@@ -237,25 +258,28 @@ function watchBundles(context: vscode.ExtensionContext): void {
       }, 150)
     })
   } catch {
-    return // no dist yet, or a filesystem without watch support
+    bundleWatcher = undefined // no dist yet, or a filesystem without watch support
   }
+}
 
-  context.subscriptions.push({
-    dispose: () => {
-      if (timer !== undefined) clearTimeout(timer)
-      bundleWatcher?.close()
-      bundleWatcher = undefined
-    },
-  })
+function stopBundleWatcher(): void {
+  if (bundleDebounce !== undefined) clearTimeout(bundleDebounce)
+  bundleDebounce = undefined
+  bundleWatcher?.close()
+  bundleWatcher = undefined
 }
 
 // MARK: - Worker
 
 function startWorker(context: vscode.ExtensionContext): void {
   const workerPath = join(context.extensionPath, 'dist', 'scanWorker.js')
-  worker = new Worker(workerPath)
+  // Every handler below closes over `instance` rather than the module-level `worker`. A
+  // restart starts the replacement while the old thread is still winding down, and an exit
+  // handler that cleared whatever `worker` happened to hold would null the new one.
+  const instance = new Worker(workerPath)
+  worker = instance
 
-  worker.on('message', (response: ScanResponse | CelebrateBroadcast) => {
+  instance.on('message', (response: ScanResponse | CelebrateBroadcast) => {
     // Celebrations arrive outside the request/response ids: the game's peak moments as
     // toasts, each carrying a way into the panel.
     if ('celebrate' in response) {
@@ -272,7 +296,7 @@ function startWorker(context: vscode.ExtensionContext): void {
     resolve(response)
   })
 
-  worker.on('error', (error) => {
+  instance.on('error', (error) => {
     output?.error(`worker error: ${error.message}`)
     showError('the worker failed')
     // Reject everything waiting rather than leaving callers hanging forever.
@@ -280,8 +304,8 @@ function startWorker(context: vscode.ExtensionContext): void {
     pending.clear()
   })
 
-  worker.on('exit', (code) => {
-    worker = undefined
+  instance.on('exit', (code) => {
+    if (worker === instance) worker = undefined
     // `error` does not always precede an exit; anything still waiting must resolve here or
     // its caller awaits forever and `scanInFlight` would leak set.
     for (const [id, resolve] of pending)
@@ -326,9 +350,15 @@ const requestScan = (): Promise<ScanResponse> =>
     type: 'scan',
     locale: vscode.env.language,
     // Piggybacked on the request because the worker cannot read configuration. Sticky in the
-    // worker, so it also covers the action requests that trigger a scan.
+    // worker, so they also cover the action requests that trigger a scan — and carrying them
+    // on the scan too means the Settings picker is populated even when the first panel is
+    // built by an action rather than a render.
     encounterToasts: encounterToastsOn(),
+    refreshSeconds: refreshSeconds(),
   }))
+
+/** Asks the worker to persist what it still holds in memory. Sent once, from `deactivate`. */
+const requestFlush = (): Promise<ScanResponse> => send((id) => ({ id, type: 'flush' }))
 
 /** `tokendex.encounterNotifications`: 'rare' (the default — shiny/legendary only) or 'off'. */
 function encounterToastsOn(): boolean {
@@ -411,6 +441,20 @@ function parseEntryID(id: string): WorkerAction | undefined {
     return tier === undefined ? { action: 'buyEgg' } : { action: 'buyEgg', tier }
   }
   return undefined
+}
+
+/**
+ * The single entry point for everything a surface asks for.
+ *
+ * Nothing here may reject silently: these run detached from any await, so an unhandled
+ * rejection would leave the user with a button that does nothing and a log that says nothing.
+ */
+function dispatchPanelRequest(request: PanelRequestKind): void {
+  void handlePanelRequest(request).catch((error) => {
+    const detail = error instanceof Error ? error.message : String(error)
+    output?.error(`panel request "${request.kind}" failed: ${detail}`)
+    void vscode.window.showErrorMessage(`Tokendex: ${detail}`)
+  })
 }
 
 async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
@@ -582,6 +626,32 @@ async function runDevControl(id: string, value: string | undefined): Promise<voi
   await refresh(true)
 }
 
+/** Where this machine keeps the companion state the worker reads and writes. */
+function savePath(): string {
+  return join(ourData(), 'companion-state.json')
+}
+
+/**
+ * This machine's usage as the ledger sees it, taken from the last completed scan.
+ *
+ * Built from the same helper the worker feeds the ledger from, so an import anchors its
+ * baseline against exactly the providers a scan would credit. With no scan yet (`undefined`),
+ * `hasUsageData: false` hands the baseline decision back to the fresh-install path, which is
+ * the correct answer rather than a guess.
+ */
+function ledgerObservation(): {
+  todayTokensByProvider: Record<string, number>
+  todayDate: string
+  hasUsageData: boolean
+} {
+  return {
+    todayTokensByProvider:
+      lastSnapshot === undefined ? {} : todayTokensByProvider(lastSnapshot.providers),
+    todayDate: todayKey(Date.now()),
+    hasUsageData: lastSnapshot !== undefined,
+  }
+}
+
 /**
  * Copies the save file to a location the user picks.
  *
@@ -589,12 +659,19 @@ async function runDevControl(id: string, value: string | undefined): Promise<voi
  * state, and a second serialisation path here would be a second format to keep in step.
  */
 async function exportSave(): Promise<void> {
-  const source = join(ourData(), 'companion-state.json')
-  let raw: Buffer
+  let raw: string
   try {
-    raw = await fs.readFile(source)
+    raw = await fs.readFile(savePath(), 'utf8')
   } catch {
     void vscode.window.showWarningMessage('There is no save to export yet.')
+    return
+  }
+  // Parsed before the dialog: asking where to put a file we cannot produce wastes the user's
+  // time, and a corrupt save must say so rather than throwing into a detached promise.
+  const state = parseCompanionState(raw)
+  if (state === undefined) {
+    output?.error('export failed: the save file could not be parsed')
+    void vscode.window.showErrorMessage('Your save file could not be read, so it was not exported.')
     return
   }
 
@@ -605,22 +682,31 @@ async function exportSave(): Promise<void> {
   })
   if (target === undefined) return
 
-  const envelope = encodeSave(
-    sanitized(decodeCompanionState(JSON.parse(raw.toString('utf8')) as unknown)),
-    version(),
-    hostname(),
-    Date.now(),
-  )
-  await fs.writeFile(target.fsPath, envelope, 'utf8')
+  try {
+    const envelope = encodeSave(sanitized(state), version(), hostname(), Date.now())
+    await fs.writeFile(target.fsPath, envelope, 'utf8')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    output?.error(`export failed: ${detail}`)
+    void vscode.window.showErrorMessage(`The save could not be written: ${detail}`)
+    return
+  }
   void vscode.window.showInformationMessage(`Save exported to ${target.fsPath}`)
 }
 
 /**
  * Replaces this machine's save with an imported one.
  *
- * The previous state is backed up first, and the import is abandoned if that backup cannot be
- * written — the confirmation promises the old progress survives, and overwriting without
- * being able to keep that promise leaves the user with no way back.
+ * Three things have to hold, and each one has bitten:
+ *
+ *  - **The worker is stopped before the file is touched.** It holds the state in memory and
+ *    persists it at the end of every scan, so a scan finishing mid-import writes the
+ *    pre-import state straight back over the file — and the user is told the import worked.
+ *  - **The previous state is backed up**, and the import is abandoned if that backup cannot
+ *    be written: the confirmation promises the old progress survives.
+ *  - **The imported state is rebased onto this machine.** A save carries the *other* machine's
+ *    daily ledger; taking it verbatim credits this machine's whole day in one go at the next
+ *    scan, and hands the local UI the exporting machine's language.
  */
 async function importSave(): Promise<void> {
   const picked = await vscode.window.showOpenDialog({
@@ -657,37 +743,63 @@ async function importSave(): Promise<void> {
   )
   if (confirmed !== 'Replace') return
 
-  const target = join(ourData(), 'companion-state.json')
+  // Everything below owns the save file exclusively, which is why the worker goes first.
+  await stopWorker()
   try {
-    const previous = await fs.readFile(target)
-    await fs.writeFile(join(ourData(), backupFileName(Date.now())), previous)
-  } catch (error) {
-    // No previous save is fine; a failed backup is not.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      void vscode.window.showErrorMessage('The backup could not be written, so nothing was imported.')
-      return
+    const target = savePath()
+    let previous: string | undefined
+    try {
+      previous = await fs.readFile(target, 'utf8')
+    } catch (error) {
+      // No save yet is fine; anything else means we cannot promise a way back.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
-  }
 
-  await fs.mkdir(ourData(), { recursive: true })
-  await fs.writeFile(target, JSON.stringify(envelope.state), 'utf8')
-  // The worker holds the old state in memory, so it must be restarted to pick this up.
-  await restartWorker()
-  void vscode.window.showInformationMessage('Save imported.')
+    if (previous !== undefined) {
+      await fs.mkdir(ourData(), { recursive: true })
+      await fs.writeFile(join(ourData(), backupFileName(Date.now())), previous, 'utf8')
+    }
+
+    const current = parseCompanionState(previous ?? '') ?? freshCompanionState(vscode.env.language)
+    const rebased = rebasedForThisDevice(envelope.state, current, ledgerObservation())
+
+    await fs.mkdir(ourData(), { recursive: true })
+    await fs.writeFile(target, JSON.stringify(rebased), 'utf8')
+    await pruneBackups(ourData())
+    void vscode.window.showInformationMessage('Save imported.')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    output?.error(`import failed: ${detail}`)
+    void vscode.window.showErrorMessage(`Nothing was imported: ${detail}`)
+  } finally {
+    // Whatever happened above, the window must not be left without a worker.
+    await startWorkerAndRefresh()
+  }
 }
 
 function version(): string {
   return vscode.extensions.getExtension('diegomarty.tokendex')?.packageJSON?.version ?? '0.0.0'
 }
 
-async function restartWorker(): Promise<void> {
+/**
+ * Stops the worker and waits for it to be gone.
+ *
+ * Callers that are about to touch a file the worker owns — the save, above all — must await
+ * this **before** writing: the worker holds the companion state in memory and persists it at
+ * the end of every scan, so a scan finishing mid-import writes the pre-import state straight
+ * back over the file the user just chose.
+ */
+async function stopWorker(): Promise<void> {
+  const current = worker
+  if (current === undefined) return
+  workerStopping = true
+  worker = undefined
+  await current.terminate()
+}
+
+async function startWorkerAndRefresh(): Promise<void> {
   const context = extensionContext
   if (context === undefined) return
-  if (worker !== undefined) {
-    workerStopping = true
-    await worker.terminate()
-  }
-  worker = undefined
   startWorker(context)
   await refresh(true)
   if (anySurfaceOpen()) await handlePanelRequest({ kind: 'refresh' })

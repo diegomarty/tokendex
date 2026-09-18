@@ -32,6 +32,11 @@ export type DispatchRequest<Action> = BaseRequest &
     | { type: 'panel' }
     | { type: 'render' }
     /**
+     * Persist whatever is still held in memory, now. Queued like everything else, so it lands
+     * *after* the scan that may still be filling the cache rather than racing it.
+     */
+    | { type: 'flush' }
+    /**
      * `fromLastScan` re-renders from the last scan after applying the action, instead of
      * re-scanning. It exists for the latency-sensitive actions (a ball throw awaits this reply
      * to land its animation): the usage half genuinely did not change, and `buildPanel` reads
@@ -44,6 +49,7 @@ export type DispatchRequest<Action> = BaseRequest &
 export type DispatchResponse<Snapshot, Panel, Extra = never> =
   | { id: number; ok: true; snapshot: Snapshot }
   | { id: number; ok: true; panel: Panel; extra?: Extra }
+  | { id: number; ok: true; flushed: true }
   | { id: number; ok: false; error: string }
 
 export interface DispatcherDeps<Action, Snapshot, Panel, Extra = never> {
@@ -51,6 +57,8 @@ export interface DispatcherDeps<Action, Snapshot, Panel, Extra = never> {
   /** May return a result to ride the reply beside the panel (a throw's outcome). */
   applyAction: (action: Action) => Promise<Extra | undefined>
   buildPanel: (snapshot: Snapshot, locale: string | undefined, devMode: boolean) => Panel
+  /** Writes through whatever is buffered in memory. Answers the `flush` request. */
+  flush: () => Promise<void>
   post: (response: DispatchResponse<Snapshot, Panel, Extra>) => void
 }
 
@@ -62,6 +70,12 @@ export function createDispatcher<Action, Snapshot, Panel, Extra = never>(
 
   async function handle(message: DispatchRequest<Action>): Promise<void> {
     try {
+      if (message.type === 'flush') {
+        await deps.flush()
+        deps.post({ id: message.id, ok: true, flushed: true })
+        return
+      }
+
       // The action always applies first — reusing the last scan is about skipping the *disk
       // pass*, never about replying with pre-action state.
       let extra: Extra | undefined

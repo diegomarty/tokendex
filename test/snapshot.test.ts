@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { stillSpriteURL } from '../src/core/companion/model.js'
-import { SNAPSHOT_SCHEMA, aggregateProviders, buildSnapshot } from '../src/core/snapshot.js'
+import {
+  SNAPSHOT_SCHEMA,
+  aggregateProviders,
+  buildSnapshot,
+  todayTokensByProvider,
+} from '../src/core/snapshot.js'
 import type { Entry } from '../src/core/usage/entry.js'
 import { localDayKey } from '../src/core/usage/entry.js'
 
@@ -282,5 +287,31 @@ describe('aggregateProviders', () => {
       providers: aggregateProviders(sources, NOW),
     })
     expect(precomputed).toEqual(direct)
+  })
+})
+
+// Shared by the scan (which credits growth from it) and by a save import (which anchors its
+// baseline against it). The ledger treats "did not report" and "reported nothing" differently,
+// so the absent-versus-zero distinction below is the whole contract.
+describe('todayTokensByProvider', () => {
+  const reports = (now: number) =>
+    aggregateProviders(
+      [
+        claude([entry(now - 1000, 500)]),
+        { providerID: 'codex', displayName: 'Codex', entries: [entry(now - 86_400_000 * 3, 900)] },
+        { providerID: 'gemini', displayName: 'Gemini', entries: [] },
+      ],
+      now,
+    )
+
+  it('reports today only, and omits a provider that has nothing today', () => {
+    expect(todayTokensByProvider(reports(NOW))).toEqual({ claude_code: 500 })
+  })
+
+  it('matches what buildSnapshot reports for the same providers', () => {
+    const providers = reports(NOW)
+    const snapshot = buildSnapshot([], { now: NOW, providers })
+    const summed = Object.values(todayTokensByProvider(providers)).reduce((a, b) => a + b, 0)
+    expect(summed).toBe(snapshot.totals.todayTokens)
   })
 })

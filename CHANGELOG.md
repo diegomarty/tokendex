@@ -1,5 +1,57 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A disguised Ditto no longer freezes the companion.** The reveal emitted a growth event no
+  caller handled, so a Pokémon that hatched disguised (1 in 128 of common lines with two or
+  more forms) stopped dead at its first evolution threshold: no evolution, no graduation, for
+  any amount of usage, for ever. The reveal now happens — the companion becomes the Ditto it
+  always was, keeps its spend, and graduates into the Pokédex as Ditto for exactly what the
+  line it impersonated would have cost. The reveal toast the shipped copy already had finally
+  fires.
+- **The persisted usage cache is actually used on the first scan again.** `ensureLoaded`
+  flipped its "loaded" flag before awaiting the read, and the ten providers start together —
+  so every provider but the first ran against an empty cache and wrote its freshly parsed
+  blobs into maps the load then replaced. The cold parse the cache exists to avoid was being
+  paid on every launch. Measured on this machine's corpus: a worker restart went from
+  ~430 ms (identical to a cold start) to ~190 ms against ~900 ms cold.
+- **Importing a save no longer credits a whole day at once, or changes the UI language.** The
+  imported state was written verbatim, carrying the _other_ machine's daily ledger — so the
+  next scan counted this machine's entire day as new usage — and its language. The import is
+  now rebased onto this machine, which is what `rebasedForThisDevice` was written for.
+- **An import can no longer be silently undone by a scan.** The worker holds the save in
+  memory and writes it at the end of every scan; it is now stopped _before_ the file is
+  touched, instead of restarted afterwards.
+- **Export and import failures are visible.** A corrupt save or an unwritable target used to
+  throw into a detached promise: no message, no log entry, a button that did nothing.
+- **Old pre-import backups are deleted.** `BACKUPS_TO_KEEP` was declared from the start but
+  nothing ever pruned, so every import — and every corrupt-save recovery, which repeats on
+  each launch — left a file behind for ever.
+- The usage cache is flushed when the window closes, so work parsed in the last minute of a
+  session is not thrown away and re-parsed on the next launch.
+- Turning `tokendex.devMode` off now stops the `dist` watcher instead of leaving it running
+  until the window is reloaded.
+
+### Added
+
+- **The egg pre-rolls its species.** `pendingHatchID` was documented as removing the network
+  round trip from the hatch moment but nothing ever wrote it. Past the halfway mark the next
+  species is chosen and its evolution line warmed, so hatching no longer stalls the scan the
+  status bar is waiting on.
+
+### Changed
+
+- Closing a window no longer rewrites the whole usage cache when nothing was parsed: the
+  shutdown flush skips the throttle, not the "is there anything to write".
+- `src/core/models.ts` no longer carries a second copy of the official-limit domain or the
+  ccusage report parsers the port replaced. `src/core/limits/models.ts` is the one limits
+  model; what remains is the aggregate shapes the usage layer shares.
+- The worker and the save import derive "today's tokens per provider" from one shared helper,
+  so an import can no longer anchor its baseline against a different set of providers than a
+  scan credits from.
+
 ## [0.2.2] - 2026-08-30
 
 ### Fixed

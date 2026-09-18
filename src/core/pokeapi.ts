@@ -118,6 +118,14 @@ export class PokeAPIClient implements PokeProviding {
   /** Prefetching populates this so hatching costs no network at all. */
   private lineCache = new Map<number, EvoLine>()
   private baseIndexCache: BaseSpecies[] | undefined
+  /**
+   * Coalesces concurrent index loads. Two callers can want it in the same pass (an encounter
+   * spawn and an egg pre-roll), and without this they each pay the full GraphQL round trip.
+   *
+   * Cleared when it settles rather than memoised: caching a *rejection* would turn one dropped
+   * request into "no index" for the rest of the session.
+   */
+  private indexInFlight: Promise<BaseSpecies[]> | undefined
   private restBuildTried = false
 
   constructor(private readonly indexFilePath = join(AppPaths.ourData(), 'base-index.json')) {}
@@ -182,7 +190,13 @@ export class PokeAPIClient implements PokeProviding {
    */
   async baseSpeciesIndex(): Promise<BaseSpecies[]> {
     if (this.baseIndexCache !== undefined) return this.baseIndexCache
+    this.indexInFlight ??= this.loadBaseIndex().finally(() => {
+      this.indexInFlight = undefined
+    })
+    return this.indexInFlight
+  }
 
+  private async loadBaseIndex(): Promise<BaseSpecies[]> {
     const disk = await this.readDiskIndex()
     if (disk !== undefined && Date.now() - disk.fetchedAt < INDEX_TTL_MS && disk.entries.length > 0) {
       this.baseIndexCache = disk.entries

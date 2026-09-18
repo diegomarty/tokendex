@@ -10,7 +10,7 @@
  */
 
 import { compact, cost, grouped } from './tokenFormatter.js'
-import type { DailyUsage, PeriodUsage, ProviderSnapshot } from './models.js'
+import type { DailyUsage, PeriodUsage } from './models.js'
 import type { AppLanguage, CompanionStateKind } from './companion/model.js'
 import { stillSpriteURL } from './companion/model.js'
 import { s } from './i18n/strings.js'
@@ -125,6 +125,25 @@ function reportFor(source: ProviderEntries, now: number): ProviderReport {
  */
 export function aggregateProviders(sources: ProviderEntries[], now: number): ProviderReport[] {
   return sources.map((s) => reportFor(s, now))
+}
+
+/**
+ * Today's cumulative tokens per provider — the exact shape the companion ledger observes.
+ *
+ * Shared by the scan and by the save import, which both have to answer "what has this machine
+ * already spent today". Two spellings of this loop would let the import anchor its baseline
+ * against a different set of providers than the scan credits from, and that difference reads
+ * as a day of usage appearing or vanishing.
+ *
+ * A provider with no `today` is absent rather than zero: the ledger distinguishes "did not
+ * report" from "reported nothing", and flattening the two loses usage at the next refresh.
+ */
+export function todayTokensByProvider(providers: ProviderReport[]): Record<string, number> {
+  const observed: Record<string, number> = {}
+  for (const provider of providers) {
+    if (provider.today !== undefined) observed[provider.providerID] = provider.today.totalTokens
+  }
+  return observed
 }
 
 export function totalsFor(providers: ProviderReport[]): UsageSnapshot['totals'] {
@@ -296,19 +315,6 @@ function tooltipFor(args: {
   lines.push('')
   lines.push(`_${s(lang, 'updated').toLowerCase()} ${new Date(now).toLocaleTimeString(locale)}_`)
   return lines.join('\n')
-}
-
-/** Converts a report to the shared `ProviderSnapshot` shape the game logic will expect. */
-export function toProviderSnapshot(report: ProviderReport, fetchedAt: number): ProviderSnapshot {
-  const snapshot: ProviderSnapshot = {
-    providerID: report.providerID,
-    displayName: report.displayName,
-    fetchedAt,
-    reportsCost: true,
-  }
-  if (report.today !== undefined) snapshot.today = report.today
-  if (report.month !== undefined) snapshot.monthTotal = report.month
-  return snapshot
 }
 
 export { entryTotal }

@@ -20,6 +20,7 @@ function harness(extraFor?: (action: Action) => string | undefined) {
   const posted: DispatchResponse<Snap, Panel, string>[] = []
   const scans: ReturnType<typeof deferred<Snap>>[] = []
   const applied: string[] = []
+  const flushes: number[] = []
   const dispatch = createDispatcher<Action, Snap, Panel, string>({
     scan: () => {
       const d = deferred<Snap>()
@@ -31,10 +32,13 @@ function harness(extraFor?: (action: Action) => string | undefined) {
       return extraFor?.(a)
     },
     buildPanel: (snapshot, _locale, devMode) => ({ fromSeq: snapshot.seq, devMode }),
+    flush: async () => {
+      flushes.push(scans.length)
+    },
     post: (r) => posted.push(r),
   })
   const settle = () => new Promise((r) => setImmediate(r))
-  return { posted, scans, applied, dispatch, settle }
+  return { posted, scans, applied, flushes, dispatch, settle }
 }
 
 describe('dispatcher', () => {
@@ -161,5 +165,28 @@ describe('dispatcher', () => {
     h.scans[1]!.resolve({ seq: 2 })
     await h.settle()
     expect(h.posted[1]).toEqual({ id: 2, ok: true, panel: { fromSeq: 2, devMode: false } })
+  })
+
+  // The cache throttles its writes to once a minute, so closing a window shortly after a scan
+  // that parsed something new used to throw that work away and re-parse it on the next launch.
+  it('flushes on request, and only after the scan in front of it has finished', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'scan' })
+    h.dispatch({ id: 2, type: 'flush' })
+    await h.settle()
+    expect(h.flushes).toEqual([]) // queued behind the scan rather than racing it
+
+    h.scans[0]!.resolve({ seq: 1 })
+    await h.settle()
+    expect(h.flushes).toHaveLength(1)
+    expect(h.posted.at(-1)).toEqual({ id: 2, ok: true, flushed: true })
+  })
+
+  it('never scans for a flush', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'flush' })
+    await h.settle()
+    expect(h.scans).toHaveLength(0)
+    expect(h.posted).toEqual([{ id: 1, ok: true, flushed: true }])
   })
 })
