@@ -113,6 +113,11 @@
 - Settings groups the save buttons under their own heading instead of leaving them flush
   against the trainer roster, and the egg screen's two progress bars are one component rather
   than two shapes for two meanings.
+- `npm run test:e2e` runs again. VS Code 1.110 renamed the macOS binary from
+  `Contents/MacOS/Electron` to `Code`, which `@vscode/test-electron` 2.x could not find
+  (`spawn … ENOENT`), so the end-to-end gate had been silently unrunnable on macOS with
+  current stable. Upgraded to 3.1.0, which resolves the name; its Node floor moves the
+  toolchain (and CI) to Node 22.
 - `src/core/models.ts` no longer carries a second copy of the official-limit domain or the
   ccusage report parsers the port replaced. `src/core/limits/models.ts` is the one limits
   model; what remains is the aggregate shapes the usage layer shares.

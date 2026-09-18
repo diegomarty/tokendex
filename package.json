@@ -6,7 +6,7 @@
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
-    "node": ">=20"
+    "node": ">=22"
   },
   "categories": [
     "Visualization",
@@ -260,7 +260,7 @@
     "@types/node": "^20.19.0",
     "@types/vscode": "^1.85.0",
     "@vscode/codicons": "^0.0.46-24",
-    "@vscode/test-electron": "^2.5.2",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.25.0",
     "playwright-core": "^1.62.1",
     "prettier": "^3.9.6",

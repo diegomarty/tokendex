@@ -11,7 +11,9 @@ simplifying something that looks redundant.
 
 ## Prerequisites
 
-- **Node.js 20 or newer**
+- **Node.js 22 or newer**, the floor `@vscode/test-electron` sets for the end-to-end gate. It
+  is a _toolchain_ requirement: what the extension runs on at runtime is whatever Node the
+  VS Code in `engines.vscode` ships, which is why nothing here drops older editors.
 - **VS Code 1.85 or newer**
 
 No platform-specific toolchain and no native modules: the extension runs wherever the VS Code
