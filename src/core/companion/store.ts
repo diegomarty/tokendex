@@ -21,6 +21,7 @@ import {
   payForEncounter,
   runFromEncounter,
   throwBall,
+  withoutWanderedOff,
   type ThrowOutcome,
 } from './encounters.js'
 import { trainerIDOrDefault } from './trainers.js'
@@ -279,6 +280,12 @@ export class CompanionStore {
 
     const { state, delta } = applyProviderLedger(this.state, observation)
     this.state = state
+
+    // Before anything reads the queue's length. A full queue freezes accrual, so an encounter
+    // that has wandered off has to free its slot *this* pass — otherwise the tokens earned in
+    // the same refresh are held back against room that is no longer occupied.
+    const waiting = withoutWanderedOff(this.state.wild, this.now)
+    if (waiting.length !== this.state.wild.length) this.state = { ...this.state, wild: waiting }
 
     if (delta > 0) {
       this.state = creditDelta(this.state, delta)

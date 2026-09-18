@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Wild Pokémon keep appearing again.** Two rules combined into a dead end: a full queue
+  freezes encounter progress (0.2.2), and nothing but the player ever removed a waiting
+  encounter — so a queue nobody tended became a permanent wall. Measured on a real save:
+  twelve encounters arrived inside 34 minutes and the feature then produced nothing at all for
+  the next 118 hours, across 561M tokens of work. Wild Pokémon now wander off on their own
+  after six hours (a day for a shiny or rare-and-above, which would hurt to lose to a timer),
+  so the queue drains by itself and encounters keep arriving. Same save, same burn, after the
+  fix: 47 encounters over 24 hours instead of none.
+- **A full queue no longer charges twice for the same encounter.** Progress was clamped to
+  `threshold × free slots`, which with no free slots is zero — so a queue that filled up
+  destroyed whatever the player had already earned toward the next encounter, and the slot
+  they freed then cost a second full threshold. It is now held where it is, still capped at
+  the one encounter it can honestly owe.
 - **A disguised Ditto no longer freezes the companion.** The reveal emitted a growth event no
   caller handled, so a Pokémon that hatched disguised (1 in 128 of common lines with two or
   more forms) stopped dead at its first evolution threshold: no evolution, no graduation, for

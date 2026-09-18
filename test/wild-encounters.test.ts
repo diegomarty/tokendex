@@ -6,7 +6,10 @@ import {
   catchChance,
   catchValue,
   encounterThresholdFor,
+  ENCOUNTER_EXPIRY_MS,
+  RARE_ENCOUNTER_EXPIRY_MS,
   enqueueEncounter,
+  withoutWanderedOff,
   fleeChance,
   owedEncounters,
   payForEncounter,
@@ -89,12 +92,26 @@ describe('accrual', () => {
   // bank was therefore permanently full, so every catch was replaced on the very next scan
   // and the queue count never visibly dropped — reported as "catching doesn't reduce the
   // waiting count". With no room there is no progress to make, so nothing accrues.
+  // [trigger branch] Holding is not the same as zeroing. Clamping to `threshold * room` with
+  // no room *destroyed* progress the player had already earned, so the slot they freed cost a
+  // second full threshold — they were charged twice for the same encounter.
+  it('holds the accumulator where it is while the queue is full, rather than rewinding it', () => {
+    const earned = EncounterBalance.threshold - 100_000
+    expect(addEncounterUsage(earned, 10_000_000, EncounterBalance.maxQueue)).toBe(earned)
+  })
+
   it('accrues nothing while the queue is full', () => {
     expect(addEncounterUsage(0, 10_000_000, EncounterBalance.maxQueue)).toBe(0)
   })
 
-  it('clamps an already-banked surplus away when the queue has filled', () => {
-    expect(addEncounterUsage(30_000_000, 1, EncounterBalance.maxQueue)).toBe(0)
+  // A surplus that arrived some other way — an imported save, a dev injection — must not
+  // survive a full queue and then mint a burst the moment it drains. It is clamped to the one
+  // encounter it can honestly owe rather than to zero, which used to take genuinely earned
+  // progress with it.
+  it('clamps an already-banked surplus to a single encounter when the queue has filled', () => {
+    const held = addEncounterUsage(30_000_000, 1, EncounterBalance.maxQueue)
+    expect(held).toBe(EncounterBalance.threshold)
+    expect(owedEncounters(held, 1)).toBe(1)
   })
 
   it('banks at most one threshold per free slot', () => {
@@ -115,6 +132,44 @@ describe('accrual', () => {
   it('reports what is left to go, floored at zero', () => {
     expect(tokensToNextEncounter(0, 1)).toBe(EncounterBalance.threshold)
     expect(tokensToNextEncounter(EncounterBalance.threshold * 2, 1)).toBe(0)
+  })
+})
+
+// [trigger branch] Nothing ever removed a waiting encounter except the player, and a full
+// queue freezes accrual — so a queue nobody tended became a permanent wall. Measured on a real
+// save: twelve encounters arrived inside 34 minutes and the feature then produced nothing for
+// 118 hours, across 561M tokens of work. Wild Pokémon have to wander off on their own.
+describe('wandering off', () => {
+  const hours = (n: number) => n * 3_600_000
+
+  it('keeps an encounter that has only just appeared', () => {
+    const queue = [wild({ appearedAt: NOW - hours(1) })]
+    expect(withoutWanderedOff(queue, NOW)).toHaveLength(1)
+  })
+
+  it('lets an ordinary one leave once its window has passed', () => {
+    const queue = [wild({ id: 'old', appearedAt: NOW - ENCOUNTER_EXPIRY_MS })]
+    expect(withoutWanderedOff(queue, NOW)).toEqual([])
+  })
+
+  // Losing a shiny or a rare to a timer is the version of this that would sting, so they wait
+  // far longer — the same value `enqueueEncounter` encodes when it decides what to drop.
+  it('gives a shiny and a rare a much longer wait', () => {
+    const justPastOrdinary = NOW - ENCOUNTER_EXPIRY_MS
+    const queue = [
+      wild({ id: 'shiny', isShiny: true, appearedAt: justPastOrdinary }),
+      wild({ id: 'rare', rarity: 'rare', appearedAt: justPastOrdinary }),
+      wild({ id: 'legendary', rarity: 'legendary', appearedAt: justPastOrdinary }),
+      wild({ id: 'common', appearedAt: justPastOrdinary }),
+    ]
+    expect(withoutWanderedOff(queue, NOW).map((e) => e.id)).toEqual(['shiny', 'rare', 'legendary'])
+    expect(withoutWanderedOff(queue, NOW + RARE_ENCOUNTER_EXPIRY_MS)).toEqual([])
+  })
+
+  // A save written before `appearedAt` existed decodes it as 0. Treating that as "appeared at
+  // the epoch" would empty the whole queue on the first scan after an upgrade.
+  it('never expires an encounter with no appearance time', () => {
+    expect(withoutWanderedOff([wild({ appearedAt: 0 })], NOW)).toHaveLength(1)
   })
 })
 

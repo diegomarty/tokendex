@@ -483,10 +483,13 @@ describe('wild encounters', () => {
     await s.update(obs(fillAll))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
 
-    // Keep spending while full: none of it accrues.
+    // Keep spending while full: none of it accrues. What was already earned toward the next
+    // encounter is *held* rather than rewound — zeroing it charged the player twice for the
+    // slot they were about to free.
+    const heldWhileFull = s.snapshot().encounterUsage
     const whileFull = fillAll + EncounterBalance.threshold * 4
     await s.update(obs(whileFull))
-    expect(s.snapshot().encounterUsage).toBe(0)
+    expect(s.snapshot().encounterUsage).toBe(heldWhileFull)
 
     // Working through the queue visibly shrinks it — small further spend changes nothing.
     await s.runFrom(s.snapshot().wild[0]!.id)
@@ -496,6 +499,34 @@ describe('wild encounters', () => {
     // The freed slot is refilled only once a fresh threshold of new spend lands.
     await s.update(obs(whileFull + 1_000 + EncounterBalance.threshold))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
+  })
+
+  // [trigger branch] The end-to-end shape of the bug this rule exists for: a queue nobody
+  // tends is a permanent wall. Measured on a real save — twelve encounters inside 34 minutes,
+  // then nothing at all for 118 hours across 561M tokens. Asserted through `update()` rather
+  // than on the pure helper, because the freeze came from the *combination* of a full queue
+  // and frozen accrual, and only the whole loop shows it.
+  it('keeps producing encounters when a full queue is left untouched', async () => {
+    let clock = 1_700_000_000_000
+    const s = store({ now: () => clock })
+    await s.update(obs(0))
+
+    let spent = EncounterBalance.firstThreshold + EncounterBalance.threshold * 20
+    await s.update(obs(spent))
+    expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
+    const original = s.snapshot().wild.map((e) => e.id)
+
+    // A working day later, still without the player touching the queue.
+    for (let hour = 0; hour < 8; hour++) {
+      clock += 3_600_000
+      spent += EncounterBalance.threshold
+      await s.update(obs(spent))
+    }
+
+    const now = s.snapshot().wild
+    expect(now.length).toBeGreaterThan(0) // the feature is alive, not frozen at a wall
+    expect(now.map((e) => e.id)).not.toEqual(original) // and these are new Pokémon
+    expect(s.snapshot().encountersSeen).toBeGreaterThan(EncounterBalance.maxQueue)
   })
 
   // Wild catches never enter `collectedFinals`, so the variety bias needs its own memory: a
