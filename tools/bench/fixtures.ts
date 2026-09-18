@@ -1,109 +1,55 @@
 /**
  * `PanelState` fixtures for the development bench.
  *
+ * Every panel here comes out of the core's own `buildPanelState` (covered by
+ * `test/panel-build.test.ts`), fed a fixture save and a fixture snapshot. A fixture describes a
+ * *situation* — what is in the bag, what is waiting in the grass, how far along the companion
+ * is — and every row, price and string below it is then derived exactly as the extension
+ * derives it.
+ *
+ * That indirection is the point rather than an inconvenience. The shop, the bag and the wild
+ * rack used to be hand-rolled here next to the core's version, and the copy had already lost
+ * the ×10 ball bundles and the refresh-interval picker: the bench was quietly hiding two
+ * sections the extension really ships, which is the exact failure a bench exists to prevent.
+ *
  * Typed against the real protocol on purpose: `npm run typecheck` covers this file, so any
  * change to `PanelState` breaks here instead of silently leaving the bench rendering a shape
  * the extension no longer sends.
- *
- * Titles, prices and labels come from the **real** i18n and formatter modules rather than
- * hand-typed strings, so switching a fixture's language exercises the actual tables.
- *
- * The panel itself is now built by the core's pure `buildPanelState` (covered by
- * `test/panel-build.test.ts`), so these fixtures only have to produce interesting *states*;
- * drift between what the bench shows and what the extension sends is a unit test away.
  */
 
-import type {
-  PanelBagItem,
-  PanelDev,
-  PanelDevControl,
-  PanelDexEntry,
-  PanelDexSpecies,
-  PanelShopItem,
-  PanelState,
-  PanelWild,
-  PanelWildEncounter,
-} from '../../src/webview/protocol.js'
+import type { PanelDev, PanelDevControl, PanelState } from '../../src/webview/protocol.js'
 import {
-  APP_LANGUAGES,
   type AppLanguage,
-  BALL_KINDS,
-  FreshEgg,
-  ITEM_KINDS,
+  type CompanionState,
+  type DexEntry,
+  type EvoLine,
+  type EvoNode,
   type ItemKind,
-  itemEmoji,
-  itemShopPrice,
-  itemSpriteName,
-  languageLabel,
+  type MonState,
+  Pokeball,
+  type Rarity,
+  type WildEncounter,
+  currentSpeciesID,
+  freshCompanionState,
+  resolveName,
 } from '../../src/core/companion/model.js'
-import { DEFAULT_TRAINER_ID, TRAINER_IDS } from '../../src/core/companion/trainers.js'
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import * as D from '../../src/core/i18n/dispatch.js'
-import { panelStrings } from '../../src/core/i18n/panelStrings.js'
-import { s } from '../../src/core/i18n/strings.js'
-import { compact, cost, grouped, percent } from '../../src/core/tokenFormatter.js'
-import { catchChance } from '../../src/core/companion/encounters.js'
+import { buildPanelState } from '../../src/core/panel/build.js'
+import {
+  type CompanionView,
+  type LimitRow,
+  type ProviderReport,
+  buildSnapshot,
+} from '../../src/core/snapshot.js'
 
-// Read from `itemShopPrice` rather than re-listed here: a hand-written map is a second price
-// table, and the typecheck only catches a *missing* kind, never a wrong number.
-const PRICES: Record<ItemKind, number> = Object.fromEntries(
-  ITEM_KINDS.map((kind) => [kind, itemShopPrice(kind) ?? 0]),
-) as Record<ItemKind, number>
-
-function shop(
-  lang: AppLanguage,
-  options: { spendable: number; hasActive: boolean; owns?: ItemKind[] },
-): PanelShopItem[] {
-  const owns = new Set(options.owns ?? [])
-  const items: PanelShopItem[] = ITEM_KINDS.map((kind) => {
-    const entry: PanelShopItem = {
-      id: `item:${kind}`,
-      emoji: itemEmoji(kind),
-      title: D.itemName(lang, kind),
-      description: D.itemDescription(lang, kind),
-      priceText: compact(PRICES[kind]),
-      enabled: options.spendable >= PRICES[kind] && !owns.has(kind),
-      owned: owns.has(kind),
-      group: (BALL_KINDS as readonly string[]).includes(kind) ? 'balls' : 'items',
-    }
-    const sprite = itemSpriteName(kind)
-    if (sprite !== undefined) entry.sprite = sprite
-    return entry
-  })
-  if (!options.hasActive) return items
-  for (const tier of FreshEgg.shopTiers) {
-    items.push({
-      id: `egg:${tier ?? 'any'}`,
-      emoji: '🥚',
-      title: D.eggName(lang, tier),
-      description: D.eggDescription(lang, tier),
-      priceText: compact(FreshEgg.price_(tier)),
-      enabled: options.spendable >= FreshEgg.price_(tier),
-      owned: false,
-      group: 'eggs',
-    })
-  }
-  return items
-}
-
-function bag(
-  lang: AppLanguage,
-  counts: Partial<Record<ItemKind, number>>,
-  usable: boolean,
-): PanelBagItem[] {
-  return ITEM_KINDS.filter((kind) => (counts[kind] ?? 0) > 0).map((kind) => {
-    const entry: PanelBagItem = {
-      id: `item:${kind}`,
-      emoji: itemEmoji(kind),
-      title: D.itemName(lang, kind),
-      description: D.itemDescription(lang, kind),
-      count: counts[kind] ?? 0,
-      usable: usable && kind !== 'shinyCharm',
-    }
-    if (kind === 'shinyCharm') entry.hint = s(lang, 'shinyCharmEffectHint')
-    return entry
-  })
-}
+/**
+ * Fixed clock and locale, never `Date.now()`: a bench that renders a different string on every
+ * reload makes "did my change do that?" impossible to answer.
+ */
+const EPOCH = Date.parse('2026-08-19T10:00:00Z')
+const LOCALE = 'en-US'
+const DAY = 86_400_000
 
 /** Species names are the English PokéAPI ones — the bench is about layout, not translation. */
 const NAMES: Record<number, string> = {
@@ -114,6 +60,7 @@ const NAMES: Record<number, string> = {
   5: 'Charmeleon',
   6: 'Charizard',
   7: 'Squirtle',
+  8: 'Wartortle',
   9: 'Blastoise',
   10: 'Caterpie',
   25: 'Pikachu',
@@ -123,6 +70,7 @@ const NAMES: Record<number, string> = {
   54: 'Psyduck',
   63: 'Abra',
   92: 'Gastly',
+  93: 'Haunter',
   94: 'Gengar',
   129: 'Magikarp',
   130: 'Gyarados',
@@ -131,6 +79,7 @@ const NAMES: Record<number, string> = {
   134: 'Vaporeon',
   143: 'Snorlax',
   147: 'Dratini',
+  148: 'Dragonair',
   149: 'Dragonite',
   150: 'Mewtwo',
   155: 'Cyndaquil',
@@ -145,155 +94,235 @@ const NAMES: Record<number, string> = {
   494: 'Victini',
 }
 
-function species(
-  lang: AppLanguage,
-  ids: number[],
-  shiny: number[] = [],
-  raising: number[] = [],
-): PanelDexSpecies[] {
-  return ids.map((id) => ({
-    id,
-    name: NAMES[id] ?? `#${id}`,
-    isShiny: shiny.includes(id),
-    isRaising: raising.includes(id),
-    rarityText: D.rarityLabel(
-      lang,
-      id === 150 || id === 249 || id === 251 || id === 483
-        ? 'legendary'
-        : id % 7 === 0
-          ? 'rare'
-          : id % 3 === 0
-            ? 'uncommon'
-            : 'common',
-    ),
-  }))
+/** One line is translated, which is all the Japanese fixture needs to show its typography. */
+const JA_NAMES: Record<number, string> = { 4: 'ヒトカゲ', 5: 'リザード', 6: 'リザードン' }
+
+/** The per-language name map the core stores on a save and resolves at render time. */
+function names(id: number): Record<string, string> {
+  const en = NAMES[id] ?? `#${id}`
+  const ja = JA_NAMES[id]
+  return ja === undefined ? { en } : { en, ja }
 }
 
-function log(
-  lang: AppLanguage,
-  rows: { id: number; days: number; shiny?: boolean; active?: boolean; wild?: boolean }[],
-): PanelDexEntry[] {
-  const day = 86_400_000
-  // Fixed epoch, not `Date.now()`: a bench that renders a different string every reload makes
-  // "did my change do that?" impossible to answer.
-  const base = Date.parse('2026-08-19T10:00:00Z')
-  return rows.map((row) => {
-    const entry: PanelDexEntry = {
-      finalID: row.id,
-      name: NAMES[row.id] ?? `#${row.id}`,
-      isShiny: row.shiny ?? false,
-      rarityText: D.rarityLabel(
-        lang,
-        row.id === 150 ? 'legendary' : row.id % 7 === 0 ? 'rare' : 'common',
-      ),
-      isActive: row.active ?? false,
-      isWild: row.wild ?? false,
-    }
-    if (!row.active) entry.caughtText = new Date(base - row.days * day).toLocaleDateString('en-US')
-    return entry
-  })
+/** The flavour rule the fixtures have always used, so the same ids keep reading the same. */
+function rarityOf(id: number): Rarity {
+  if (id === 150 || id === 249 || id === 251 || id === 483) return 'legendary'
+  if (id % 7 === 0) return 'rare'
+  if (id % 3 === 0) return 'uncommon'
+  return 'common'
 }
 
-// MARK: - Wild encounters
+// MARK: - Save pieces
 
-function wildEncounter(
-  lang: AppLanguage,
-  over: Partial<PanelWildEncounter> & { speciesID: number },
-): PanelWildEncounter {
-  const rarity = over.rarity ?? 'common'
+/**
+ * An evolution tree from the path it can take. `branches` turns the last step into a choice,
+ * which is what puts the mystery slot in the strip — the core reads that from the tree, so a
+ * fixture cannot show a branch the real rules would not draw.
+ */
+function evoLine(chain: number[], branches: number[] = []): EvoLine {
+  let tree: EvoNode = {
+    speciesID: chain[chain.length - 1]!,
+    children: branches.map((id) => ({ speciesID: id, children: [] })),
+  }
+  for (let i = chain.length - 2; i >= 0; i--) tree = { speciesID: chain[i]!, children: [tree] }
+  const byID: Record<number, Record<string, string>> = {}
+  for (const id of [...chain, ...branches]) byID[id] = names(id)
+  return { baseID: chain[0]!, tree, rarity: rarityOf(chain[0]!), names: byID }
+}
+
+/**
+ * The Pokémon being raised. `pathIDs` holds only what it has actually reached; everything still
+ * ahead of it comes from the line's tree, never from here.
+ */
+function mon(chain: number[], stageIndex: number, over: Partial<MonState> = {}): MonState {
   return {
-    id: `w-${over.speciesID}`,
-    name: NAMES[over.speciesID] ?? `#${over.speciesID}`,
-    rarityText: D.rarityLabel(lang, rarity as never),
-    rarity,
+    baseID: chain[0]!,
+    pathIDs: chain.slice(0, stageIndex + 1),
+    plannedPathIDs: chain,
+    stageIndex,
+    usedAtStage: 0,
+    rarity: rarityOf(chain[0]!),
+    totalForms: chain.length,
     isShiny: false,
-    appearedText: '10:24',
+    dittoRevealed: false,
     ...over,
   }
 }
 
-/** The Wild tab exactly as the worker shapes it, with a controllable rack. */
-function wildSection(
-  lang: AppLanguage,
-  encounters: PanelWildEncounter[],
-  counts: Partial<Record<string, number>> = {},
-  /** Capture rate of the encounter on stage, pricing the rack's odds like the worker does. */
-  stagedCaptureRate?: number,
-): PanelWild {
+/**
+ * A graduated catch. `chainOrder` carries the whole line rather than just the final form,
+ * because that is what fills the species Pokédex.
+ */
+function caught(chain: number[], days: number, over: Partial<DexEntry> = {}): DexEntry {
+  const finalID = chain[chain.length - 1]!
+  const byID: Record<number, Record<string, string>> = {}
+  for (const id of chain) byID[id] = names(id)
   return {
-    encounters,
-    waitingText: D.wildBadgeTooltip(lang, encounters.length),
-    emptyText: D.wildEmptyText(lang, compact(1_200_000)),
-    progressPercent: 52,
-    balls: BALL_KINDS.map((kind) => {
-      const ball: PanelWild['balls'][number] = {
-        kind,
-        name: D.itemName(lang, kind),
-        count: counts[kind] ?? 0,
-        sprite: itemSpriteName(kind) ?? 'poke-ball',
-      }
-      if (stagedCaptureRate !== undefined) {
-        const pct = catchChance(stagedCaptureRate, kind) * 100
-        ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
-      }
-      return ball
-    }),
-    noBallsText: D.wildNoBallsText(lang),
+    id: `dex-${finalID}`,
+    baseID: chain[0]!,
+    finalID,
+    chainOrder: chain,
+    rarity: rarityOf(chain[0]!),
+    caughtAt: EPOCH - days * DAY,
+    isShiny: false,
+    names: byID,
+    ...over,
   }
 }
 
-interface BaseOptions {
-  lang?: AppLanguage
+/** One queued encounter. The head of the queue is the one on stage, and it prices the rack. */
+function wild(speciesID: number, over: Partial<WildEncounter> = {}): WildEncounter {
+  return {
+    id: `w-${speciesID}`,
+    speciesID,
+    captureRate: 45,
+    rarity: rarityOf(speciesID),
+    isShiny: false,
+    appearedAt: EPOCH - 60_000,
+    throws: 0,
+    names: names(speciesID),
+    ...over,
+  }
+}
+
+// MARK: - Usage pieces
+
+const LIMITS: LimitRow[] = [
+  { label: '5-hour session', value: '42%', percent: 42, severity: 'normal' },
+  { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' },
+]
+
+interface UsageOptions {
   todayTokens?: number
   todayCost?: number
   monthTokens?: number
   monthCost?: number
-  spendable?: number
 }
 
-function base(options: BaseOptions = {}): PanelState {
-  const lang = options.lang ?? 'en'
+/**
+ * Two providers whose rows add up to the totals, because the snapshot derives the totals from
+ * the reports — a fixture that wrote both would be free to make them disagree, which is the one
+ * thing a breakdown table is read for. Only the totals reach the panel, so the per-model
+ * breakdown fields stay at zero.
+ */
+function providers(options: UsageOptions): ProviderReport[] {
   const today = options.todayTokens ?? 253_412_890
   const month = options.monthTokens ?? 4_812_004_331
-  const spendable = options.spendable ?? 1_204_000_000
-  return {
-    totals: {
-      todayText: compact(today),
-      todayExactText: grouped(today, 'en-US'),
-      todayCostText: cost(options.todayCost ?? 41.82),
-      monthText: compact(month),
-      monthExactText: grouped(month, 'en-US'),
-      monthCostText: cost(options.monthCost ?? 812.4),
+  const todayCost = options.todayCost ?? 41.82
+  const monthCost = options.monthCost ?? 812.4
+  const split = (whole: number, share: number) => Math.round(whole * share)
+  const daily = (tokens: number, cost: number) => ({
+    date: '2026-08-19',
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    totalTokens: tokens,
+    totalCost: cost,
+  })
+  const leadToday = split(today, 0.72)
+  const leadMonth = split(month, 0.7)
+  return [
+    {
+      providerID: 'claude_code',
+      displayName: 'Claude Code',
+      entries: 4820,
+      today: daily(leadToday, todayCost * 0.72),
+      month: { period: '2026-08', totalTokens: leadMonth, totalCost: monthCost * 0.7 },
+      // Only one provider burns: the /min column appears exactly when something is running,
+      // and a bench where it never appears is a bench that never renders it.
+      tokensPerMinute: 184_000,
     },
-    providers: [
-      {
-        displayName: 'Claude Code',
-        todayText: compact(Math.round(today * 0.72)),
-        monthText: compact(Math.round(month * 0.7)),
-      },
-      {
-        displayName: 'Codex',
-        todayText: compact(Math.round(today * 0.28)),
-        monthText: compact(Math.round(month * 0.3)),
-      },
-    ],
-    limits: [
-      { label: '5-hour session', value: '42%', percent: 42, severity: 'normal' },
-      { label: 'Weekly', value: '37%', percent: 37, severity: 'normal' },
-    ],
-    spendableText: compact(spendable),
-    wild: wildSection(lang, [], { pokeBall: 5 }),
-    trainerID: DEFAULT_TRAINER_ID,
-    trainers: [...TRAINER_IDS],
-    shop: shop(lang, { spendable, hasActive: true }),
-    bag: bag(lang, { rareCandy: 3 }, true),
-    dexSpecies: [],
-    dexLog: [],
+    {
+      providerID: 'codex',
+      displayName: 'Codex',
+      entries: 1204,
+      today: daily(today - leadToday, todayCost * 0.28),
+      month: { period: '2026-08', totalTokens: month - leadMonth, totalCost: monthCost * 0.3 },
+    },
+  ]
+}
+
+// MARK: - Scenes
+
+interface SceneOptions extends UsageOptions {
+  lang?: AppLanguage
+  spendable?: number
+  inventory?: Partial<Record<ItemKind, number>>
+  /** Absent means an egg: nothing on stage, and no egg shelf in the shop. */
+  mon?: MonState
+  line?: EvoLine
+  /** Present = there is something to draw on Home. The rest of the view is filled in below. */
+  companion?: Partial<CompanionView>
+  dex?: DexEntry[]
+  wild?: WildEncounter[]
+  limits?: LimitRow[]
+  errors?: string[]
+  dev?: PanelDev
+}
+
+/** Enough balls to throw and one candy to spend — the default a fixture rarely needs to change. */
+const DEFAULT_INVENTORY: Partial<Record<ItemKind, number>> = {
+  pokeBall: Pokeball.starterCount,
+  rareCandy: 3,
+}
+
+function scene(options: SceneOptions = {}): PanelState {
+  const lang = options.lang ?? 'en'
+  const spendable = options.spendable ?? 1_204_000_000
+  const state: CompanionState = {
+    ...freshCompanionState(lang),
     language: lang,
-    languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
-    strings: panelStrings(lang),
-    errors: [],
+    installBaselineSet: true,
+    usedSinceInstall: spendable,
+    inventory: { ...(options.inventory ?? DEFAULT_INVENTORY) },
+    dex: options.dex ?? [],
+    wild: options.wild ?? [],
+    // Pinned so the "next encounter" line always reads 1.2M and its bar 52%.
+    encounterUsage: 1_300_000,
+    encountersSeen: 3,
   }
+  if (options.mon !== undefined) state.active = options.mon
+
+  const over = options.companion
+  let view: CompanionView | undefined
+  if (over !== undefined) {
+    const speciesID = options.mon === undefined ? undefined : currentSpeciesID(options.mon)
+    view = {
+      state: options.mon === undefined ? 'egg' : 'working',
+      isShiny: options.mon?.isShiny ?? false,
+      progress: 0.5,
+      toNextText: '',
+      dexCount: state.dex.length,
+      spendableTokens: spendable,
+      wildCount: state.wild.length,
+      wildTooltip: D.wildBadgeTooltip(lang, state.wild.length),
+      ...(speciesID === undefined
+        ? {}
+        : { speciesID, name: resolveName(lang, names(speciesID)) ?? `#${speciesID}` }),
+      ...over,
+    }
+  }
+
+  return buildPanelState({
+    usage: buildSnapshot([], {
+      now: EPOCH,
+      locale: LOCALE,
+      lang,
+      providers: providers(options),
+      limitRows: options.limits ?? LIMITS,
+      errors: options.errors ?? [],
+      ...(view === undefined ? {} : { companion: view }),
+    }),
+    state,
+    line: options.line,
+    isCelebrating: false,
+    now: EPOCH,
+    locale: LOCALE,
+    // The host's own default (`tokendex.refreshInterval`), so Settings shows its picker here too.
+    refreshSeconds: 120,
+    ...(options.dev === undefined ? {} : { dev: options.dev }),
+  })
 }
 
 /**
@@ -343,326 +372,193 @@ export const FIXTURES: Fixture[] = [
   {
     id: 'no-limits',
     label: 'Sin límites conocidos (sección ausente)',
-    state: { ...base(), limits: [] },
+    state: scene({ limits: [] }),
   },
   {
     id: 'wild-queue',
     label: 'Home scene: queue with a shiny and a legendary, full rack',
-    state: {
-      ...base(),
-      wild: wildSection(
-        'en',
-        [
-          wildEncounter('en', { speciesID: 147, rarity: 'rare' }),
-          wildEncounter('en', { speciesID: 129, isShiny: true }),
-          wildEncounter('en', { speciesID: 10 }),
-          wildEncounter('en', { speciesID: 150, rarity: 'legendary' }),
-        ],
-        { pokeBall: 7, greatBall: 2, ultraBall: 1, masterBall: 1 },
-        45, // Dratini's capture rate: the rack reads 27% / 38% / 46% / 100%
-      ),
+    state: scene({
+      inventory: { pokeBall: 7, greatBall: 2, ultraBall: 1, masterBall: 1, rareCandy: 3 },
+      // Dratini is on stage, and its capture rate prices the whole rack: 24 / 33 / 41 / 100%.
+      wild: [wild(147), wild(129, { isShiny: true }), wild(10), wild(150)],
+      mon: mon([172, 25, 26], 1),
+      line: evoLine([172, 25, 26]),
       companion: {
-        name: 'Pikachu',
-        speciesID: 25,
-        isShiny: false,
         progress: 0.71,
         stageText: D.stage('en', 2, 3),
         toNextText: '21.7M to next evolution',
-        rarityText: D.rarityLabel('en', 'common'),
-        line: [],
       },
-      dexLog: log('en', [
-        { id: 129, days: 0, wild: true },
-        { id: 3, days: 12 },
-      ]),
-    },
+      dex: [caught([129], 0, { id: 'dex-wild-129', source: 'wild' }), caught([1, 2, 3], 12)],
+    }),
   },
   {
     id: 'wild-no-balls',
     label: 'Home scene: encounter waiting, empty rack (shop hint)',
-    state: {
-      ...base(),
-      wild: wildSection('en', [wildEncounter('en', { speciesID: 133 })]),
-    },
+    state: scene({ inventory: { rareCandy: 3 }, wild: [wild(133)] }),
   },
   {
     id: 'wild-empty',
     label: 'Home scene: nothing waiting, companion on stage',
-    state: { ...base() },
+    state: scene(),
   },
   {
     id: 'egg-early',
     label: 'Freshly laid egg (nothing to show)',
-    state: {
-      ...base({
-        todayTokens: 312_004,
-        todayCost: 0.61,
-        monthTokens: 312_004,
-        monthCost: 0.61,
-        spendable: 312_004,
-      }),
-      shop: shop('en', { spendable: 312_004, hasActive: false }),
-      bag: [],
-      companion: {
-        isShiny: false,
-        progress: 0.06,
-        toNextText: '4.7M to hatch',
-        line: [],
-      },
-    },
+    state: scene({
+      todayTokens: 312_004,
+      todayCost: 0.61,
+      monthTokens: 312_004,
+      monthCost: 0.61,
+      spendable: 312_004,
+      inventory: {},
+      companion: { progress: 0.06, toNextText: '4.7M to hatch' },
+    }),
   },
   {
     id: 'egg-almost',
     label: 'Egg almost ready',
-    state: {
-      ...base({ spendable: 4_600_000 }),
-      shop: shop('en', { spendable: 4_600_000, hasActive: false }),
-      companion: {
-        isShiny: false,
-        progress: 0.92,
-        toNextText: '400K to hatch',
-        line: [],
-      },
-    },
+    state: scene({
+      spendable: 4_600_000,
+      companion: { progress: 0.92, toNextText: '400K to hatch' },
+    }),
   },
   {
     id: 'hatched-linear',
     label: 'Just hatched, linear line (1/3)',
-    state: {
-      ...base(),
+    state: scene({
+      mon: mon([1, 2, 3], 0, { nature: 'brave' }),
+      line: evoLine([1, 2, 3]),
       companion: {
-        name: 'Bulbasaur',
-        speciesID: 1,
-        isShiny: false,
         progress: 0.34,
         stageText: D.stage('en', 1, 3),
         toNextText: '82.5M to next evolution',
-        rarityText: D.rarityLabel('en', 'common'),
-        natureText: 'Brave',
-        line: [
-          { speciesID: 1, state: 'current' },
-          { speciesID: 2, state: 'future' },
-          { speciesID: 3, state: 'future' },
-        ],
       },
-      dexSpecies: species('en', [1], [], [1]),
-      dexLog: log('en', [{ id: 1, days: 0, active: true }]),
-    },
+    }),
   },
   {
     id: 'branching',
     label: 'Undecided branch (the question mark)',
-    state: {
-      ...base(),
+    state: scene({
+      mon: mon([133], 0, { nature: 'jolly' }),
+      line: evoLine([133], [134, 196, 197]),
       companion: {
-        name: 'Eevee',
-        speciesID: 133,
-        isShiny: false,
         progress: 0.71,
         stageText: D.stage('en', 1, 2),
         toNextText: '21.7M to next evolution',
-        rarityText: D.rarityLabel('en', 'uncommon'),
-        natureText: 'Jolly',
-        line: [{ speciesID: 133, state: 'current' }, { state: 'future' }],
       },
-      dexSpecies: species('en', [133], [], [133]),
-      dexLog: log('en', [{ id: 133, days: 0, active: true }]),
-    },
+    }),
   },
   {
     id: 'shiny-final',
     label: 'Shiny in its final stage (heading for graduation)',
-    state: {
-      ...base({ spendable: 6_400_000_000 }),
-      shop: shop('en', { spendable: 6_400_000_000, hasActive: true, owns: ['shinyCharm'] }),
-      bag: bag('en', { rareCandy: 12, mint: 2, shinyCharm: 1 }, true),
+    state: scene({
+      spendable: 6_400_000_000,
+      inventory: { pokeBall: Pokeball.starterCount, rareCandy: 12, mint: 2, shinyCharm: 1 },
+      mon: mon([4, 5, 6], 2, { isShiny: true, nature: 'adamant' }),
+      line: evoLine([4, 5, 6]),
       companion: {
-        name: 'Charizard',
-        speciesID: 6,
-        isShiny: true,
         progress: 0.88,
         stageText: D.stage('en', 3, 3),
         toNextText: '45M to graduation',
-        rarityText: D.rarityLabel('en', 'rare'),
-        natureText: 'Adamant',
-        line: [
-          { speciesID: 4, state: 'done' },
-          { speciesID: 5, state: 'done' },
-          { speciesID: 6, state: 'current' },
-        ],
       },
-      dexSpecies: species('en', [4, 5, 6, 25, 133, 134], [6], [4, 5, 6]),
-      dexLog: log('en', [
-        { id: 6, days: 0, shiny: true, active: true },
-        { id: 25, days: 3 },
-        { id: 134, days: 11 },
-      ]),
-    },
+      dex: [caught([172, 25, 26], 3), caught([133, 134], 11)],
+    }),
   },
   {
     id: 'dex-full',
-    label: 'Populated Pokédex (24 species, 12 catches)',
-    state: {
-      ...base(),
-      dexSpecies: species(
-        'en',
-        [1, 2, 3, 4, 5, 6, 7, 10, 25, 26, 39, 52, 54, 63, 92, 94, 129, 130, 133, 143, 147, 149, 150, 448],
-        [94, 150],
-        [147],
-      ),
-      dexLog: log('en', [
-        { id: 147, days: 0, active: true },
-        { id: 150, days: 1, shiny: true },
-        { id: 149, days: 2 },
-        { id: 94, days: 4, shiny: true },
-        { id: 130, days: 6 },
-        { id: 143, days: 8 },
-        { id: 26, days: 12 },
-        { id: 3, days: 15 },
-        { id: 6, days: 19 },
-        { id: 9, days: 24 },
-        { id: 39, days: 30 },
-        { id: 10, days: 41 },
-      ]),
-    },
+    label: 'Populated Pokédex (25 species, 12 catches)',
+    state: scene({
+      mon: mon([147, 148, 149], 1),
+      line: evoLine([147, 148, 149]),
+      companion: {
+        progress: 0.44,
+        stageText: D.stage('en', 2, 3),
+        toNextText: '120M to next evolution',
+      },
+      dex: [
+        caught([150], 1, { isShiny: true }),
+        caught([92, 93, 94], 4, { isShiny: true }),
+        caught([129, 130], 6),
+        caught([143], 8),
+        caught([172, 25, 26], 12),
+        caught([1, 2, 3], 15),
+        caught([4, 5, 6], 19),
+        caught([7, 8, 9], 24),
+        caught([39], 30),
+        caught([133, 134], 33),
+        caught([10], 41),
+      ],
+    }),
   },
   {
     id: 'limits-hot',
     label: 'Límites al límite (aviso y crítico)',
-    state: {
-      ...base(),
+    state: scene({
+      lang: 'es',
       limits: [
         { label: '5-hour session', value: '97%', percent: 97, severity: 'crit' },
         { label: 'Weekly', value: '84%', percent: 84, severity: 'warn' },
         { label: 'Weekly Opus', value: '61%', percent: 61, severity: 'normal' },
         { label: 'Codex · 5-hour session', value: '12%', percent: 12, severity: 'normal' },
       ],
+      mon: mon([143], 0, { nature: 'relaxed' }),
+      line: evoLine([143]),
       companion: {
-        name: 'Snorlax',
-        speciesID: 143,
-        isShiny: false,
         progress: 0.42,
         stageText: D.stage('es', 1, 1),
-        toNextText: '380M to graduate',
-        rarityText: D.rarityLabel('es', 'uncommon'),
-        natureText: 'Relaxed',
-        line: [{ speciesID: 143, state: 'current' }],
+        toNextText: '380M para graduarse',
       },
-      dexSpecies: species('es', [143], [], [143]),
-      dexLog: log('es', [{ id: 143, days: 0, active: true }]),
-    },
+    }),
   },
   {
     id: 'errors',
     label: 'With provider errors and large figures',
-    state: {
-      ...base({
-        todayTokens: 1_204_998_120,
-        todayCost: 1841.55,
-        monthTokens: 38_004_112_887,
-        monthCost: 21_004.9,
-      }),
+    state: scene({
+      todayTokens: 1_204_998_120,
+      todayCost: 1841.55,
+      monthTokens: 38_004_112_887,
+      monthCost: 21_004.9,
       errors: [
         "Codex: EACCES: permission denied, scandir '/home/user/.codex/sessions'",
         'Companion: fetch failed (pokeapi.co)',
       ],
+      mon: mon([143], 0, { nature: 'relaxed' }),
+      line: evoLine([143]),
       companion: {
-        name: 'Snorlax',
-        speciesID: 143,
-        isShiny: false,
         progress: 0.12,
         stageText: D.stage('en', 1, 1),
         toNextText: '660M to graduation',
-        rarityText: D.rarityLabel('en', 'uncommon'),
-        natureText: 'Relaxed',
-        line: [{ speciesID: 143, state: 'current' }],
       },
-      dexSpecies: species('en', [143], [], [143]),
-      dexLog: log('en', [{ id: 143, days: 0, active: true }]),
-    },
+    }),
   },
   {
     id: 'japanese',
     label: 'Japanese (different typography and lengths)',
-    state: (() => {
-      const state = base({ lang: 'ja' })
-      return {
-        ...state,
-        bag: bag('ja', { rareCandy: 3, shinyCharm: 1 }, true),
-        companion: {
-          name: 'リザードン',
-          speciesID: 6,
-          isShiny: false,
-          progress: 0.55,
-          stageText: D.stage('ja', 3, 3),
-          toNextText: 'そつぎょうまで 120M',
-          rarityText: D.rarityLabel('ja', 'rare'),
-          natureText: 'いじっぱり',
-          line: [
-            { speciesID: 4, state: 'done' },
-            { speciesID: 5, state: 'done' },
-            { speciesID: 6, state: 'current' },
-          ],
-        },
-        dexSpecies: [
-          {
-            id: 4,
-            name: 'ヒトカゲ',
-            isShiny: false,
-            isRaising: true,
-            rarityText: D.rarityLabel('ja', 'rare'),
-          },
-          {
-            id: 5,
-            name: 'リザード',
-            isShiny: false,
-            isRaising: true,
-            rarityText: D.rarityLabel('ja', 'rare'),
-          },
-          {
-            id: 6,
-            name: 'リザードン',
-            isShiny: false,
-            isRaising: true,
-            rarityText: D.rarityLabel('ja', 'rare'),
-          },
-        ],
-        dexLog: [
-          {
-            finalID: 6,
-            name: 'リザードン',
-            isShiny: false,
-            rarityText: D.rarityLabel('ja', 'rare'),
-            isActive: true,
-            isWild: false,
-          },
-        ],
-      }
-    })(),
+    state: scene({
+      lang: 'ja',
+      inventory: { pokeBall: Pokeball.starterCount, rareCandy: 3, shinyCharm: 1 },
+      mon: mon([4, 5, 6], 2, { nature: 'adamant' }),
+      line: evoLine([4, 5, 6]),
+      companion: {
+        progress: 0.55,
+        stageText: D.stage('ja', 3, 3),
+        toNextText: 'そつぎょうまで 120M',
+      },
+    }),
   },
   {
     id: 'dev-tab',
     label: 'Pestaña Dev (devMode on)',
-    state: {
-      ...base(),
+    state: scene({
+      lang: 'es',
+      mon: mon([4, 5, 6], 0, { nature: 'hardy' }),
+      line: evoLine([4, 5, 6]),
       companion: {
-        name: 'Charmander',
-        speciesID: 4,
-        isShiny: false,
         progress: 0.34,
         stageText: D.stage('es', 1, 3),
         toNextText: 'Faltan 82.5M para evolucionar',
-        rarityText: D.rarityLabel('es', 'common'),
-        natureText: 'Firme',
-        line: [
-          { speciesID: 4, state: 'current' },
-          { speciesID: 5, state: 'future' },
-          { speciesID: 6, state: 'future' },
-        ],
       },
-      dexSpecies: species('es', [4], [], [4]),
-      dexLog: log('es', [{ id: 4, days: 0, active: true }]),
       dev: devSection(),
-    },
+    }),
   },
 ]

@@ -15,10 +15,17 @@ import { PANEL_BODY_HTML } from '../../src/webview/shell.js'
 import { FIXTURES } from './fixtures.js'
 
 type ThemeID = 'dark' | 'light' | 'hc' | 'split'
+/**
+ * The two shapes the same panel takes. `tokendex.companionLocation` defaults to the Explorer,
+ * which renders it under `body.compact` — so the surface most users see has to be one click
+ * away here, or it is the one surface never looked at while designing.
+ */
+type SurfaceID = 'panel' | 'compact'
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 const fixtureSelect = el<HTMLSelectElement>('fixture')
 const themeSelect = el<HTMLSelectElement>('theme')
+const surfaceSelect = el<HTMLSelectElement>('surface')
 const widthSelect = el<HTMLSelectElement>('width')
 const stage = el('stage')
 const logBox = el('log')
@@ -34,6 +41,7 @@ const THEME_LABEL: Record<Exclude<ThemeID, 'split'>, string> = {
 interface BenchPrefs {
   fixture: string
   theme: ThemeID
+  surface: SurfaceID
   width: string
 }
 const PREFS_KEY = 'tokendex-bench'
@@ -49,7 +57,7 @@ function readPrefs(): BenchPrefs {
 }
 
 function defaults(): BenchPrefs {
-  return { fixture: FIXTURES[0]!.id, theme: 'dark', width: '900' }
+  return { fixture: FIXTURES[0]!.id, theme: 'dark', surface: 'panel', width: '900' }
 }
 
 function writePrefs(prefs: BenchPrefs): void {
@@ -74,7 +82,7 @@ function log(kind: string, detail: string): void {
  * The page loaded into each frame. The stub is defined before the bundle so the bundle's
  * top-level `acquireVsCodeApi()` call resolves, exactly as it does in a real webview.
  */
-function frameDocument(theme: Exclude<ThemeID, 'split'>): string {
+function frameDocument(theme: Exclude<ThemeID, 'split'>, surface: SurfaceID): string {
   return `<!DOCTYPE html>
 <html lang="en" data-vscode-theme="${theme}">
 <head>
@@ -83,7 +91,7 @@ function frameDocument(theme: Exclude<ThemeID, 'split'>): string {
   <link href="/tools/bench/theme.css" rel="stylesheet">
   <link href="/dist/webview.css" rel="stylesheet">
 </head>
-<body class="vscode-${theme === 'hc' ? 'high-contrast' : theme}">
+<body class="vscode-${theme === 'hc' ? 'high-contrast' : theme}${surface === 'compact' ? ' compact' : ''}">
 ${PANEL_BODY_HTML}
   <script>
     let persisted = {}
@@ -110,16 +118,17 @@ function mount(): void {
     const pane = document.createElement('div')
     pane.className = 'pane'
     const title = document.createElement('h2')
-    title.textContent = THEME_LABEL[theme]
+    title.textContent =
+      prefs.surface === 'compact' ? `${THEME_LABEL[theme]} · compact` : THEME_LABEL[theme]
     const frame = document.createElement('iframe')
     frame.style.width = `${prefs.width}px`
-    frame.srcdoc = frameDocument(theme)
+    frame.srcdoc = frameDocument(theme, prefs.surface)
     // The bundle asks for state on load; the fixture is delivered the same way VS Code does.
     frame.addEventListener('load', () => send(frame))
     pane.append(title, frame)
     stage.append(pane)
   }
-  log('mount', `${currentFixture().id} · ${themes.join(' + ')} · ${prefs.width}px`)
+  log('mount', `${currentFixture().id} · ${themes.join(' + ')} · ${prefs.surface} · ${prefs.width}px`)
 }
 
 function send(frame: HTMLIFrameElement): void {
@@ -140,6 +149,7 @@ for (const fixture of FIXTURES) {
 }
 fixtureSelect.value = prefs.fixture
 themeSelect.value = prefs.theme
+surfaceSelect.value = prefs.surface
 widthSelect.value = prefs.width
 
 fixtureSelect.addEventListener('change', () => {
@@ -152,6 +162,13 @@ fixtureSelect.addEventListener('change', () => {
 
 themeSelect.addEventListener('change', () => {
   prefs = { ...prefs, theme: themeSelect.value as ThemeID }
+  writePrefs(prefs)
+  mount()
+})
+
+// A remount, not a repaint: the compact class is read once, when the bundle renders on load.
+surfaceSelect.addEventListener('change', () => {
+  prefs = { ...prefs, surface: surfaceSelect.value as SurfaceID }
   writePrefs(prefs)
   mount()
 })

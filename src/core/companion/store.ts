@@ -21,11 +21,13 @@ import {
   payForEncounter,
   runFromEncounter,
   throwBall,
+  withoutWanderedOff,
   type ThrowOutcome,
 } from './encounters.js'
 import { trainerIDOrDefault } from './trainers.js'
 import {
   computeDisplayState,
+  eggProgress,
   eggReadyToHatch,
   rollDittoDisguise,
   rollShiny,
@@ -43,6 +45,7 @@ import {
   NATURES,
   type Rarity,
   type WildEncounter,
+  PokemonBalance,
   PokemonOdds,
   RareCandy,
   currentSpeciesID,
@@ -52,13 +55,15 @@ import {
   totalForms,
 } from './model.js'
 import { decodeCompanionState, encodeCompanionState } from './persistence.js'
-import { backupFileName, sanitized } from './saveTransfer.js'
+import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
 
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
 const GRADUATE_EVENT_WINDOW_MS = 6_000
 /** At most one encounter toast per hour, and only for a shiny or a legendary. */
 const ENCOUNTER_TOAST_COOLDOWN_MS = 60 * 60_000
+/** Egg progress past which the next species is pre-rolled. See `prefetchHatchIfNeeded`. */
+const HATCH_PREFETCH_PROGRESS = 0.5
 
 export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
@@ -105,9 +110,11 @@ export class CompanionStore {
   private networkBackoffMs = 0
   private nextNetworkAttempt = 0
   private pendingEvents: CompanionEvent[] = []
-  private loaded = false
+  private loading: Promise<void> | undefined
   /** Mirrors `hatching`: a spawn awaits the network, and two overlapping runs would double-pay. */
   private spawning = false
+  /** Same guard for the egg pre-roll: two overlapping runs would roll the species twice. */
+  private prefetching = false
 
   constructor(private readonly options: StoreOptions) {
     this.state = freshCompanionState(options.hostLanguage)
@@ -130,10 +137,19 @@ export class CompanionStore {
   /**
    * A payload that is not an object at all is backed up before starting fresh, so a bad file
    * is never silently destroyed — the user can still send it in.
+   *
+   * The in-flight promise is held rather than a "loaded" boolean, for the same reason
+   * `LocalUsageCache.ensureLoaded` holds one: a flag flipped before the `await` lets a second
+   * caller past while the save is still being read, and it would then act on — and persist —
+   * a fresh state on top of real progress. The dispatcher serialises requests today, so this
+   * is a guard rather than a live bug; guards are what keep it that way when it stops.
    */
-  async load(): Promise<void> {
-    if (this.loaded) return
-    this.loaded = true
+  load(): Promise<void> {
+    this.loading ??= this.readSave()
+    return this.loading
+  }
+
+  private async readSave(): Promise<void> {
     let raw: string
     try {
       raw = await fs.readFile(this.filePath, 'utf8')
@@ -149,12 +165,16 @@ export class CompanionStore {
   }
 
   private async backupCorruptFile(raw: string): Promise<void> {
+    const directory = join(this.filePath, '..')
     try {
-      await fs.mkdir(join(this.filePath, '..'), { recursive: true })
-      await fs.writeFile(join(this.filePath, '..', backupFileName(this.now)), raw, 'utf8')
+      await fs.mkdir(directory, { recursive: true })
+      await fs.writeFile(join(directory, backupFileName(this.now)), raw, 'utf8')
     } catch {
       // Backing up is best effort; failing it must not block recovery.
     }
+    // A save that fails to parse usually fails again on the next launch, so without pruning
+    // this is the path that accumulates one file per start, for ever.
+    await pruneBackups(directory)
   }
 
   async save(): Promise<void> {
@@ -261,6 +281,12 @@ export class CompanionStore {
     const { state, delta } = applyProviderLedger(this.state, observation)
     this.state = state
 
+    // Before anything reads the queue's length. A full queue freezes accrual, so an encounter
+    // that has wandered off has to free its slot *this* pass — otherwise the tokens earned in
+    // the same refresh are held back against room that is no longer occupied.
+    const waiting = withoutWanderedOff(this.state.wild, this.now)
+    if (waiting.length !== this.state.wild.length) this.state = { ...this.state, wild: waiting }
+
     if (delta > 0) {
       this.state = creditDelta(this.state, delta)
       // creditDelta already moved usedAtStage, so growth is evaluated with a zero delta.
@@ -282,6 +308,7 @@ export class CompanionStore {
       await this.loadCurrentLine()
     }
     if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
+    if (networkAllowed && !this.prefetching) await this.prefetchHatchIfNeeded()
     await this.save()
   }
 
@@ -306,16 +333,11 @@ export class CompanionStore {
 
     this.spawning = true
     try {
-      let index: BaseSpecies[] | undefined
-      try {
-        index = await this.options.provider.baseSpeciesIndex()
-      } catch {
-        index = undefined
-      }
       // No REST fallback here, unlike hatching. A hatch is the whole game and worth up to
       // sixteen probing requests; an encounter is one of many, and burning that on a Caterpie
       // would slow every scan for a decoration. It waits for the index instead.
-      if (index === undefined || index.length === 0) {
+      const index = await this.baseIndex()
+      if (index === undefined) {
         this.noteNetworkFailure()
         return
       }
@@ -454,6 +476,23 @@ export class CompanionStore {
         this.pendingEvents.push({ kind: 'evolved', speciesID: event.toSpeciesID, name })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
+      if (event.kind === 'dittoRevealed') {
+        // Named from the line that is still loaded, because it is the *disguise* line — one
+        // statement later there is nothing left that knows what this Pokémon pretended to be.
+        const disguisedAs =
+          this.line === undefined
+            ? ''
+            : localizedName(this.line, event.disguisedAsSpeciesID, this.state.language)
+        this.pendingEvents.push({
+          kind: 'dittoRevealed',
+          disguisedAs,
+          isShiny: result.mon.isShiny,
+        })
+        // Ditto is not in the disguise line's tree, so keeping it would leave the companion
+        // unable to graduate. Dropping it is what makes `update` refetch for the new baseID.
+        this.line = undefined
+        this.eventUntil = this.now + EVENT_WINDOW_MS
+      }
     }
     if (result.graduated) this.graduate(result.mon)
   }
@@ -507,6 +546,52 @@ export class CompanionStore {
   }
 
   // MARK: - Hatching
+
+  /**
+   * Rolls the species the egg will hatch into, while it is still incubating.
+   *
+   * The hatch is the one moment where a network round trip is visible: `hatchIfNeeded` runs
+   * *inside* `update()`, which the whole scan — and with it the status bar — awaits. Deciding
+   * the species ahead of time and warming the line cache moves that cost onto a tick where
+   * nothing is waiting for it, which is what `pendingHatchID` was always meant to do.
+   *
+   * Only past the halfway mark: an egg that has just appeared may still be rerolled by a shop
+   * purchase (`buyEgg` clears the pre-roll for exactly that reason), and rolling early would
+   * spend a request on a species nobody ever meets. Index-only, like the encounter spawn — a
+   * speculative pre-roll must never be worth sixteen REST probes.
+   */
+  private async prefetchHatchIfNeeded(): Promise<void> {
+    if (this.state.active !== undefined || this.state.pendingHatchID !== undefined) return
+    if (eggProgress(this.state) < HATCH_PREFETCH_PROGRESS) return
+
+    this.prefetching = true
+    try {
+      const index = await this.baseIndex()
+      if (index === undefined) {
+        this.noteNetworkFailure()
+        return
+      }
+      // An unsatisfiable guarantee empties the pool. Nothing to pre-roll, and nothing to
+      // report either: `hatchIfNeeded` is where that is surfaced, once it actually matters.
+      const baseID = this.pickFromIndex(index)
+      if (baseID === undefined) return
+
+      // The species is decided either way — that decision came from an index read that
+      // succeeded. Warming the line is the half that makes the hatch itself free, and a
+      // failure there only means the hatch fetches it the ordinary way.
+      let warmed = true
+      try {
+        await this.options.provider.line(baseID)
+      } catch {
+        warmed = false
+      }
+      this.state = { ...this.state, pendingHatchID: baseID }
+      if (warmed) this.noteNetworkSuccess()
+      else this.noteNetworkFailure()
+    } finally {
+      this.prefetching = false
+    }
+  }
 
   private async loadCurrentLine(): Promise<void> {
     const active = this.state.active
@@ -582,7 +667,10 @@ export class CompanionStore {
         plannedPathIDs: plan,
         stageIndex: 0,
         // Anything spent beyond the hatch threshold carries into the hatchling's growth.
-        usedAtStage: Math.max(0, this.state.eggUsage - 5_000_000),
+        // Read from the balance table, never retyped: a literal here is a second source of
+        // truth that silently stops matching the threshold the egg was actually measured
+        // against the day that number moves.
+        usedAtStage: Math.max(0, this.state.eggUsage - PokemonBalance.eggHatchThreshold),
         rarity: line.rarity,
         totalForms: Math.max(forms, plan.length),
         isShiny,
@@ -614,19 +702,33 @@ export class CompanionStore {
     }
   }
 
+  /**
+   * The base-species index, or `undefined` when it cannot be loaded at all. An empty index is
+   * folded into `undefined` because every caller treats "nothing to pick from" as a failure.
+   */
+  private async baseIndex(): Promise<BaseSpecies[] | undefined> {
+    try {
+      const index = await this.options.provider.baseSpeciesIndex()
+      return index.length === 0 ? undefined : index
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Weighted pick from the index. `undefined` also means "the guarantee cannot be honoured" —
+   * `chooseBaseFromIndex` empties the pool rather than silently ignoring a tier that was paid
+   * for, which is why this is kept distinct from the REST fallback below.
+   */
+  private pickFromIndex(index: BaseSpecies[]): number | undefined {
+    return chooseBaseFromIndex(index, this.state.eggTier, new Set(this.state.collectedFinals), this.rng)
+  }
+
   /** Weighted pick, falling back to REST rejection sampling when the index is unavailable. */
   private async chooseBase(): Promise<number | undefined> {
-    const tier = this.state.eggTier
-    let index: BaseSpecies[] | undefined
-    try {
-      index = await this.options.provider.baseSpeciesIndex()
-    } catch {
-      index = undefined
-    }
-    if (index !== undefined && index.length > 0) {
-      return chooseBaseFromIndex(index, tier, new Set(this.state.collectedFinals), this.rng)
-    }
-    return chooseBaseViaREST(this.options.provider, tier, this.rng)
+    const index = await this.baseIndex()
+    if (index !== undefined) return this.pickFromIndex(index)
+    return chooseBaseViaREST(this.options.provider, this.state.eggTier, this.rng)
   }
 }
 

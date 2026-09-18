@@ -9,6 +9,8 @@
  * so they catch that first.
  */
 
+import { promises as fs } from 'node:fs'
+import { join } from 'node:path'
 import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
 import { EncounterBalance } from './encounters.js'
 import { decodeCompanionState } from './persistence.js'
@@ -89,6 +91,37 @@ export function backupFileName(millis: number): string {
 }
 export const BACKUP_FILE_PREFIX = 'companion-state.pre-import-'
 export const BACKUPS_TO_KEEP = 5
+
+/**
+ * Which backups to delete so at most `keep` of them remain, newest kept.
+ *
+ * Sorted by **name**, not by mtime: `backupFileName` stamps a lexicographically sortable
+ * timestamp into it precisely so this decision needs no filesystem and stays testable. Copying
+ * a backup around (a restore attempt, a sync client) rewrites its mtime but never its name.
+ *
+ * Anything that is not one of our backups is untouched — this runs in a directory that also
+ * holds the live save, the usage cache and the sprite index.
+ */
+export function expiredBackups(names: string[], keep: number = BACKUPS_TO_KEEP): string[] {
+  const backups = names.filter((name) => name.startsWith(BACKUP_FILE_PREFIX)).sort()
+  return backups.slice(0, Math.max(0, backups.length - Math.max(0, keep)))
+}
+
+/**
+ * Deletes all but the newest `keep` backups in `directory`.
+ *
+ * Best effort by design: a backup that cannot be removed is clutter, and failing an import (or
+ * a corruption recovery) over clutter would be the worse trade by a wide margin.
+ */
+export async function pruneBackups(directory: string, keep: number = BACKUPS_TO_KEEP): Promise<void> {
+  try {
+    for (const name of expiredBackups(await fs.readdir(directory), keep)) {
+      await fs.rm(join(directory, name), { force: true })
+    }
+  } catch {
+    // The directory vanished, or is unreadable. Nothing here is worth interrupting for.
+  }
+}
 
 export function encodeSave(
   state: CompanionState,

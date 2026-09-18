@@ -5,15 +5,16 @@
  *
  * Starts the bench server itself, loads `shot.html` (by default with an auto-thrown Ultra Ball
  * so the full capture choreography plays), records a webm with playwright-core against the
- * Playwright-managed Chromium, and turns it into a palette-optimised GIF with ffmpeg. The GIF
+ * browser `chromium.mjs` finds, and turns it into a palette-optimised GIF with ffmpeg. The GIF
  * therefore shows the exact animation the extension ships — not a mock-up.
  */
 
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
+import { chromiumPath } from './chromium.mjs'
 import { buildAll } from '../../esbuild.mjs'
 
 const url =
@@ -21,28 +22,6 @@ const url =
   'http://localhost:4321/tools/bench/shot.html?fixture=wild-queue&tab=home&throw=ultraBall&at=1600'
 const seconds = Number(process.argv[3] ?? 8)
 const outfile = process.argv[4] ?? 'media/readme/hero.gif'
-
-/** playwright-core ships no browser registry; find the CLI-installed Chromium ourselves. */
-function chromiumPath() {
-  const root = join(homedir(), '.cache', 'ms-playwright')
-  const dirs = readdirSync(root)
-    .filter((d) => /^chromium-\d+$/.test(d))
-    .sort()
-  if (dirs.length === 0)
-    throw new Error('no Chromium under ~/.cache/ms-playwright — run: npx playwright install chromium')
-  // Newer builds unpack to chrome-linux64/, older to chrome-linux/ — take whichever exists.
-  const base = join(root, dirs[dirs.length - 1])
-  for (const sub of ['chrome-linux64', 'chrome-linux']) {
-    const candidate = join(base, sub, 'chrome')
-    try {
-      readdirSync(join(base, sub))
-      return candidate
-    } catch {
-      // keep looking
-    }
-  }
-  throw new Error(`no chrome binary inside ${base}`)
-}
 
 await buildAll({ dev: true, watch: false })
 const { spawn } = await import('node:child_process')

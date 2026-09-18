@@ -8,6 +8,7 @@
  */
 
 import type { PanelLineItem, PanelState, PanelThrowResult } from './protocol.js'
+import { PANEL_TABS, type PanelTabID } from './shell.js'
 import { ANIMATED_SPRITE_MAX, itemSpriteURL, spriteURL, trainerURL } from './sprite.js'
 
 declare function acquireVsCodeApi(): {
@@ -18,13 +19,19 @@ declare function acquireVsCodeApi(): {
 
 const vscode = acquireVsCodeApi()
 
-type TabID = 'home' | 'shop' | 'bag' | 'dex' | 'settings' | 'dev'
+/** One list for the skeleton, the renderers and the restore guard — shell.ts owns it. */
+type TabID = PanelTabID
 type DexSegment = 'species' | 'log'
 let current: PanelState | undefined
 let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
 /** The species opened in the dex detail card. Locked ones are selectable too — number only. */
 let dexSelected: number | undefined
+/** Pokédex narrowing. Panel-owned view state, so it survives a repaint but not a reload. */
+let dexQuery = ''
+let dexOwnedOnly = false
+/** Catch-log rarity chip: 'all', or a rarity token matching `PanelDexEntry.rarity`. */
+let dexLogFilter = 'all'
 /**
  * The last throw's result line, plus the encounter it belongs to. Shown only while that
  * encounter is still (or was last) on stage: without the pairing, "Gotcha! Meowth was caught!"
@@ -33,6 +40,8 @@ let dexSelected: number | undefined
 let wildResult: { text: string; encounterID: string } | undefined
 /** The last state actually painted, serialised — identical pushes skip the re-render. */
 let lastRenderedState: string | undefined
+/** Wild count at the last announcement, so only an *arrival* is spoken. */
+let announcedWildCount = 0
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 
@@ -115,6 +124,31 @@ function renderCompanion(state: PanelState): string {
     </section>`
 }
 
+/**
+ * The compact card's one line about the wild queue.
+ *
+ * The compact card is the DEFAULT surface (`tokendex.companionLocation` is `explorer`), and it
+ * used to say nothing at all about wild Pokémon — so the game's active loop was invisible
+ * exactly where most people look. A badge on the activity-bar icon was the only signal, and a
+ * queue can sit full for days without anyone noticing it is there.
+ *
+ * It leads somewhere on purpose: this card has no tab strip, so it can report the queue but
+ * never resolve it. Clicking opens the real panel.
+ */
+function renderWildStrip(state: PanelState): string {
+  const staged = state.wild.encounters[0]
+  if (staged === undefined) return ''
+  return `
+    <button class="wild-strip" data-open-panel aria-label="${escapeHTML(state.wild.waitingText)}">
+      <img src="${spriteURL(staged.speciesID, staged.isShiny, false)}" alt="">
+      <span class="body">
+        <span class="title">${escapeHTML(staged.name)}${staged.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        <span class="desc">${escapeHTML(state.wild.waitingText)}</span>
+      </span>
+      <i class="codicon codicon-chevron-right"></i>
+    </button>`
+}
+
 /** One usage row: label, value, and the cost trailing it dimmed on the same line. */
 function statRow(label: string, value: string, note?: string, exact?: string): string {
   const title = exact === undefined ? '' : ` title="${escapeHTML(exact)}"`
@@ -184,7 +218,7 @@ function renderHome(state: PanelState): string {
   const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.buy)} →</button>`
 
   const compact = document.body.classList.contains('compact')
-  const game = compact ? renderCompanion(state) : renderGame(state)
+  const game = compact ? renderCompanion(state) + renderWildStrip(state) : renderGame(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -249,6 +283,7 @@ function motionOff(): boolean {
 function beginThrow(encounterID: string, ball: string, sprite: string): void {
   if (throwing !== undefined) return // one ball in the air at a time
   wildResult = undefined
+  invalidate('home')
 
   throwing = {
     encounterID,
@@ -321,7 +356,9 @@ function finishThrow(result?: PanelThrowResult): void {
   if (result !== undefined && result.resultText !== '') {
     wildResult = { text: result.resultText, encounterID: result.encounterID }
   }
-  if (flight.deferred !== undefined) current = flight.deferred
+  if (flight.deferred !== undefined) applyState(flight.deferred)
+  // Even with nothing deferred: the result line is panel-owned view state, not part of a push.
+  invalidate('home')
   render()
 }
 
@@ -455,11 +492,17 @@ function renderGame(state: PanelState): string {
     return `${scene}${more}${card}`
   }
 
+  // The same progress component the companion uses, rather than a second, narrower, centred
+  // bar with no figure on it: two bars stacked in two shapes, for two different meanings, read
+  // as a layout accident.
   return `${scene}
     <section class="scene-info">
       ${companionInfo(state)}
-      <div class="next-encounter">
-        <span class="desc">${escapeHTML(wild.emptyText)}</span>
+      <div class="progress next-encounter">
+        <div class="meta">
+          <span>${escapeHTML(wild.nextText)}</span>
+          <span class="pct">${wild.progressPercent}%</span>
+        </div>
         <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
       </div>
     </section>`
@@ -546,7 +589,7 @@ const dexNumber = (id: number): string => `#${String(id).padStart(3, '0')}`
  */
 function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number] | undefined): string {
   if (dexSelected === undefined) return ''
-  const close = `<button class="dex-close" data-dex-close aria-label="close">✕</button>`
+  const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
 
   if (sp === undefined) {
     return `
@@ -566,9 +609,11 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
     .filter((e) => e.finalID === sp.id)
     .slice(0, 4)
     .map((e) => {
+      // Escaped once, at the join below. Escaping here as well double-encodes anything a
+      // translation happens to contain (`&`, an apostrophe) into visible `&amp;#39;`.
       const parts = [
-        e.isActive ? escapeHTML(state.strings.raisingBadge) : (e.caughtText ?? ''),
-        e.isWild ? escapeHTML(state.strings.wildBadge) : '',
+        e.isActive ? state.strings.raisingBadge : (e.caughtText ?? ''),
+        e.isWild ? state.strings.wildBadge : '',
       ].filter((part) => part !== '')
       return `<div class="desc">${parts.map(escapeHTML).join(' · ')}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>`
     })
@@ -620,9 +665,33 @@ function renderDex(state: PanelState): string {
       <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
         : ''
 
+    // 649 cells is ~217 rows in a sidebar. Scrolling to a species is not something anyone does
+    // twice, so the grid narrows instead. A numeric query matches the *number*, locked entries
+    // included — you can look up #025 before you have ever seen it; a text query can only match
+    // a name, and a locked cell has none to match.
+    const query = dexQuery.trim().toLowerCase()
+    const numeric = /^#?\d+$/.test(query) ? String(Number(query.replace('#', ''))) : undefined
+    const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
+      if (dexOwnedOnly && sp === undefined) return false
+      if (query === '') return true
+      if (numeric !== undefined) return String(id).includes(numeric)
+      return sp !== undefined && sp.name.toLowerCase().includes(query)
+    }
+
+    const controls = `
+      <div class="dex-controls">
+        <input id="dex-search" type="search" class="dex-search" value="${escapeHTML(dexQuery)}"
+               placeholder="${escapeHTML(state.strings.dexSearch)}"
+               aria-label="${escapeHTML(state.strings.dexSearch)}">
+        <button class="chip" data-dex-owned aria-pressed="${dexOwnedOnly}">
+          ${escapeHTML(state.strings.dexOwnedOnly)}
+        </button>
+      </div>`
+
     const cells: string[] = []
     for (let id = 1; id <= ANIMATED_SPRITE_MAX; id++) {
       const sp = byID.get(id)
+      if (!matches(id, sp)) continue
       const selected = id === dexSelected ? ' selected' : ''
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
@@ -645,9 +714,13 @@ function renderDex(state: PanelState): string {
         </button>`)
       }
     }
+    const grid =
+      cells.length === 0
+        ? `<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+        : `<div class="dex">${cells.join('')}</div>`
     // The detail renders after the grid but floats fixed at the bottom of the view: a card at
     // the top of a 649-cell grid opens off-screen when the click happened four screens down.
-    return `${segments}${completion}${hint}<div class="dex">${cells.join('')}</div>${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
+    return `${segments}${controls}${completion}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
   }
 
   if (state.dexLog.length === 0) {
@@ -656,7 +729,25 @@ function renderDex(state: PanelState): string {
       <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
   }
 
-  const rows = state.dexLog
+  // Rarity chips, counted by the core. The log itself stays chronological — this is the
+  // narrowing that replaced rarity as its sort key.
+  const chips = `
+    <div class="dex-controls">
+      ${state.dexLogFilters
+        .map(
+          (filter) => `<button class="chip" data-dex-filter="${escapeHTML(filter.id)}"
+            aria-pressed="${filter.id === dexLogFilter}">${escapeHTML(filter.label)} ${filter.count}</button>`,
+        )
+        .join('')}
+    </div>`
+
+  const visible =
+    dexLogFilter === 'all' ? state.dexLog : state.dexLog.filter((e) => e.rarity === dexLogFilter)
+  if (visible.length === 0) {
+    return `${segments}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+  }
+
+  const rows = visible
     .map(
       (e) => `
       <div class="row${e.isActive ? ' active' : ''}">
@@ -670,7 +761,7 @@ function renderDex(state: PanelState): string {
       </div>`,
     )
     .join('')
-  return `${segments}${rows}`
+  return `${segments}${chips}${rows}`
 }
 
 function renderSettings(state: PanelState): string {
@@ -714,7 +805,8 @@ function renderSettings(state: PanelState): string {
       <span>${escapeHTML(state.strings.trainer)}</span>
       <div class="trainer-grid">${trainers}</div>
     </div>
-    <div class="setting">
+    <h2 class="section">${escapeHTML(state.strings.saveSection)}</h2>
+    <div class="setting save-actions">
       <button class="action secondary" id="export">${escapeHTML(state.strings.exportSave)}</button>
       <button class="action secondary" id="import">${escapeHTML(state.strings.importSave)}</button>
     </div>`
@@ -780,6 +872,66 @@ function renderDev(state: PanelState): string {
   return `<div class="dev-summary">${summary}</div>${groups}`
 }
 
+/** One renderer per tab, so `render` can paint the visible one and leave the rest alone. */
+const RENDERERS: Record<TabID, (state: PanelState) => string> = {
+  home: renderHome,
+  shop: renderShop,
+  bag: renderBag,
+  dex: renderDex,
+  settings: renderSettings,
+  dev: renderDev,
+}
+
+/**
+ * Tabs already painted from the state currently in `current`. Cleared whenever a new state
+ * arrives, so a tab is rebuilt the first time it is looked at and never again until something
+ * actually changed.
+ */
+let painted = new Set<TabID>()
+
+/** Repaints a tab the next time it is shown, for view state the panel owns (dex selection). */
+function invalidate(tab: TabID): void {
+  painted.delete(tab)
+}
+
+/**
+ * The one way a new state gets in.
+ *
+ * There are two callers — a push from the host, and a throw landing on a state that was
+ * deferred while the animation played — and the second used to assign `current` directly.
+ * Every tab already painted from the pre-throw state then kept its stale markup: the catch
+ * missing from the Pokédex, the spent ball still in the Bag, until some *later* push happened
+ * to differ from the state before the throw. One entry point, one invalidation.
+ */
+function applyState(state: PanelState, serialized?: string): void {
+  current = state
+  lastRenderedState = serialized ?? JSON.stringify(state)
+  painted = new Set()
+}
+
+/**
+ * Bars are drawn through the CSSOM, never as style attributes: the CSP's `style-src` has no
+ * 'unsafe-inline', so an inline style in the HTML string is silently dropped — the bars
+ * rendered at zero width for as long as they relied on one.
+ *
+ * The ARIA is applied here too rather than in six markup strings: every bar in the panel is
+ * this same pair of elements, and a progress bar with no role is invisible to a screen reader
+ * however many of them there are.
+ */
+function paintBars(root: HTMLElement): void {
+  for (const fillElement of root.querySelectorAll<HTMLElement>('[data-fill]')) {
+    const raw = Number(fillElement.dataset['fill'])
+    const fill = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0
+    fillElement.style.width = `${fill}%`
+    const bar = fillElement.parentElement
+    if (bar === null) continue
+    bar.setAttribute('role', 'progressbar')
+    bar.setAttribute('aria-valuemin', '0')
+    bar.setAttribute('aria-valuemax', '100')
+    bar.setAttribute('aria-valuenow', String(Math.round(fill)))
+  }
+}
+
 function render(): void {
   const state = current
   if (state === undefined) return
@@ -794,32 +946,34 @@ function render(): void {
       ? ''
       : `<div class="error">${state.errors.map(escapeHTML).join('<br>')}</div>`
 
-  el('home').innerHTML = renderHome(state)
-  el('shop').innerHTML = renderShop(state)
-  el('bag').innerHTML = renderBag(state)
-  el('dex').innerHTML = renderDex(state)
-  el('settings').innerHTML = renderSettings(state)
-  el('dev').innerHTML = renderDev(state)
-  // Home wears the waiting count: the scene with the queue lives there now.
-  el('tab-home').dataset['count'] =
-    state.wild.encounters.length === 0 ? '' : String(state.wild.encounters.length)
   // The tab button ships hidden: without a dev section there is nothing behind it, and a
   // visible-but-empty tab reads as a broken panel.
   el('tab-dev').hidden = state.dev === undefined
   if (state.dev === undefined && tab === 'dev') tab = 'home'
 
-  // Bar widths are applied through the CSSOM, never as style attributes: the CSP's
-  // style-src has no 'unsafe-inline', so an inline style in the HTML string is silently
-  // dropped — the bars rendered at zero width for as long as they relied on one.
-  for (const bar of document.querySelectorAll<HTMLElement>('[data-fill]')) {
-    const fill = Math.max(0, Math.min(100, Number(bar.dataset['fill'])))
-    bar.style.width = `${Number.isFinite(fill) ? fill : 0}%`
+  // Only the tab being looked at. Painting all six cost the Pokédex's 649 cells on every state
+  // push — measured at 3.3 ms against 0.4 ms for Home, plus ~650 img nodes parked in the DOM
+  // of a sidebar — for a grid nobody was looking at.
+  if (!painted.has(tab)) {
+    const section = el(tab)
+    section.innerHTML = RENDERERS[tab](state)
+    painted.add(tab)
+    paintBars(section)
   }
 
-  for (const id of ['home', 'shop', 'bag', 'dex', 'settings', 'dev'] as TabID[]) {
+  // Home wears the waiting count: the scene with the queue lives there now.
+  const waiting = state.wild.encounters.length
+  el('tab-home').dataset['count'] = waiting === 0 ? '' : String(waiting)
+  // Only on the way up: a queue shrinking is the player's own doing and they watched it happen,
+  // whereas an arrival is the one thing that occurs while they are looking somewhere else.
+  if (waiting > announcedWildCount) el('announce').textContent = state.wild.waitingText
+  announcedWildCount = waiting
+
+  for (const id of PANEL_TABS) {
     el(id).hidden = id !== tab
     const button = el(`tab-${id}`)
     button.setAttribute('aria-selected', String(id === tab))
+    button.setAttribute('tabindex', id === tab ? '0' : '-1')
     // The label is localised in the core; here it becomes the hover text and the accessible
     // name, because the visible tab is an icon.
     const label = state.strings.tabs[id]
@@ -865,11 +1019,27 @@ document.addEventListener('click', (event) => {
   const segment = target.closest('[data-seg]')
   if (segment !== null) {
     dexSegment = (segment as HTMLElement).dataset['seg'] as DexSegment
+    invalidate('dex')
     render()
     return
   }
   if (target.closest('[data-dex-close]') !== null) {
     dexSelected = undefined
+    invalidate('dex')
+    render()
+    return
+  }
+  const ownedChip = target.closest('[data-dex-owned]')
+  if (ownedChip !== null) {
+    dexOwnedOnly = !dexOwnedOnly
+    invalidate('dex')
+    render()
+    return
+  }
+  const logChip = target.closest('[data-dex-filter]')
+  if (logChip !== null) {
+    dexLogFilter = (logChip as HTMLElement).dataset['dexFilter'] ?? 'all'
+    invalidate('dex')
     render()
     return
   }
@@ -878,6 +1048,7 @@ document.addEventListener('click', (event) => {
     const id = Number((dexCell as HTMLElement).dataset['dex'])
     // Clicking the open one closes it — the card has a ✕, but this is the gesture people try.
     dexSelected = Number.isInteger(id) && id !== dexSelected ? id : undefined
+    invalidate('dex')
     render()
     return
   }
@@ -910,6 +1081,7 @@ document.addEventListener('click', (event) => {
   const runButton = target.closest('[data-run]')
   if (runButton !== null && throwing === undefined) {
     wildResult = undefined
+    invalidate('home')
     const encounterID = (runButton as HTMLElement).dataset['run']
     const encounter = current?.wild.encounters.find((e) => e.id === encounterID)
     vscode.postMessage({
@@ -919,6 +1091,10 @@ document.addEventListener('click', (event) => {
       confirmText: encounter?.runConfirmText,
       confirmLabel: current?.strings.run,
     })
+    return
+  }
+  if (target.closest('[data-open-panel]') !== null) {
+    vscode.postMessage({ type: 'openPanel' })
     return
   }
   const trainerButton = target.closest('[data-trainer]')
@@ -943,6 +1119,39 @@ document.addEventListener('click', (event) => {
   if (target.id === 'import') vscode.postMessage({ type: 'importSave' })
 })
 
+/**
+ * Live filtering as the query is typed.
+ *
+ * The grid is rebuilt around the input, which throws focus and the caret away with it, so both
+ * are put back. Cheap enough to do on every keystroke now that a repaint touches one tab.
+ */
+function applyDexQuery(field: HTMLInputElement): void {
+  const caret = field.selectionStart
+  dexQuery = field.value
+  invalidate('dex')
+  render()
+  const restored = document.getElementById('dex-search') as HTMLInputElement | null
+  if (restored === null) return
+  restored.focus()
+  if (caret !== null) restored.setSelectionRange(caret, caret)
+}
+
+document.addEventListener('input', (event) => {
+  const target = event.target as HTMLElement
+  if (target.id !== 'dex-search') return
+  // Rebuilding the field mid-composition destroys the IME state with it, so in ko/ja — two of
+  // the four languages this ships in — a name could never be typed at all. The composition's
+  // own end event below is what runs the filter for those.
+  if ((event as InputEvent).isComposing) return
+  applyDexQuery(target as HTMLInputElement)
+})
+
+document.addEventListener('compositionend', (event) => {
+  const target = event.target as HTMLElement
+  if (target.id !== 'dex-search') return
+  applyDexQuery(target as HTMLInputElement)
+})
+
 document.addEventListener('change', (event) => {
   const target = event.target as HTMLElement
   if (target.id === 'language') {
@@ -952,6 +1161,38 @@ document.addEventListener('change', (event) => {
     const seconds = Number((target as HTMLSelectElement).value)
     if (Number.isFinite(seconds)) vscode.postMessage({ type: 'setRefreshInterval', seconds })
   }
+})
+
+/**
+ * Arrow keys move between tabs.
+ *
+ * Not decoration: `render` gives the strip a roving tabindex, so without this Tab reaches the
+ * selected tab and the other five become unreachable by keyboard entirely. Roving tabindex and
+ * arrow keys are one mechanism — shipping half of it is worse than shipping neither.
+ *
+ * Selection follows focus, which is the right pattern now that showing a tab paints only that
+ * tab. Hidden tabs (Dev, outside dev mode) are skipped rather than focused into nothing.
+ */
+document.addEventListener('keydown', (event) => {
+  const button = (event.target as HTMLElement | null)?.closest?.('[role="tab"]')
+  if (button == null) return
+  const order = PANEL_TABS.filter((id) => !el(`tab-${id}`).hidden)
+  const from = order.indexOf((button as HTMLElement).dataset['tab'] as TabID)
+  if (from === -1) return
+
+  let to = from
+  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') to = from + 1
+  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') to = from - 1
+  else if (event.key === 'Home') to = 0
+  else if (event.key === 'End') to = order.length - 1
+  else return
+
+  event.preventDefault()
+  const target = order[(to + order.length) % order.length]
+  if (target === undefined) return
+  tab = target
+  render()
+  el(`tab-${target}`).focus()
 })
 
 // Arrow keys walk the Pokédex grid (roving tabindex: the cells share one tab stop). The column
@@ -1059,8 +1300,7 @@ window.addEventListener(
       // into the Pokédex. One string compare (~50KB, every ~2min) is far cheaper than a paint.
       const incoming = JSON.stringify(event.data.state)
       if (incoming === lastRenderedState) return
-      lastRenderedState = incoming
-      current = event.data.state
+      applyState(event.data.state, incoming)
       render()
     }
     if (event.data.type === 'throw' && event.data.result !== undefined) {
@@ -1078,8 +1318,7 @@ const saved = vscode.getState() as
   { tab?: string; dexSegment?: DexSegment; dexSelected?: number } | undefined
 // Validated, not cast: a session serialised before a tab was removed (the old Wild tab) would
 // otherwise restore into a tab that no longer exists and hide every section.
-const KNOWN_TABS: readonly TabID[] = ['home', 'shop', 'bag', 'dex', 'settings', 'dev']
-if (saved?.tab !== undefined && (KNOWN_TABS as readonly string[]).includes(saved.tab)) {
+if (saved?.tab !== undefined && (PANEL_TABS as readonly string[]).includes(saved.tab)) {
   tab = saved.tab as TabID
 }
 if (saved?.dexSegment !== undefined) dexSegment = saved.dexSegment

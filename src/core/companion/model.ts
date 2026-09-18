@@ -70,9 +70,11 @@ export type Rarity = (typeof RARITIES)[number]
 
 /**
  * Rank used to compare two rarities. **Not for sorting lists** — the catch log is ordered by
- * time and the Pokédex by number; rarity is only a filter. Its one consumer is the premium
- * egg guarantee gate, so an inverted order would silently let a premium egg hatch below the
- * tier that was paid for.
+ * time and the Pokédex by number; rarity is only a filter.
+ *
+ * Its consumers all decide "is this one worth more than that one": the premium egg guarantee
+ * gate (an inverted order would silently let a premium egg hatch below the tier that was paid
+ * for), the queue's overflow rule, and how long a wild Pokémon waits before wandering off.
  */
 export function sortRank(rarity: Rarity): number {
   return RARITIES.indexOf(rarity)

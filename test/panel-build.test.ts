@@ -192,3 +192,65 @@ describe('settings and chrome', () => {
     expect(panel.dev).toEqual({ summary: [], groups: [] })
   })
 })
+
+// The catch log is ordered by time because it is a record, so rarity stopped being its sort
+// key — and the narrowing that was supposed to replace it was never built: `dexCount` sat
+// unused in dexView.ts behind a comment claiming the filter existed. These chips are it.
+describe('catch-log rarity chips', () => {
+  const caught = (id: number, rarity: 'common' | 'rare' | 'legendary') => ({
+    id: `e${id}`,
+    baseID: id,
+    finalID: id,
+    chainOrder: [id],
+    rarity,
+    caughtAt: NOW - id * 1000,
+    isShiny: false,
+  })
+
+  it('counts each tier the log actually holds, newest chip order aside', () => {
+    const panel = build({
+      state: state({ dex: [caught(1, 'common'), caught(2, 'common'), caught(3, 'legendary')] }),
+    })
+    expect(panel.dexLogFilters.map((f) => [f.id, f.count])).toEqual([
+      ['all', 3],
+      ['common', 2],
+      ['legendary', 1],
+    ])
+  })
+
+  // A chip that filters to nothing is a control that does nothing.
+  it('leaves out a tier with no entries', () => {
+    const panel = build({ state: state({ dex: [caught(1, 'common')] }) })
+    expect(panel.dexLogFilters.map((f) => f.id)).toEqual(['all', 'common'])
+  })
+
+  it('offers only the all chip for an empty log', () => {
+    expect(build().dexLogFilters).toEqual([{ id: 'all', label: 'All', count: 0 }])
+  })
+
+  // The webview narrows on this token; `rarityText` is the localised label and must never be
+  // what a filter compares against.
+  it('gives every log row a rarity token beside its label', () => {
+    const panel = build({ state: state({ dex: [caught(1, 'legendary')] }) })
+    expect(panel.dexLog[0]).toMatchObject({ rarity: 'legendary', rarityText: 'Legendary' })
+  })
+
+  // The active Pokémon is synthesised into the log, so it has to be counted like the rest.
+  it('counts the Pokémon being raised', () => {
+    const raising = state({
+      active: {
+        baseID: 25,
+        pathIDs: [25],
+        plannedPathIDs: [25],
+        stageIndex: 0,
+        usedAtStage: 0,
+        rarity: 'uncommon',
+        totalForms: 1,
+        isShiny: false,
+        dittoRevealed: false,
+      },
+    })
+    const panel = build({ state: raising })
+    expect(panel.dexLogFilters).toContainEqual({ id: 'uncommon', label: 'Uncommon', count: 1 })
+  })
+})

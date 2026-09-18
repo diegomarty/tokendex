@@ -219,9 +219,42 @@ describe('wild encounter strings', () => {
     ]) {
       expect(text.trim()).not.toBe('')
     }
-    const empty = d.wildEmptyText(lang, '1.2M')
-    expect(empty).toContain('1.2M')
+    const next = d.wildNextEncounterText(lang, '1.2M')
+    expect(next).toContain('1.2M')
     const tooltip = d.wildBadgeTooltip(lang, 3)
     expect(tooltip).toContain('3')
+  })
+})
+
+// [trigger branch] The status bar tooltip hard-coded the English word `tokens` in all four
+// languages, because every existing key is a whole phrase (`todayTokens`, `spendableTokens`)
+// and none of them is the bare noun. A Japanese user read `今日 · 253,400,000 tokens`.
+describe('tokensNoun', () => {
+  it('is translated in every language, not only labelled as such', () => {
+    expect(d.tokensNoun('ko')).toBe('토큰')
+    expect(d.tokensNoun('ja')).toBe('トークン')
+    expect(d.tokensNoun('en')).toBe('tokens')
+    expect(d.tokensNoun('es')).toBe('tokens')
+  })
+})
+
+// [trigger branch] This line labels a progress bar that already carries its own percentage, so
+// it holds only what the bar cannot say. It used to open by announcing the empty state as well,
+// which the empty scene above it was already showing — and that sentence wrapped to two lines
+// at sidebar width.
+describe('wildNextEncounterText', () => {
+  it('says the remaining amount and nothing the surrounding UI already says', () => {
+    for (const lang of APP_LANGUAGES) {
+      const text = d.wildNextEncounterText(lang, '1.2M')
+      expect(text).toContain('1.2M')
+      // Comfortably inside a sidebar row that also holds a percentage.
+      expect(text.length).toBeLessThanOrEqual(30)
+    }
+  })
+
+  // Same shape as the companion's own "to next evolution", so the two rows read as one system.
+  it('is phrased like its sibling on the companion bar', () => {
+    expect(d.wildNextEncounterText('en', '1.2M')).toBe('1.2M to the next encounter')
+    expect(d.wildNextEncounterText('es', '1.2M')).toBe('1.2M al siguiente encuentro')
   })
 })

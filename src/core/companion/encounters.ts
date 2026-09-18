@@ -46,6 +46,47 @@ export const EncounterBalance = {
   maxQueue: 12,
 } as const
 
+/**
+ * How long a wild Pokémon waits before wandering off.
+ *
+ * **This is what keeps the feature alive.** A full queue freezes accrual (see
+ * `addEncounterUsage`) and nothing but the player ever removed an encounter, so a queue nobody
+ * tended became a permanent wall: measured on a real save, twelve encounters arrived inside 34
+ * minutes and the feature then produced nothing at all for the next 118 hours, across 561M
+ * tokens of work. With a window, the queue drains by itself and encounters keep arriving.
+ *
+ * Six hours is one refresh of the app's own 5-hour block plus a margin: a queue left at the end
+ * of a working day is clear the next morning, and stepping away for lunch costs nothing.
+ */
+export const ENCOUNTER_EXPIRY_MS = 6 * 3_600_000
+
+/**
+ * The window for the ones that would hurt to lose to a timer — a shiny, or rare and above.
+ *
+ * A day, so an encounter worth a Master Ball survives a night and a weekday. This mirrors the
+ * value `enqueueEncounter` already encodes when it decides what to drop to make room: commons
+ * are expendable, the rest are not.
+ */
+export const RARE_ENCOUNTER_EXPIRY_MS = 24 * 3_600_000
+
+export function encounterExpiryFor(encounter: WildEncounter): number {
+  const worthKeeping = encounter.isShiny || sortRank(encounter.rarity) >= sortRank('rare')
+  return worthKeeping ? RARE_ENCOUNTER_EXPIRY_MS : ENCOUNTER_EXPIRY_MS
+}
+
+export function hasWanderedOff(encounter: WildEncounter, now: number): boolean {
+  // A save written before `appearedAt` existed decodes it as 0, and so does a hand-edited one.
+  // Reading that as "appeared at the epoch" would empty the whole queue on the first scan
+  // after an upgrade — data loss dressed up as a game rule.
+  if (!(encounter.appearedAt > 0)) return false
+  return now - encounter.appearedAt >= encounterExpiryFor(encounter)
+}
+
+/** The queue with everything that has waited too long removed. Order is preserved. */
+export function withoutWanderedOff(queue: readonly WildEncounter[], now: number): WildEncounter[] {
+  return queue.filter((encounter) => !hasWanderedOff(encounter, now))
+}
+
 /** Cheaper for the very first encounter, steady afterwards. */
 export function encounterThresholdFor(encountersSeen: number): number {
   return encountersSeen === 0 ? EncounterBalance.firstThreshold : EncounterBalance.threshold
@@ -70,9 +111,17 @@ const USAGE_CEILING = EncounterBalance.threshold * EncounterBalance.maxQueue
  *   queue, so a heavy user's bank was permanently topped up and every catch was silently
  *   replaced on the next scan — the waiting count never went down. With no room there is no
  *   progress to make; a freed slot is earned back with fresh spend, never from a bank.
+ *
+ * "Accrues nothing" means **held, not rewound**. Clamping to `threshold * room` did both: with
+ * no room the clamp is zero, so a queue that filled up destroyed the progress the player had
+ * already earned toward the next encounter, and the slot they later freed cost them a second
+ * full threshold for the same Pokémon. A full queue therefore holds what is there — capped at
+ * the single encounter it can honestly owe, so a surplus that arrived some other way (an
+ * imported save, a dev injection) still cannot survive to mint a burst when the queue drains.
  */
 export function addEncounterUsage(encounterUsage: number, delta: number, queued = 0): number {
   const room = Math.max(0, EncounterBalance.maxQueue - queued)
+  if (room === 0) return Math.min(encounterUsage, EncounterBalance.threshold)
   return Math.min(encounterUsage + Math.max(0, delta), EncounterBalance.threshold * room)
 }
 

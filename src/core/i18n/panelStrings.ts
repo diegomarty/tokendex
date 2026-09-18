@@ -10,9 +10,14 @@
 import type { PanelStrings } from '../../webview/protocol.js'
 import type { AppLanguage } from '../companion/model.js'
 import {
+  closeLabel,
+  dexNoMatchesText,
+  dexOwnedOnlyLabel,
+  dexSearchPlaceholder,
   getBallsCta,
   noUsageText,
   refreshIntervalLabel,
+  saveSectionTitle,
   providerColumn,
   runAwayLabel,
   shopGroupBalls,
@@ -61,5 +66,10 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     shopItems: shopGroupItems(lang),
     shopEggs: shopGroupEggs(lang),
     noUsage: noUsageText(lang),
+    dexSearch: dexSearchPlaceholder(lang),
+    dexOwnedOnly: dexOwnedOnlyLabel(lang),
+    dexNoMatches: dexNoMatchesText(lang),
+    close: closeLabel(lang),
+    saveSection: saveSectionTitle(lang),
   }
 }

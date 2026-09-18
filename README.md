@@ -55,14 +55,14 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
 
 <div align="center">
 
-|                                                                          Raise                                                                           |                                                                       Shop                                                                        |                                                Your trainer                                                 |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------: | :---------------------------------------------------------------------------------------------------------: |
-| <img src="media/readme/home.png" width="260" alt="Home: your trainer with an Eevee companion, evolution progress, usage totals and official limit bars"> | <img src="media/readme/shop.png" width="260" alt="The shop: pokéballs, Rare Candy, Mint and Shiny Charm, priced in the tokens you already spent"> | <img src="media/readme/settings.png" width="260" alt="Settings: pick your trainer from 28 classic sprites"> |
+|                                                                          Raise                                                                           |                                                                                     Shop                                                                                     |                                                                      Your trainer                                                                       |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <img src="media/readme/home.png" width="260" alt="Home: your trainer with an Eevee companion, evolution progress, usage totals and official limit bars"> | <img src="media/readme/shop.png" width="260" alt="The shop: Poké, Great, Ultra and Master Balls, singly or in ten-packs at 10% off, priced in the tokens you already spent"> | <img src="media/readme/settings.png" width="260" alt="Settings: language, how often usage is re-read, and your trainer picked from 28 classic sprites"> |
 
 </div>
 
 <div align="center">
-<img src="media/readme/dex.png" width="820" alt="The Pokédex: 24 of 649 species collected, shiny entries framed, the one being raised marked">
+<img src="media/readme/dex.png" width="820" alt="The Pokédex: 25 of 649 species collected, searchable by name or number, shiny entries framed, the one being raised marked">
 
 <em>The Pokédex tracks every species you raise or catch — 649 to collect.</em>
 

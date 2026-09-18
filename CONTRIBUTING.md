@@ -11,7 +11,9 @@ simplifying something that looks redundant.
 
 ## Prerequisites
 
-- **Node.js 20 or newer**
+- **Node.js 22 or newer**, the floor `@vscode/test-electron` sets for the end-to-end gate. It
+  is a _toolchain_ requirement: what the extension runs on at runtime is whatever Node the
+  VS Code in `engines.vscode` ships, which is why nothing here drops older editors.
 - **VS Code 1.85 or newer**
 
 No platform-specific toolchain and no native modules: the extension runs wherever the VS Code
@@ -34,6 +36,20 @@ CI runs exactly that sequence on every pull request. Run it locally first — in
 To try your change, press <kbd>F5</kbd> to launch an Extension Development Host. Set
 `TOKENDEX_STATE_DIR` to a throwaway directory first if you are touching game state: the
 development scenarios behind the `tokendex.dev` command mutate the real save.
+
+For UI work, `npm run bench` serves the real webview bundle against fixture states in a plain
+browser — every surface, theme and width, rebuilt at esbuild speed. If a change alters what the
+README shows, regenerate its captures from that same bundle rather than cropping a screenshot
+by hand:
+
+```bash
+npm run readme:shots    # the four stills; pass a name to redo one (… shots.mjs dex)
+npm run readme:hero     # the capture GIF
+```
+
+Both drive Chrome through `playwright-core`, which ships no browser of its own: they use a
+Playwright-managed Chromium when there is one (`npx playwright install chromium ffmpeg`) and
+fall back to whatever Chrome is installed. The GIF step also needs `ffmpeg` on `PATH`.
 
 ## Contribution workflow
 

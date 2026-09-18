@@ -274,6 +274,36 @@ describe('persistence', () => {
     expect((await second.claudeEntries(0))[0]?.output).toBe(10)
   })
 
+  // [trigger branch] `scan()` starts all ten providers with `Promise.all`. `ensureLoaded` used
+  // to flip a boolean *before* awaiting the read, so every provider but the first saw "already
+  // loaded", ran against empty maps and wrote its blobs into objects the load then replaced —
+  // the cold parse this module exists to avoid, on every launch. The A-false/B-true branch is
+  // the second provider, so Gemini (not Claude) is what this asserts on.
+  it('serves the persisted snapshot to providers started concurrently', async () => {
+    const claudeRoot = tempDir()
+    const geminiRoot = tempDir()
+    const file = join(tempDir(), 'c.gz')
+    const geminiLine = (output: number) =>
+      JSON.stringify({ id: 'G', timestamp: TS, model: 'gemini-2.5-pro', tokens: { input: 1, output } })
+
+    rewritePinningMtime(join(claudeRoot, 'a.jsonl'), claudeLine('A', 10))
+    rewritePinningMtime(join(geminiRoot, 'g.jsonl'), geminiLine(10))
+
+    const warm = new LocalUsageCache({ claudeRoots: [claudeRoot], geminiRoot, filePath: file })
+    await warm.claudeEntries(0)
+    await warm.geminiEntries(0)
+    await warm.save()
+
+    // Same mtime and size, different content: a re-parse returns 77, a served blob returns 10.
+    rewritePinningMtime(join(claudeRoot, 'a.jsonl'), claudeLine('A', 77))
+    rewritePinningMtime(join(geminiRoot, 'g.jsonl'), geminiLine(77))
+
+    const cache = new LocalUsageCache({ claudeRoots: [claudeRoot], geminiRoot, filePath: file })
+    const [claude, gemini] = await Promise.all([cache.claudeEntries(0), cache.geminiEntries(0)])
+    expect(claude[0]?.output).toBe(10)
+    expect(gemini[0]?.output).toBe(10)
+  })
+
   it('writes a compressed snapshot', async () => {
     const root = tempDir()
     write(root, 'a.jsonl', [claudeLine('A', 10)])
@@ -315,6 +345,46 @@ describe('persistence', () => {
     const next = new LocalUsageCache({ claudeRoots: [root], codexRoot, filePath: file })
     // The old blob is gone from the snapshot; the index that finds ancient parents is not.
     expect(await next.codexSessionIndexCount()).toBe(1)
+  })
+
+  // [trigger branch] The shutdown flush used the unconditional `save()`, so closing a window
+  // re-gzipped and rewrote the entire snapshot — megabytes of JSON — even when the scan had
+  // parsed nothing new. `flush` skips the throttle, never the "is there anything to write".
+  it('flushes only when something is actually buffered', async () => {
+    const root = tempDir()
+    write(root, 'a.jsonl', [claudeLine('A', 10)])
+    const file = join(tempDir(), 'c.gz')
+    let clock = 1_000_000
+    const cache = new LocalUsageCache({ claudeRoots: [root], filePath: file, now: () => clock })
+
+    await cache.claudeEntries(0) // parses, and writes the snapshot
+    const afterScan = statSync(file).mtimeMs
+
+    clock += 1_000
+    await cache.flush() // nothing new since: the file must not be touched
+    expect(statSync(file).mtimeMs).toBe(afterScan)
+  })
+
+  it('flushes inside the throttle window when there is new work', async () => {
+    const root = tempDir()
+    const path = write(root, 'a.jsonl', [claudeLine('A', 10)])
+    const file = join(tempDir(), 'c.gz')
+    let clock = 1_000_000
+    const cache = new LocalUsageCache({ claudeRoots: [root], filePath: file, now: () => clock })
+
+    await cache.claudeEntries(0)
+    const afterScan = statSync(file).mtimeMs
+
+    // A second scan parses something new but is throttled out of writing it.
+    clock += 1_000
+    touchWithNewContent(path, [claudeLine('A', 10), claudeLine('B', 20)])
+    await cache.claudeEntries(0)
+    expect(statSync(file).mtimeMs).toBe(afterScan)
+
+    // Closing the window is exactly when that work must not be thrown away.
+    clock += 1_000
+    await cache.flush()
+    expect(statSync(file).mtimeMs).toBeGreaterThan(afterScan)
   })
 
   it('throttles writes to once a minute', async () => {

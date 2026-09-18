@@ -73,7 +73,7 @@ describe('applyUsage', () => {
 
   // A disguised Ditto can become a leaf after asset normalisation, so the reveal must be
   // checked BEFORE terminal graduation or the disguise species enters the Pokédex.
-  it('defers to a Ditto reveal before graduating', () => {
+  it('reveals the Ditto instead of graduating the species it was disguised as', () => {
     const disguised = mon({
       pathIDs: [1, 2, 3],
       stageIndex: 2,
@@ -82,7 +82,39 @@ describe('applyUsage', () => {
     })
     const result = applyUsage(disguised, thr(2), line, new Set(), fixedRNG(0))
     expect(result.graduated).toBe(false)
-    expect(result.events).toEqual([{ kind: 'dittoRevealPending' }])
+    expect(result.events).toEqual([{ kind: 'dittoRevealed', disguisedAsSpeciesID: 3 }])
+    expect(result.mon.baseID).toBe(132)
+  })
+
+  // The reveal used to emit an event nobody handled, which left the loop breaking at the same
+  // threshold on every single call: the companion stopped growing for ever.
+  it('reveals at the first threshold and keeps growing afterwards', () => {
+    const disguised = mon({ dittoDisguise: 132, dittoRevealed: false })
+    const revealed = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0)).mon
+    expect(revealed.dittoRevealed).toBe(true)
+    expect(revealed.usedAtStage).toBe(thr(0)) // the spend carries over, nothing is refunded
+    // Not graduated, and not stuck either: it now needs the rest of a full graduation.
+    expect(tokensToNext(revealed)).toBe(PokemonBalance.graduationTotal('common') - thr(0))
+  })
+
+  // The whole point of collapsing to one form: a revealed Ditto must cost exactly what the
+  // line it impersonated would have cost, never a third of it.
+  it('graduates a revealed Ditto for the same total as the line it impersonated', () => {
+    const dittoLine = makeEvoLine(132, node(132), 'common', {})
+    const revealed = applyUsage(
+      mon({ dittoDisguise: 132, dittoRevealed: false }),
+      thr(0),
+      line,
+      new Set(),
+      fixedRNG(0),
+    ).mon
+
+    const short = applyUsage(revealed, 0, dittoLine, new Set(), fixedRNG(0))
+    expect(short.graduated).toBe(false) // the first threshold alone does not buy a Pokédex entry
+
+    const full = applyUsage(revealed, tokensToNext(revealed), dittoLine, new Set(), fixedRNG(0))
+    expect(full.graduated).toBe(true)
+    expect(full.mon.usedAtStage).toBe(PokemonBalance.graduationTotal('common'))
   })
 
   it('does not defer once the Ditto is revealed', () => {

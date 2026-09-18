@@ -6,7 +6,7 @@
   "license": "MIT",
   "engines": {
     "vscode": "^1.85.0",
-    "node": ">=20"
+    "node": ">=22"
   },
   "categories": [
     "Visualization",
@@ -251,6 +251,8 @@
     "format:check": "prettier --check .",
     "test:watch": "vitest",
     "bench": "node tools/bench/serve.mjs",
+    "readme:shots": "node tools/bench/shots.mjs",
+    "readme:hero": "node tools/bench/record.mjs",
     "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
     "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
     "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies",
@@ -260,7 +262,7 @@
     "@types/node": "^20.19.0",
     "@types/vscode": "^1.85.0",
     "@vscode/codicons": "^0.0.46-24",
-    "@vscode/test-electron": "^2.5.2",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.25.0",
     "playwright-core": "^1.62.1",
     "prettier": "^3.9.6",

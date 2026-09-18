@@ -8,6 +8,8 @@ import {
   decodeSave,
   encodeSave,
   mergedGrantTier,
+  expiredBackups,
+  BACKUP_FILE_PREFIX,
   rebasedForThisDevice,
   sanitized,
   suggestedFileName,
@@ -309,5 +311,28 @@ describe('summary', () => {
       dexCount: 0,
       lifetimeTokens: 42,
     })
+  })
+})
+
+// `BACKUPS_TO_KEEP` was exported and documented from the start, but nothing ever deleted a
+// backup: every import (and every corrupt-save recovery, which repeats on each launch) left a
+// file behind for ever.
+describe('expiredBackups', () => {
+  const backup = (stamp: string) => `${BACKUP_FILE_PREFIX}${stamp}.json`
+  const stamps = ['2026-01-01-100000', '2026-01-02-100000', '2026-01-03-100000']
+
+  it('keeps everything while under the limit', () => {
+    expect(expiredBackups(stamps.map(backup), 5)).toEqual([])
+  })
+
+  it('drops the oldest first, by the timestamp in the name', () => {
+    expect(expiredBackups(stamps.map(backup), 1)).toEqual([backup(stamps[0]!), backup(stamps[1]!)])
+  })
+
+  // It runs in the directory that also holds the live save, the usage cache and the sprite
+  // index — deleting by anything looser than the prefix would be catastrophic.
+  it('never touches a file that is not one of our backups', () => {
+    const names = ['companion-state.json', 'usage-cache.json.gz', 'base-index.json', 'dev-state.json']
+    expect(expiredBackups([...names, ...stamps.map(backup)], 0)).toEqual(stamps.map(backup))
   })
 })

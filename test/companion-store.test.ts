@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CompanionStore } from '../src/core/companion/store.js'
-import { PokemonBalance, makeEvoLine, type EvoNode } from '../src/core/companion/model.js'
+import {
+  PokemonBalance,
+  currentSpeciesID,
+  makeEvoLine,
+  type EvoNode,
+} from '../src/core/companion/model.js'
 import type { BaseSpecies, PokeProviding } from '../src/core/pokeapi.js'
 import { BACKUP_FILE_PREFIX } from '../src/core/companion/saveTransfer.js'
 import { EncounterBalance } from '../src/core/companion/encounters.js'
@@ -186,6 +191,89 @@ describe('update flow', () => {
     expect(attempts).toBeGreaterThan(afterPassTwo)
   })
 
+  // `pendingHatchID` was documented as "pre-rolled while still an egg, removing network latency
+  // at the hatch moment" but nothing ever wrote it, so every hatch paid a full round trip
+  // inside update() — which the scan, and with it the status bar, awaits.
+  describe('egg pre-roll', () => {
+    const counting = () => {
+      const calls = { index: 0, line: 0 }
+      const provider = stubProvider({
+        baseSpeciesIndex: async () => {
+          calls.index += 1
+          return [{ id: 1, captureRate: 255 }]
+        },
+        line: async (baseID: number) => {
+          calls.line += 1
+          return makeEvoLine(baseID, node(baseID, [node(baseID + 1)]), 'common', {
+            [baseID]: { en: `Base${baseID}` },
+            [baseID + 1]: { en: `Evo${baseID}` },
+          })
+        },
+      })
+      return { calls, store: store({ provider }) }
+    }
+
+    it('leaves a fresh egg alone', async () => {
+      const { store: s } = counting()
+      await s.update(obs(0))
+      await s.update(obs(PokemonBalance.eggHatchThreshold * 0.25))
+      expect(s.snapshot().pendingHatchID).toBeUndefined()
+    })
+
+    it('rolls the species once the egg is past halfway', async () => {
+      const { calls, store: s } = counting()
+      await s.update(obs(0))
+      await s.update(obs(PokemonBalance.eggHatchThreshold * 0.75))
+      expect(s.snapshot().pendingHatchID).toBe(1)
+      expect(calls.line).toBe(1) // the line is warmed too, which is what makes the hatch free
+
+      // And it is not re-rolled on every later tick: the species is decided once.
+      await s.update(obs(PokemonBalance.eggHatchThreshold * 0.8))
+      expect(s.snapshot().pendingHatchID).toBe(1)
+      expect(calls.line).toBe(1)
+    })
+
+    // [trigger branch] A failed line warm must still open the backoff. Reporting success
+    // there (the roll itself did work) would wipe the window the failure just opened, and an
+    // offline user would be back to a full PokeAPI attempt on every single tick. Observed
+    // through the *hatch* that follows, because that is what the backoff actually gates.
+    it('opens the backoff when the line cannot be warmed, but keeps the roll', async () => {
+      let clock = 1_700_000_000_000
+      let lineAttempts = 0
+      const provider = stubProvider({
+        line: async () => {
+          lineAttempts += 1
+          throw new Error('offline')
+        },
+      })
+      const s = store({ provider, now: () => clock })
+      await s.update(obs(0))
+      await s.update(obs(PokemonBalance.eggHatchThreshold * 0.75))
+      expect(s.snapshot().pendingHatchID).toBe(1) // the roll survives the failed warm
+      expect(lineAttempts).toBe(1)
+
+      // The egg is ready now, but the window that failure opened has not passed.
+      clock += 30_000
+      await s.update(obs(PokemonBalance.eggHatchThreshold))
+      expect(lineAttempts).toBe(1) // no retry inside the backoff
+      expect(s.snapshot().active).toBeUndefined()
+
+      clock += 31_000 // past it
+      await s.update(obs(PokemonBalance.eggHatchThreshold))
+      expect(lineAttempts).toBeGreaterThan(1)
+    })
+
+    it('hatches into the species it pre-rolled', async () => {
+      const { store: s } = counting()
+      await s.update(obs(0))
+      await s.update(obs(PokemonBalance.eggHatchThreshold * 0.75))
+      const rolled = s.snapshot().pendingHatchID
+      await s.update(obs(PokemonBalance.eggHatchThreshold))
+      expect(s.snapshot().active?.baseID).toBe(rolled)
+      expect(s.snapshot().pendingHatchID).toBeUndefined()
+    })
+  })
+
   it('consumes the egg guarantee exactly at hatch', async () => {
     const s = store()
     await s.update(obs(0))
@@ -219,6 +307,69 @@ describe('update flow', () => {
     await s.update(obs(PokemonBalance.eggHatchThreshold))
     await s.update(obs(PokemonBalance.eggHatchThreshold + PokemonBalance.graduationTotal('common') * 2))
     expect(s.snapshot().dex[0]?.names).toBeDefined()
+  })
+})
+
+// [trigger branch] The reveal used to emit a growth event no caller handled, so a disguised
+// companion stopped at its first evolution threshold and never moved again — no evolution, no
+// graduation, for any amount of usage. This walks the whole path instead of asserting the
+// transition alone, because the stall only showed up end to end.
+describe('Ditto reveal', () => {
+  /** A store whose every 1-in-N roll hits, so the hatch is guaranteed to be disguised. */
+  const dittoStore = () =>
+    store({
+      rng: () => 0,
+      dittoEnabled: true,
+      provider: {
+        ...stubProvider(),
+        // Ditto's own line: a single form, which is what the reveal switches to.
+        line: async (baseID: number) =>
+          baseID === 132
+            ? makeEvoLine(132, node(132), 'common', { 132: { en: 'Ditto' } })
+            : makeEvoLine(baseID, node(baseID, [node(baseID + 1)]), 'common', {
+                [baseID]: { en: `Base${baseID}` },
+                [baseID + 1]: { en: `Evo${baseID}` },
+              }),
+      },
+    })
+
+  const hatchDisguised = async (s: ReturnType<typeof dittoStore>) => {
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    expect(s.snapshot().active?.dittoDisguise).toBe(132)
+    return s
+  }
+
+  it('reveals at the first threshold and announces what it was pretending to be', async () => {
+    const s = await hatchDisguised(dittoStore())
+    s.drainEvents()
+
+    const first = PokemonBalance.phaseThreshold('common', 2, 0)
+    await s.update(obs(PokemonBalance.eggHatchThreshold + first))
+
+    const active = s.snapshot().active
+    expect(active?.dittoRevealed).toBe(true)
+    expect(active?.baseID).toBe(132)
+    expect(currentSpeciesID(active!)).toBe(132)
+    const revealed = s.drainEvents().find((e) => e.kind === 'dittoRevealed')
+    expect(revealed).toEqual({ kind: 'dittoRevealed', disguisedAs: 'Base1', isShiny: true })
+  })
+
+  it('graduates as Ditto for the same spend the disguised line would have cost', async () => {
+    const s = await hatchDisguised(dittoStore())
+    const graduationTotal = PokemonBalance.graduationTotal('common')
+
+    // One refresh short of the full line total: revealed, still being raised, still not in the dex.
+    await s.update(obs(PokemonBalance.eggHatchThreshold + graduationTotal - 1))
+    expect(s.snapshot().active?.dittoRevealed).toBe(true)
+    expect(s.snapshot().dex).toHaveLength(0)
+
+    await s.update(obs(PokemonBalance.eggHatchThreshold + graduationTotal))
+    const after = s.snapshot()
+    expect(after.active).toBeUndefined()
+    expect(after.dex[0]?.finalID).toBe(132)
+    // The impersonated line was never actually raised, so it must not bias future branches.
+    expect(after.collectedFinals).toEqual(['132:132'])
   })
 })
 
@@ -332,10 +483,13 @@ describe('wild encounters', () => {
     await s.update(obs(fillAll))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
 
-    // Keep spending while full: none of it accrues.
+    // Keep spending while full: none of it accrues. What was already earned toward the next
+    // encounter is *held* rather than rewound — zeroing it charged the player twice for the
+    // slot they were about to free.
+    const heldWhileFull = s.snapshot().encounterUsage
     const whileFull = fillAll + EncounterBalance.threshold * 4
     await s.update(obs(whileFull))
-    expect(s.snapshot().encounterUsage).toBe(0)
+    expect(s.snapshot().encounterUsage).toBe(heldWhileFull)
 
     // Working through the queue visibly shrinks it — small further spend changes nothing.
     await s.runFrom(s.snapshot().wild[0]!.id)
@@ -345,6 +499,34 @@ describe('wild encounters', () => {
     // The freed slot is refilled only once a fresh threshold of new spend lands.
     await s.update(obs(whileFull + 1_000 + EncounterBalance.threshold))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
+  })
+
+  // [trigger branch] The end-to-end shape of the bug this rule exists for: a queue nobody
+  // tends is a permanent wall. Measured on a real save — twelve encounters inside 34 minutes,
+  // then nothing at all for 118 hours across 561M tokens. Asserted through `update()` rather
+  // than on the pure helper, because the freeze came from the *combination* of a full queue
+  // and frozen accrual, and only the whole loop shows it.
+  it('keeps producing encounters when a full queue is left untouched', async () => {
+    let clock = 1_700_000_000_000
+    const s = store({ now: () => clock })
+    await s.update(obs(0))
+
+    let spent = EncounterBalance.firstThreshold + EncounterBalance.threshold * 20
+    await s.update(obs(spent))
+    expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
+    const original = s.snapshot().wild.map((e) => e.id)
+
+    // A working day later, still without the player touching the queue.
+    for (let hour = 0; hour < 8; hour++) {
+      clock += 3_600_000
+      spent += EncounterBalance.threshold
+      await s.update(obs(spent))
+    }
+
+    const now = s.snapshot().wild
+    expect(now.length).toBeGreaterThan(0) // the feature is alive, not frozen at a wall
+    expect(now.map((e) => e.id)).not.toEqual(original) // and these are new Pokémon
+    expect(s.snapshot().encountersSeen).toBeGreaterThan(EncounterBalance.maxQueue)
   })
 
   // Wild catches never enter `collectedFinals`, so the variety bias needs its own memory: a
