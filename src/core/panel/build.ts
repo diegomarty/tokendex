@@ -18,13 +18,16 @@ import type {
   PanelDexEntry,
   PanelDexFilter,
   PanelDexSpecies,
+  PanelShopAction,
   PanelShopItem,
   PanelState,
+  PanelStreak,
   PanelWild,
 } from '../../webview/protocol.js'
 import type { UsageSnapshot } from '../snapshot.js'
 import {
   APP_LANGUAGES,
+  type AppLanguage,
   BALL_KINDS,
   type CompanionState,
   type EvoLine,
@@ -33,6 +36,7 @@ import {
   Pokeball,
   RARITIES,
   currentSpeciesID,
+  isBallKind,
   itemEmoji,
   itemIsPassive,
   itemSpriteName,
@@ -48,7 +52,7 @@ import {
   itemCount,
   ownedItems,
 } from '../companion/shop.js'
-import { spendableBalance } from '../companion/ledger.js'
+import { spendableBalance, streakWindow } from '../companion/ledger.js'
 import { dexCount, dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
 import { catchChance, encounterThresholdFor, tokensToNextEncounter } from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
@@ -79,6 +83,30 @@ export interface PanelBuildInputs {
   dev?: PanelDev | undefined
 }
 
+/**
+ * The streak row: seven dots and the one line beside them.
+ *
+ * The count, the window and the award guard all come from `streakWindow`, and the text from
+ * the string table — so the webview receives a drawing and a sentence, never a rule. `value`
+ * is clamped to `max` because the run keeps counting past the three days it needed: a fourth
+ * day is real, but a progress bar reading 4 of 3 is not.
+ */
+function streakRow(state: CompanionState, lang: AppLanguage, now: number): PanelStreak {
+  const window = streakWindow(state, todayKey(now))
+  return {
+    days: window.days,
+    // Once the week has paid out there is nothing left to count toward, so the count gives way
+    // to what actually happened.
+    text: window.earned
+      ? D.streakEarnedText(lang)
+      : D.streakProgressText(lang, window.count, window.needed),
+    label: D.streakRowLabel(lang),
+    value: Math.min(window.count, window.needed),
+    max: window.needed,
+    earned: window.earned,
+  }
+}
+
 export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   const { usage, state, line, now, locale } = inputs
   const lang = state.language
@@ -87,50 +115,91 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   // The discount is derived, not written: `shopEntryPrice` charges bundleMultiplier/bundleSize,
   // and copy that said a different percentage would be lying about the till.
   const bundleDiscount = Math.round(100 * (1 - Pokeball.bundleMultiplier / Pokeball.bundleSize))
+  const buyWord = str(lang, 'buy')
   const shop: PanelShopItem[] = []
   for (const kind of ITEM_KINDS) {
     const owned = itemIsPassive(kind) && itemCount(state, kind) > 0
-    const isBall = (BALL_KINDS as readonly string[]).includes(kind)
+    const isBall = isBallKind(kind)
+    const name = D.itemName(lang, kind)
+    // A ball and its ten-pack are one product sold at two quantities, not two products. They
+    // were two cards, and the ×10 card had nothing of its own to say — its description was the
+    // same generated sentence on all three, so a third of the tab was a repeated clause. The
+    // ids are untouched: `parseEntryID` still sees `item:pokeBall` and `item:pokeBall:10`, and
+    // still refuses any quantity that is not exactly the bundle size.
+    const bundled = isBall && kind !== 'masterBall'
+    const singlePrice = compact(shopEntryPrice({ kind: 'item', item: kind }))
+    const actions: PanelShopAction[] = [
+      {
+        id: `item:${kind}`,
+        // With a second price beside it the word "Buy" stops being the useful half: which
+        // quantity is. Alone on a row, it stays the word it has always been.
+        text: owned ? str(lang, 'ownedAlready') : bundled ? '×1' : buyWord,
+        label: owned ? D.ownedActionLabel(lang, name) : D.buyActionLabel(lang, name, singlePrice),
+        confirmTitle: name,
+        priceText: singlePrice,
+        enabled: canBuyItem(state, kind),
+      },
+    ]
+    if (bundled) {
+      const quantity = Pokeball.bundleSize
+      const bundleName = `${name} ×${quantity}`
+      const bundlePrice = compact(shopEntryPrice({ kind: 'item', item: kind, quantity }))
+      actions.push({
+        id: `item:${kind}:${quantity}`,
+        text: `×${quantity}`,
+        label: D.bundleBuyLabel(lang, bundleName, bundlePrice, bundleDiscount),
+        confirmTitle: bundleName,
+        priceText: bundlePrice,
+        // Grouping the two prices onto one row is only an improvement while the ten-pack is
+        // still visibly the cheaper ball. Without this the saving would survive nowhere but in
+        // arithmetic the reader has to do.
+        saveText: D.bundleSaveText(bundleDiscount),
+        enabled: canBuyItem(state, kind, quantity),
+      })
+    }
     const row: PanelShopItem = {
       id: `item:${kind}`,
       emoji: itemEmoji(kind),
-      title: D.itemName(lang, kind),
-      description: D.itemDescription(lang, kind),
-      priceText: compact(shopEntryPrice({ kind: 'item', item: kind })),
-      enabled: canBuyItem(state, kind),
+      title: name,
+      actions,
       owned,
       group: isBall ? 'balls' : 'items',
+    }
+    // A ball's catch rate is a figure, and the figure is the whole content of the sentence it
+    // replaces. The Poké Ball keeps a `1×` for the same reason a scale needs its origin: `1.5×`
+    // one row below means nothing without it. The Master Ball has no figure, so it keeps prose.
+    const stat = isBall ? D.ballCatchStat(lang, kind) : undefined
+    const statLabel = isBall ? D.ballCatchLabel(lang, kind) : undefined
+    if (stat === undefined) row.description = D.itemDescription(lang, kind)
+    else {
+      row.stat = stat
+      if (statLabel !== undefined) row.statLabel = statLabel
     }
     const sprite = itemSpriteName(kind)
     if (sprite !== undefined) row.sprite = sprite
     shop.push(row)
-    // Ball ten-packs, straight after their single row. The Master Ball is deliberately not
-    // bundled — a ten-pack of guaranteed catches is not a thing worth pricing.
-    if (kind !== 'masterBall' && isBall) {
-      const quantity = Pokeball.bundleSize
-      const bundle: PanelShopItem = {
-        id: `item:${kind}:${quantity}`,
-        emoji: itemEmoji(kind),
-        title: `${D.itemName(lang, kind)} ×${quantity}`,
-        description: D.bundleDescription(lang, quantity, bundleDiscount),
-        priceText: compact(shopEntryPrice({ kind: 'item', item: kind, quantity })),
-        enabled: canBuyItem(state, kind, quantity),
-        owned: false,
-        group: 'balls',
-      }
-      if (sprite !== undefined) bundle.sprite = sprite
-      shop.push(bundle)
-    }
   }
   if (state.active !== undefined) {
     for (const tier of FreshEgg.shopTiers) {
+      const name = D.eggName(lang, tier)
+      const priceText = compact(FreshEgg.price_(tier))
       shop.push({
         id: `egg:${tier ?? 'any'}`,
         emoji: '🥚',
-        title: D.eggName(lang, tier),
+        title: name,
+        // Only the guarantee. What all three eggs cost you — the Pokémon you are raising — is
+        // said once under the heading, as `strings.shopEggsNote`.
         description: D.eggDescription(lang, tier),
-        priceText: compact(FreshEgg.price_(tier)),
-        enabled: canBuyEgg(state, tier),
+        actions: [
+          {
+            id: `egg:${tier ?? 'any'}`,
+            text: buyWord,
+            label: D.buyActionLabel(lang, name, priceText),
+            confirmTitle: name,
+            priceText,
+            enabled: canBuyEgg(state, tier),
+          },
+        ],
         owned: false,
         group: 'eggs',
       })
@@ -231,6 +300,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     waitingText: D.wildBadgeTooltip(lang, state.wild.length),
     nextText: D.wildNextEncounterText(lang, compact(toNext)),
     progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
+    streak: streakRow(state, lang, now),
     balls: BALL_KINDS.map((kind) => {
       const ball: PanelWild['balls'][number] = {
         kind,

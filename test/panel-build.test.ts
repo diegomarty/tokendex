@@ -4,10 +4,14 @@ import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
   freshCompanionState,
+  shopEntryPrice,
   type CompanionState,
+  type MonState,
   type WildEncounter,
 } from '../src/core/companion/model.js'
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
+import { StreakBalance } from '../src/core/companion/encounters.js'
+import { todayKey } from '../src/core/usage/entry.js'
 
 // The panel builder was the single largest piece of UI-shaping code outside the suite until it
 // moved into the core — and that blind spot shipped a real bug (a celebration flag frozen into
@@ -41,6 +45,19 @@ const state = (over: Partial<CompanionState> = {}): CompanionState => ({
   ...freshCompanionState('en'),
   ...over,
 })
+
+/** Any Pokémon on stage: the eggs are only offered while there is one to discard. */
+const activeMon: MonState = {
+  baseID: 25,
+  pathIDs: [25],
+  plannedPathIDs: [25, 26],
+  stageIndex: 0,
+  usedAtStage: 0,
+  rarity: 'common',
+  totalForms: 2,
+  isShiny: false,
+  dittoRevealed: false,
+}
 
 const wild = (over: Partial<WildEncounter> = {}): WildEncounter => ({
   id: 'w1',
@@ -133,21 +150,122 @@ describe('wild rows', () => {
 })
 
 describe('the shop', () => {
-  it('offers ten-packs for every ball except the Master, with bundle ids', () => {
-    const ids = build().shop.map((item) => item.id)
+  const rowFor = (id: string, over: Partial<Parameters<typeof buildPanelState>[0]> = {}) =>
+    build(over).shop.find((item) => item.id === id)
+
+  it('offers ten-packs for every ball except the Master, with the ids the host accepts', () => {
+    // `parseEntryID` takes `item:<kind>` and `item:<kind>:<bundleSize>` and rejects everything
+    // else, so grouping the two prices onto one row must not have moved either id.
+    const ids = build().shop.flatMap((item) => item.actions.map((a) => a.id))
     expect(ids).toContain(`item:pokeBall:${Pokeball.bundleSize}`)
     expect(ids).toContain(`item:ultraBall:${Pokeball.bundleSize}`)
     expect(ids).not.toContain(`item:masterBall:${Pokeball.bundleSize}`)
+    expect(ids).toContain('item:masterBall')
+  })
+
+  // [trigger branch] A ball and its ten-pack were two cards, and the ten-pack's card had nothing
+  // of its own to say: its description was the same generated sentence on all three of them.
+  it('sells each ball from one row carrying both quantities', () => {
+    const balls = build().shop.filter((item) => item.group === 'balls')
+    expect(balls).toHaveLength(4)
+    const poke = balls.find((item) => item.id === 'item:pokeBall')!
+    expect(poke.actions.map((a) => a.id)).toEqual([
+      'item:pokeBall',
+      `item:pokeBall:${Pokeball.bundleSize}`,
+    ])
+    // The Master Ball is sold singly on purpose, so its row stays a one-price row.
+    expect(rowFor('item:masterBall')!.actions).toHaveLength(1)
+  })
+
+  // Grouping is only an improvement while the ten-pack is still visibly the cheaper ball: fold
+  // the two prices together and drop the saving, and the reader has to divide to find it.
+  it('marks the bundle saving, derived from what the till actually charges', () => {
+    const [single, bundle] = rowFor('item:pokeBall')!.actions
+    const discount = Math.round(100 * (1 - Pokeball.bundleMultiplier / Pokeball.bundleSize))
+    expect(bundle!.saveText).toBe(`−${discount}%`)
+    expect(bundle!.label).toContain(String(discount))
+    // Not a literal: the badge has to follow the constants the price is computed from.
+    expect(shopEntryPrice({ kind: 'item', item: 'pokeBall', quantity: Pokeball.bundleSize })).toBe(
+      Math.round((5_000_000 * Pokeball.bundleSize * Pokeball.bundleMultiplier) / Pokeball.bundleSize),
+    )
+    expect(single!.saveText).toBeUndefined()
+  })
+
+  // Two buttons on one row are announced by their own names, never by the card around them.
+  it('gives every action on a row a distinguishable accessible name', () => {
+    for (const item of build({ state: state({ active: activeMon }) }).shop) {
+      const labels = item.actions.map((a) => a.label)
+      expect(new Set(labels).size).toBe(labels.length)
+      for (const action of item.actions) {
+        expect(action.label).toContain(action.priceText)
+        expect(action.label.trim()).not.toBe('')
+        // The confirmation the host raises names the quantity being bought, not the row.
+        expect(action.confirmTitle.trim()).not.toBe('')
+      }
+    }
+    const [single, bundle] = rowFor('item:greatBall')!.actions
+    expect(bundle!.confirmTitle).toContain(`×${Pokeball.bundleSize}`)
+    expect(single!.confirmTitle).not.toContain('×')
+  })
+
+  // [trigger branch] "The standard ball for throwing at a wild Pokémon", under a POKÉ BALLS
+  // heading, beside a Poké Ball sprite, in a shop. The catch multiplier is the only thing a ball
+  // row can say that changes a decision, and it is a figure.
+  it('states a ball as a stat and keeps prose only where it is not a number', () => {
+    expect(rowFor('item:pokeBall')!.stat).toBe('1×')
+    expect(rowFor('item:greatBall')!.stat).toBe('1.5×')
+    expect(rowFor('item:ultraBall')!.stat).toBe('2×')
+    for (const id of ['item:pokeBall', 'item:greatBall', 'item:ultraBall']) {
+      expect(rowFor(id)!.description).toBeUndefined()
+      // A bare "1.5×" says a number, not a fact, to a screen reader.
+      expect(rowFor(id)!.statLabel?.trim()).toBeTruthy()
+    }
+    // The Master Ball's behaviour is not a multiplier, so it keeps the sentence — and it is the
+    // only ball sentence that gives advice.
+    expect(rowFor('item:masterBall')!.stat).toBeUndefined()
+    expect(rowFor('item:masterBall')!.description).toContain('legendary')
+    // Items were never the problem: their descriptions are the whole reason to buy them.
+    expect(rowFor('item:rareCandy')!.description).toContain('100M')
+    expect(rowFor('item:mint')!.description?.trim()).toBeTruthy()
+  })
+
+  // [trigger branch] All three eggs opened with "Send off your current Pokémon…" — the price
+  // they share, said three times, while the guarantee that separates them trailed at the end.
+  it('leaves each egg only its guarantee, with the shared cost on the heading', () => {
+    const panel = build({ state: state({ active: activeMon }) })
+    const eggs = panel.shop.filter((item) => item.group === 'eggs')
+    expect(eggs).toHaveLength(3)
+    const lines = eggs.map((e) => e.description!)
+    expect(new Set(lines).size).toBe(3)
+    // The shared clause lives once, on the group note.
+    expect(panel.strings.shopEggsNote).toContain('sends off your current Pokémon')
+    for (const line of lines) {
+      expect(panel.strings.shopEggsNote).not.toContain(line)
+      // Short enough to sit on the one line a card now gets.
+      expect(line.length).toBeLessThanOrEqual(24)
+    }
+    expect(lines.some((l) => l.includes('Uncommon or better'))).toBe(true)
   })
 
   it('sells eggs only while there is a Pokémon to discard', () => {
     expect(build().shop.some((item) => item.group === 'eggs')).toBe(false)
   })
 
-  it('assigns every row to a rendered group', () => {
+  it('assigns every row to a rendered group and prices every action', () => {
     for (const item of build().shop) {
       expect(['balls', 'items', 'eggs']).toContain(item.group)
+      expect(item.actions.length).toBeGreaterThan(0)
+      for (const action of item.actions) expect(action.priceText).not.toBe('')
     }
+  })
+
+  it('says a passive is owned on the action itself, not only by greying it', () => {
+    const owned = build({ state: state({ inventory: { shinyCharm: 1 } }) })
+    const charm = owned.shop.find((item) => item.id === 'item:shinyCharm')!
+    expect(charm.owned).toBe(true)
+    expect(charm.actions[0]!.enabled).toBe(false)
+    expect(charm.actions[0]!.text).toBe(owned.strings.owned)
+    expect(charm.actions[0]!.label).toContain(charm.title)
   })
 })
 
@@ -252,5 +370,79 @@ describe('catch-log rarity chips', () => {
     })
     const panel = build({ state: raising })
     expect(panel.dexLogFilters).toContainEqual({ id: 'uncommon', label: 'Uncommon', count: 1 })
+  })
+})
+
+// The streak row: seven dots and one short line, beside the "to the next encounter" bar. The
+// webview draws what is here and nothing else — every day count, date comparison and sentence
+// is decided in the core, so all four states have to be reachable from this side.
+describe('the streak row', () => {
+  /** `n` days before the panel's own clock, as the local day key the ledger speaks. */
+  const daysAgo = (n: number) => todayKey(NOW - n * 86_400_000)
+  const streak = (over: Partial<CompanionState>) => build({ state: state(over) }).wild.streak
+
+  it('draws one dot per day of the window, all empty on a fresh install', () => {
+    const row = streak({})
+    expect(row.days).toHaveLength(StreakBalance.windowDays)
+    expect(new Set(row.days)).toEqual(new Set(['off']))
+    expect(row.text).toBe('0 of 3 days')
+    expect(row.value).toBe(0)
+    expect(row.max).toBe(StreakBalance.days)
+    expect(row.earned).toBe(false)
+  })
+
+  // Oldest first, ending today: the row reads left to right like a week, so today is the last
+  // dot and a day that has fallen out of the window is simply not drawn.
+  it('fills the days that accrued, in calendar order, ending today', () => {
+    const row = streak({ accrualDays: [daysAgo(3), daysAgo(0)] })
+    expect(row.days).toEqual(['off', 'off', 'off', 'on', 'off', 'off', 'on'])
+    expect(row.text).toBe('2 of 3 days')
+    expect(row.value).toBe(2)
+    expect(row.earned).toBe(false)
+  })
+
+  it('does not draw or count a day that has left the window', () => {
+    const row = streak({ accrualDays: [daysAgo(StreakBalance.windowDays), daysAgo(0)] })
+    expect(row.days.filter((d) => d !== 'off')).toHaveLength(1)
+    expect(row.text).toBe('1 of 3 days')
+  })
+
+  // The payout is marked on the day it actually happened, not on "the third filled dot" —
+  // those coincide the day it fires and diverge every day after.
+  it('marks the day the legendary was earned and stops counting', () => {
+    const row = streak({
+      accrualDays: [daysAgo(2), daysAgo(1), daysAgo(0)],
+      lastStreakAwardDate: daysAgo(0),
+    })
+    expect(row.days).toEqual(['off', 'off', 'off', 'off', 'on', 'on', 'award'])
+    expect(row.text).toBe('Legendary earned')
+    expect(row.earned).toBe(true)
+  })
+
+  // Work carries on after the week has paid out. The row greys rather than resetting, and the
+  // count must not read "5 of 3".
+  it('keeps the earned state while the window runs on, clamping the value', () => {
+    const row = streak({
+      accrualDays: [daysAgo(4), daysAgo(3), daysAgo(2), daysAgo(1), daysAgo(0)],
+      lastStreakAwardDate: daysAgo(2),
+    })
+    expect(row.days).toEqual(['off', 'off', 'on', 'on', 'award', 'on', 'on'])
+    expect(row.earned).toBe(true)
+    expect(row.value).toBe(StreakBalance.days)
+    expect(row.value).toBeLessThanOrEqual(row.max)
+  })
+
+  it('clears once the award has left the window', () => {
+    const row = streak({
+      accrualDays: [daysAgo(0)],
+      lastStreakAwardDate: daysAgo(StreakBalance.windowDays),
+    })
+    expect(row.earned).toBe(false)
+    expect(row.text).toBe('1 of 3 days')
+  })
+
+  it('has an accessible name and follows the panel language', () => {
+    expect(streak({}).label).toBe("This week's streak")
+    expect(build({ state: state({ language: 'es' }) }).wild.streak.text).toBe('0 de 3 días')
   })
 })

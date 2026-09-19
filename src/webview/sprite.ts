@@ -53,6 +53,26 @@ export function spriteURL(speciesID: number, shiny: boolean, animated: boolean):
   return `${SPRITE_BASE}/${shiny ? 'shiny/' : ''}${speciesID}.png`
 }
 
+/**
+ * The sprite for anything *standing in the encounter scene* — the wild Pokémon and the
+ * companion at the trainer's side.
+ *
+ * The scene bottom-aligns every creature on one ground line, and that only works with a
+ * tight-cropped frame. The Gen-V animated sheet is cropped to the art, so its bottom edge *is*
+ * the feet. The still sheet is not: it centres the art on a 96px canvas with however much
+ * transparent floor is left over — 8px under a Charizard, 33px under a Bulbasaur — so a still
+ * either hovers or sinks, by a different amount per species, and no CSS offset can fix all of
+ * them at once. The follower used to be a still pinned to 48px, which hid the problem by being
+ * too small to read.
+ *
+ * Outside the Gen-V range `spriteURL` returns the still anyway; the companion is never in that
+ * case (the hatch pool is pruned by `keepingAnimatedSprites`), and a wild one would simply
+ * stand a few pixels off.
+ */
+export function sceneSpriteURL(speciesID: number, shiny: boolean): string {
+  return spriteURL(speciesID, shiny, true)
+}
+
 /** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...). */
 export function itemSpriteURL(name: string): string {
   return `${ITEM_SPRITE_BASE}/${name}.png`

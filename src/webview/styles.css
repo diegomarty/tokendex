@@ -876,32 +876,43 @@ h2.section {
   height: 80px;
   image-rendering: pixelated;
 }
-/* Idle days need no room for a rack or a title — just the team standing there. */
+/* Idle days need no room for a rack or a title — just the team standing there. The extra 10px
+   over the old 132 is headroom, not clearance: a full-size follower reaches the top of its
+   96px box, and at 132 the tallest ones stood with their ears in the border. */
 .wild-scene:not(.has-wild) {
-  min-height: 132px;
+  min-height: 142px;
   margin-bottom: 10px;
 }
 
-/* The companion at the trainer's side: a 48px still (half the 96px sheet — the documented
-   clean scale), feet on the same ground line as the trainer (70 + 48 = 118). One GIF per
-   scene, and it belongs to the wild. */
+/* The companion at the trainer's side, standing on the same ground line as everyone else:
+   22 + 96 = 118, the identical arithmetic `.wild-mon` below already uses.
+
+   Same rule as the wild in every respect, in fact — no fixed size on the image, so the Gen-V
+   frame renders at its own native scale (Aron 32px, Wailord 103px), which is the scale an
+   80px Showdown trainer is drawn to. It used to be a still pinned to a 48px square: half Game
+   Freak's scale, distorted for every non-square sprite, and small enough that its wrong
+   footing did not show. `sceneSpriteURL` in sprite.ts is why the image can be bottom-aligned
+   with no fudge factor — read it before pinning a size back on here.
+
+   The 96px box is the sheet, so the frame is centred in it whatever its size, and the egg —
+   a glyph, not a sprite — sits on the box's bottom edge, which is the ground line. */
 .companion-mon {
   position: absolute;
-  left: calc(10% + 78px);
-  top: 70px;
-  width: 48px;
-  height: 48px;
+  /* +54 keeps the sprite's centre exactly where the 48px box put it (54 + 48 == 78 + 24): the
+     follower grew in place instead of walking away from the trainer. */
+  left: calc(10% + 54px);
+  top: 22px;
+  width: 96px;
+  height: 96px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
 .companion-mon img {
-  width: 48px;
-  height: 48px;
   image-rendering: pixelated;
 }
 .companion-mon .egg-small {
-  font-size: 28px;
+  font-size: 44px;
   line-height: 1;
 }
 
@@ -917,6 +928,78 @@ h2.section {
 .next-encounter {
   width: 100%;
   margin-top: 10px;
+}
+
+/* The streak row, under the encounter bar.
+
+   Its own row rather than beside the sentence above it: that sentence had to be shortened once
+   already for wrapping at the 300px the sidebar is laid out against, and seven dots plus a
+   count on the same line would have put it straight back. Same left-text / right-figure shape
+   as `.progress .meta`, so the two rows read as one block. */
+.streak {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+/* Greyed once the week has paid out: there is nothing left to earn from these days, and the
+   row would otherwise read as progress that has stalled. */
+.streak.earned {
+  opacity: 0.5;
+}
+.streak .label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.streak .dots {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.streak .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  /* The border carries the whole shape in a high contrast theme, where the fill below resolves
+     to something close to the background: without it an empty dot is invisible and a filled one
+     is a smudge, so the row would read as "three dots" rather than "three of seven". Transparent
+     in every other theme, which keeps the geometry identical across a theme switch. */
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+/* A day that accrued. `charts-blue` is the encounter bar's own fill, so the dots read as the
+   same measurement continued. */
+.streak .dot.on {
+  background: var(--vscode-charts-blue);
+}
+/* The day the legendary was earned. Marked by a ring as well as a colour, because a colour on
+   its own says nothing in a high contrast theme — where every fill is forced to the same system
+   ink. The ring is an `outline`, not a `box-shadow`: forced-colors mode drops shadows entirely
+   (measured — the marked dot came back identical to its neighbours), while outlines are kept
+   and repainted in the system colour. */
+.streak .dot.award {
+  background: var(--vscode-charts-yellow);
+  outline: 1px solid var(--vscode-charts-yellow);
+  outline-offset: 1px;
+}
+/* HC leaves the empty dots unfilled, so filled and empty differ in substance rather than only
+   in colour, and the payout keeps its ring. */
+@media (forced-colors: active) {
+  .streak .dot {
+    background: transparent;
+    border-color: CanvasText;
+  }
+  .streak .dot.on,
+  .streak .dot.award {
+    background: CanvasText;
+  }
+  .streak .dot.award {
+    outline-color: CanvasText;
+  }
 }
 
 /* Both sprites stand on the same ground line: the trainer's feet end at 38+80=118px, and the
@@ -1277,6 +1360,74 @@ body.paused .wild-scene *::after {
 #shop h2.section {
   margin: 14px 0 8px;
 }
+/* What every card under a heading would otherwise repeat, said once. The three eggs each opened
+   with the same clause about sending your Pokémon off — the price they share, not what separates
+   them — which cost three lines per card at sidebar width. */
+.section-note {
+  margin: -4px 0 8px;
+  opacity: 0.7;
+  font-size: 0.88em;
+}
+/* A row selling the same thing at two quantities.
+
+   The pair sits beside the name while there is room and drops to its own full-width line when
+   there is not — which at 300px it always does, because two priced buttons beside a name leave
+   the name a column too narrow for "モンスターボール". The `min-width` is what makes that
+   happen: `.body` may shrink to nothing, so without a floor the name would be crushed to one
+   character per line rather than the buttons wrapping. */
+.row.multi {
+  flex-wrap: wrap;
+  row-gap: 7px;
+}
+.row.multi .body {
+  min-width: 7.5em;
+}
+.row.multi .buys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  /* Right-aligned when it shares the name's line; flush left once it has its own. */
+  margin-left: auto;
+}
+/* A figure where a sentence used to be — the ball rack on Home already states a catch rate as a
+   number, so this is the house form. Sits with the name rather than under it, which is the
+   entire saving: no second line. */
+.row .title .stat {
+  margin-left: 6px;
+  font-weight: 500;
+  font-size: 0.85em;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+/* The price rides inside the button when a row has two of them: a separate price column would
+   have to be read twice to learn which price belongs to which quantity. */
+button.action.priced {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 10px;
+}
+button.action.priced .cost {
+  font-variant-numeric: tabular-nums;
+}
+/* Same rule as the price column: dimmed and italic, never struck through. */
+button.action.priced .cost.cant {
+  font-style: italic;
+  opacity: 0.75;
+}
+/* The bundle's saving. Without it, grouping the ×1 and the ×10 onto one row would have deleted
+   the only reason to prefer the ten-pack. */
+button.action.priced .save {
+  font-size: 0.82em;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--vscode-button-foreground);
+  color: var(--vscode-button-background);
+  /* In a high contrast theme the two button colours can coincide; the outline keeps the badge
+     a separate object either way. */
+  outline: 1px solid var(--vscode-contrastBorder, transparent);
+}
 /* PokéAPI item sprites are 30px; shown as-is, like every other sprite. */
 .row .icon img {
   width: 30px;
@@ -1441,8 +1592,12 @@ body.paused .stage.celebrate img {
     margin-top: 12px;
   }
 
-  /* Shop and bag rows pair up instead of stretching across the whole tab. */
-  #shop:not([hidden]),
+  /* Shop and bag rows pair up instead of stretching across the whole tab.
+
+     The shop grids its *rows*, not the tab: gridding the tab made every heading a cell of its
+     own, so "ITEMS" sat in the second column beside a ball and the rows under it belonged to
+     whichever heading happened to land above them. Each group owns its own grid now. */
+  #shop .shop-rows,
   #bag:not([hidden]) {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

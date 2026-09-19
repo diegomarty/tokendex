@@ -23,6 +23,7 @@ import {
   shopGroupBalls,
   shopGroupEggs,
   shopGroupItems,
+  shopEggsNote,
   trainerLabel,
   wildCaughtBadge,
 } from './dispatch.js'
@@ -65,6 +66,7 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     shopBalls: shopGroupBalls(lang),
     shopItems: shopGroupItems(lang),
     shopEggs: shopGroupEggs(lang),
+    shopEggsNote: shopEggsNote(lang),
     noUsage: noUsageText(lang),
     dexSearch: dexSearchPlaceholder(lang),
     dexOwnedOnly: dexOwnedOnlyLabel(lang),

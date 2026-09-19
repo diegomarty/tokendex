@@ -55,17 +55,51 @@ export interface PanelLimit {
   severity: 'normal' | 'warn' | 'crit'
 }
 
-export interface PanelShopItem {
+/**
+ * One price a shop row can be bought at.
+ *
+ * A row carries more than one when the same thing is sold in more than one quantity — a ball
+ * and its ten-pack are one product, and used to be two cards whose descriptions said the same
+ * sentence twice. Everything here is decided and formatted in the core: the webview picks no
+ * price, computes no discount and builds no label.
+ */
+export interface PanelShopAction {
   /** Opaque id echoed back with the action; the webview never interprets it. */
+  id: string
+  /** Visible text on the button: the Buy word, or the quantity when the row offers a choice. */
+  text: string
+  /**
+   * Accessible name. Two buttons reading "Buy" on one row are a coin toss to a screen reader,
+   * which announces a button by its own name and not by the card around it.
+   */
+  label: string
+  /** What the host's native confirmation names — `Poké Ball`, or `Poké Ball ×10`. */
+  confirmTitle: string
+  priceText: string
+  /** The saving this quantity gives, already formatted (`−10%`). Absent when there is none. */
+  saveText?: string
+  enabled: boolean
+}
+
+export interface PanelShopItem {
+  /** Opaque row id; the actions carry the ids that are echoed back. */
   id: string
   /** Fallback glyph, shown when there is no sprite or it fails to load. */
   emoji: string
   /** PokéAPI item sprite filename (`poke-ball`); absent = the emoji is the icon. */
   sprite?: string
   title: string
-  description: string
-  priceText: string
-  enabled: boolean
+  /** Absent when the name, the sprite and the section heading already say it. */
+  description?: string
+  /**
+   * A figure that separates this row from its neighbours at a glance (`1.5×`), where a
+   * sentence saying the same thing would be three lines of prose differing in one character.
+   */
+  stat?: string
+  /** What `stat` means, in words, for a screen reader and for a hover. */
+  statLabel?: string
+  /** Every price this row is sold at, cheapest first. Never empty. */
+  actions: PanelShopAction[]
   owned: boolean
   /** Section the row renders under; titles come from `PanelStrings`. */
   group: 'balls' | 'items' | 'eggs'
@@ -152,6 +186,34 @@ export interface PanelBallOption {
   oddsText?: string
 }
 
+/**
+ * One day of the streak window, as a style token: `off` (no usage that day), `on` (usage
+ * accrued) and `award` (the day this window's legendary was earned). Never shown as text —
+ * `PanelStreak.text` is the label, and the webview must not translate a token into words.
+ */
+export type PanelStreakDay = 'off' | 'on' | 'award'
+
+/**
+ * The rolling streak window, drawn as one dot per day beside the encounter bar.
+ *
+ * Everything here is decided in the core: which days count, how wide the window is, whether it
+ * has already paid out, and what the row says. The webview draws `days` and prints `text` —
+ * it never counts a day, compares a date, or builds a sentence.
+ */
+export interface PanelStreak {
+  /** One entry per day of the window, oldest first, ending today. */
+  days: PanelStreakDay[]
+  /** Short line beside the dots: "2 of 3 days", or "Legendary earned" once it has fired. */
+  text: string
+  /** Accessible name for the row, since the dots themselves say nothing to a screen reader. */
+  label: string
+  /** `aria-valuenow` / `aria-valuemax`: days accrued against days needed. */
+  value: number
+  max: number
+  /** True once this window's legendary is earned — the row greys out until the window clears. */
+  earned: boolean
+}
+
 /** The Wild tab: the encounter queue and everything the scene needs. */
 export interface PanelWild {
   encounters: PanelWildEncounter[]
@@ -161,6 +223,8 @@ export interface PanelWild {
   nextText: string
   /** 0..100 toward the next encounter, the bar that label sits on. */
   progressPercent: number
+  /** The streak row under that bar. */
+  streak: PanelStreak
   balls: PanelBallOption[]
   /** Shown under the ball rack when every count is zero. */
   noBallsText: string
@@ -225,6 +289,8 @@ export interface PanelStrings {
   shopBalls: string
   shopItems: string
   shopEggs: string
+  /** The one line all three eggs share, under the Eggs heading rather than on every card. */
+  shopEggsNote: string
   /** Home's empty state when no AI CLI usage has been found yet. */
   noUsage: string
   /** Pokédex browsing: the search field, the owned-only toggle and their empty state. */

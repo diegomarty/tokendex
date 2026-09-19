@@ -36,6 +36,7 @@ import {
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { buildPanelState } from '../../src/core/panel/build.js'
+import { todayKey } from '../../src/core/usage/entry.js'
 import {
   type CompanionView,
   type LimitRow,
@@ -259,6 +260,10 @@ interface SceneOptions extends UsageOptions {
   limits?: LimitRow[]
   errors?: string[]
   dev?: PanelDev
+  /** Days back from the fixture clock on which usage accrued, for the streak row. */
+  streakDaysAgo?: number[]
+  /** Days back from the fixture clock on which this window's legendary was earned. */
+  awardDaysAgo?: number
 }
 
 /** Enough balls to throw and one candy to spend — the default a fixture rarely needs to change. */
@@ -281,6 +286,12 @@ function scene(options: SceneOptions = {}): PanelState {
     // Pinned so the "next encounter" line always reads 1.2M and its bar 52%.
     encounterUsage: 1_300_000,
     encountersSeen: 3,
+    // The streak row is built from these by the real `streakWindow`, so a fixture says which
+    // days a player worked and the panel decides what that draws.
+    accrualDays: (options.streakDaysAgo ?? []).map((n) => todayKey(EPOCH - n * DAY)),
+  }
+  if (options.awardDaysAgo !== undefined) {
+    state.lastStreakAwardDate = todayKey(EPOCH - options.awardDaysAgo * DAY)
   }
   if (options.mon !== undefined) state.active = options.mon
 
@@ -400,6 +411,41 @@ export const FIXTURES: Fixture[] = [
     id: 'wild-empty',
     label: 'Home scene: nothing waiting, companion on stage',
     state: scene(),
+  },
+  // The four states of the streak row, which is otherwise only reachable by waiting a week.
+  {
+    id: 'streak-empty',
+    label: 'Streak row: no days worked yet',
+    state: scene({ mon: mon([172, 25, 26], 1), line: evoLine([172, 25, 26]) }),
+  },
+  {
+    id: 'streak-partway',
+    label: 'Streak row: two of three days',
+    state: scene({
+      streakDaysAgo: [3, 0],
+      mon: mon([172, 25, 26], 1),
+      line: evoLine([172, 25, 26]),
+    }),
+  },
+  {
+    id: 'streak-earned',
+    label: 'Streak row: the third day just paid out',
+    state: scene({
+      streakDaysAgo: [2, 1, 0],
+      awardDaysAgo: 0,
+      mon: mon([172, 25, 26], 1),
+      line: evoLine([172, 25, 26]),
+    }),
+  },
+  {
+    id: 'streak-paid',
+    label: 'Streak row: paid earlier in the week, still working',
+    state: scene({
+      streakDaysAgo: [4, 3, 2, 1, 0],
+      awardDaysAgo: 2,
+      mon: mon([172, 25, 26], 1),
+      line: evoLine([172, 25, 26]),
+    }),
   },
   {
     id: 'egg-early',

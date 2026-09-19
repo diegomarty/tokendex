@@ -458,23 +458,6 @@ export const ownedActionLabel = (lang: AppLanguage, name: string): string =>
     `${name} — ya en posesión`,
   )
 
-/**
- * The ten-pack's old sentence form, still read by the shop's current row builder.
- *
- * Superseded by `bundleBuyLabel` + `bundleSaveText`, which attach the saving to the action that
- * grants it instead of spending a description line on it. Kept until the panel builder moves
- * over.
- */
-export function bundleDescription(lang: AppLanguage, size: number, discountPercent: number): string {
-  return t(
-    lang,
-    `${size}개 묶음, ${discountPercent}% 할인.`,
-    `${size} at once, ${discountPercent}% off.`,
-    `${size}個セット、${discountPercent}%お得。`,
-    `${size} de una vez, ${discountPercent}% de descuento.`,
-  )
-}
-
 // MARK: - First run
 
 /** Home's empty state before any AI CLI usage has been found. Brand names stay untranslated. */

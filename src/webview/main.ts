@@ -7,9 +7,9 @@
  * formatting path would be a second source of truth that drifts.
  */
 
-import type { PanelLineItem, PanelState, PanelThrowResult } from './protocol.js'
+import type { PanelLineItem, PanelShopAction, PanelState, PanelThrowResult } from './protocol.js'
 import { PANEL_TABS, type PanelTabID } from './shell.js'
-import { ANIMATED_SPRITE_MAX, itemSpriteURL, spriteURL, trainerURL } from './sprite.js'
+import { ANIMATED_SPRITE_MAX, itemSpriteURL, sceneSpriteURL, spriteURL, trainerURL } from './sprite.js'
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void
@@ -365,9 +365,14 @@ function finishThrow(result?: PanelThrowResult): void {
 /**
  * The unified game block: one scene for trainer, companion and — when one is waiting — the
  * wild encounter, with the block beneath switching between the companion's progress and the
- * capture controls. The animated GIF is only used for the wild; the companion at the
- * trainer's side is a 48px still (exactly half of the 96px sheet, the documented clean
- * scale), which keeps the scene to one GIF and the follower legible at sidebar width.
+ * capture controls.
+ *
+ * Everyone standing in it goes through `sceneSpriteURL`: one rule, native ×1, feet on one
+ * ground line. The follower used to be the exception — a still pinned to 48px, half Game
+ * Freak's own scale, which read as a speck beside a full-size trainer. Growing that still to
+ * the whole 96px sheet is not enough on its own, because the sheet's transparent floor varies
+ * per species; the animated frame is cropped to the feet, which is exactly why the wild has
+ * always used it. The cost is a second GIF in the scene while an encounter is on stage.
  */
 function renderGame(state: PanelState): string {
   const wild = state.wild
@@ -396,14 +401,15 @@ function renderGame(state: PanelState): string {
       ? ''
       : c.speciesID === undefined
         ? `<div class="companion-mon${celebrate}"><div class="egg-small">🥚</div></div>`
-        : `<div class="companion-mon${celebrate}"><img class="bob" src="${spriteURL(c.speciesID, c.isShiny, false)}" alt=""></div>`
+        : `<div class="companion-mon${celebrate}"><img class="bob" src="${sceneSpriteURL(c.speciesID, c.isShiny)}" alt=""
+             data-fallback="${spriteURL(c.speciesID, c.isShiny, false)}"></div>`
 
   const wildPart =
     selected === undefined
       ? ''
       : `
       <div class="wild-mon">
-        <img class="mon bob" src="${spriteURL(selected.speciesID, selected.isShiny, true)}" alt=""
+        <img class="mon bob" src="${sceneSpriteURL(selected.speciesID, selected.isShiny)}" alt=""
              data-fallback="${spriteURL(selected.speciesID, selected.isShiny, false)}">
       </div>
       <div class="throw-ball"><span class="throw-ball-y"><img alt=""></span></div>`
@@ -504,8 +510,37 @@ function renderGame(state: PanelState): string {
           <span class="pct">${wild.progressPercent}%</span>
         </div>
         <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
+        ${streakRow(wild.streak)}
       </div>
     </section>`
+}
+
+/**
+ * The streak row: one dot per day of the rolling window, with the short line beside it.
+ *
+ * Every decision arrived already made — which dots are filled, which one was the payout,
+ * whether the week is spent, and what the line says. Nothing here counts a day or compares a
+ * date, which is the only reason the row cannot drift from the rule that pays the reward.
+ *
+ * Unlike the bars, the ARIA is written into the markup rather than applied in a pass like
+ * `paintBars`: that function exists because the CSP drops inline *styles*, and these dots need
+ * none. Attributes in the string survive, and they come back automatically when a tab is
+ * repainted from `current` after being switched away from.
+ *
+ * `streak` is read defensively because the webview is a separate bundle: an updated host is
+ * the normal case, but a stale panel restored from a serialised state is not, and a missing
+ * row must leave the bar alone rather than throw through the whole render.
+ */
+function streakRow(streak: PanelState['wild']['streak'] | undefined): string {
+  if (streak === undefined || streak.days.length === 0) return ''
+  const dots = streak.days.map((day) => `<i class="dot ${escapeHTML(day)}"></i>`).join('')
+  return `<div class="streak${streak.earned ? ' earned' : ''}" role="progressbar"
+       aria-label="${escapeHTML(streak.label)}" aria-valuemin="0"
+       aria-valuemax="${streak.max}" aria-valuenow="${streak.value}"
+       aria-valuetext="${escapeHTML(streak.text)}">
+      <span class="label">${escapeHTML(streak.text)}</span>
+      <span class="dots">${dots}</span>
+    </div>`
 }
 
 /** An item's icon: the real PokéAPI sprite when there is one, the emoji otherwise (and as the
@@ -515,24 +550,75 @@ function itemIcon(sprite: string | undefined, emoji: string): string {
   return `<div class="icon"><img src="${itemSpriteURL(sprite)}" alt="" data-emoji-fallback="${escapeHTML(emoji)}"></div>`
 }
 
+/**
+ * One buyable price, as a button.
+ *
+ * Everything on it was decided in the core: the visible word, the accessible name, the price,
+ * the saving and whether it is affordable. `owned` is the row's, not the action's — it only
+ * picks which of the two disabled looks applies.
+ */
+function shopAction(
+  state: PanelState,
+  item: PanelState['shop'][number],
+  action: PanelShopAction,
+  withPrice: boolean,
+): string {
+  // Dimmed and italic, never struck through: a line through a price reads as a discount, and
+  // this row has a real one two millimetres away.
+  const cant = !action.enabled && !item.owned ? ' cant' : ''
+  const price = withPrice
+    ? `<span class="cost${cant}">${escapeHTML(action.priceText)}</span>` +
+      (action.saveText === undefined ? '' : `<span class="save">${escapeHTML(action.saveText)}</span>`)
+    : ''
+  return `<button class="action${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"
+                data-title="${escapeHTML(action.confirmTitle)}" data-price="${escapeHTML(action.priceText)}"
+                data-confirm="${escapeHTML(state.strings.buy)}"
+                aria-label="${escapeHTML(action.label)}"
+                ${action.enabled ? '' : 'disabled'}>
+          <span class="verb">${escapeHTML(action.text)}</span>${price}
+        </button>`
+}
+
 function renderShop(state: PanelState): string {
   if (state.shop.length === 0) return `<p class="empty">${escapeHTML(state.strings.empty)}</p>`
 
-  const row = (item: PanelState['shop'][number]): string => `
+  /**
+   * Two layouts, chosen by how many prices the row carries rather than by what it sells.
+   *
+   * One price keeps the shape the whole shop has always had — name and sentence left, price and
+   * button right, two lines. Two prices cannot fit that: at 300px the buttons would leave the
+   * name a column narrow enough to break "モンスターボール" across four lines. So the pair drops
+   * to its own line under the name, and the prices move inside the buttons, which is also what
+   * lets the two be told apart without reading the same word twice.
+   */
+  const row = (item: PanelState['shop'][number]): string => {
+    const stat =
+      item.stat === undefined
+        ? ''
+        : `<span class="stat"${item.statLabel === undefined ? '' : ` title="${escapeHTML(item.statLabel)}"`}>${escapeHTML(item.stat)}</span>`
+    const desc =
+      item.description === undefined ? '' : `<div class="desc">${escapeHTML(item.description)}</div>`
+    const body = `<div class="body">
+          <div class="title">${escapeHTML(item.title)}${stat}</div>
+          ${desc}
+        </div>`
+    if (item.actions.length === 1) {
+      const only = item.actions[0]!
+      return `
       <div class="row">
         ${itemIcon(item.sprite, item.emoji)}
-        <div class="body">
-          <div class="title">${escapeHTML(item.title)}</div>
-          <div class="desc">${escapeHTML(item.description)}</div>
-        </div>
-        <div class="desc price${!item.enabled && !item.owned ? ' cant' : ''}">${escapeHTML(item.priceText)}</div>
-        <button class="action" data-buy="${escapeHTML(item.id)}"
-                data-title="${escapeHTML(item.title)}" data-price="${escapeHTML(item.priceText)}"
-                data-confirm="${escapeHTML(state.strings.buy)}"
-                ${item.enabled ? '' : 'disabled'}>
-          ${escapeHTML(item.owned ? state.strings.owned : state.strings.buy)}
-        </button>
+        ${body}
+        <div class="desc price${!only.enabled && !item.owned ? ' cant' : ''}">${escapeHTML(only.priceText)}</div>
+        ${shopAction(state, item, only, false)}
       </div>`
+    }
+    return `
+      <div class="row multi">
+        ${itemIcon(item.sprite, item.emoji)}
+        ${body}
+        <div class="buys">${item.actions.map((a) => shopAction(state, item, a, true)).join('')}</div>
+      </div>`
+  }
 
   // The wallet on top: every price below is judged against this number, so making the reader
   // hop back to Home to know it is a dead end.
@@ -542,16 +628,25 @@ function renderShop(state: PanelState): string {
       <span class="value">${escapeHTML(state.spendableText)}</span>
     </div>`
 
-  const groups: { id: PanelState['shop'][number]['group']; title: string }[] = [
+  // `note` is what every card in the group would otherwise repeat. Only the eggs have one so
+  // far, and saying it once is the entire reason they each fit on one line now.
+  const groups: { id: PanelState['shop'][number]['group']; title: string; note?: string }[] = [
     { id: 'balls', title: state.strings.shopBalls },
     { id: 'items', title: state.strings.shopItems },
-    { id: 'eggs', title: state.strings.shopEggs },
+    { id: 'eggs', title: state.strings.shopEggs, note: state.strings.shopEggsNote },
   ]
+  // Each group is its own element, with its own row list inside it. Flat, the wide layout's
+  // auto-fill grid swallowed the headings as cells: "ITEMS" landed in a column beside a ball,
+  // and rows sat under a heading they did not belong to.
   const sections = groups
     .map((group) => {
       const items = state.shop.filter((item) => item.group === group.id)
       if (items.length === 0) return ''
-      return `<h2 class="section">${escapeHTML(group.title)}</h2>${items.map(row).join('')}`
+      const note = group.note === undefined ? '' : `<p class="section-note">${escapeHTML(group.note)}</p>`
+      return `<section class="shop-group">
+        <h2 class="section">${escapeHTML(group.title)}</h2>${note}
+        <div class="shop-rows">${items.map(row).join('')}</div>
+      </section>`
     })
     .join('')
 

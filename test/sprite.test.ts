@@ -3,6 +3,7 @@ import { ANIMATED_SPECIES_MAX, hasAnimatedSprite, stillSpriteURL } from '../src/
 import {
   ANIMATED_SPRITE_MAX,
   hasAnimatedSprite as webviewHasAnimatedSprite,
+  sceneSpriteURL,
   spriteURL,
 } from '../src/webview/sprite.js'
 
@@ -43,6 +44,20 @@ describe('spriteURL', () => {
   it('returns the still sprite when no animation is asked for', () => {
     expect(spriteURL(6, false, false)).toContain('/pokemon/6.png')
     expect(spriteURL(6, true, false)).toContain('/pokemon/shiny/6.png')
+  })
+
+  // [trigger branch] The encounter scene bottom-aligns trainer, companion and wild on one
+  // ground line, which holds only while every creature in it is a frame cropped to its feet.
+  // The still sheet is not: it centres the art on a 96px canvas over a variable amount of
+  // transparent floor, so a scene built from stills stands each species at its own height.
+  // Asking for `animated: false` here is the regression, and it is invisible in a still image
+  // of one species — hence a test rather than a screenshot.
+  it('always asks for the cropped animated frame for anything standing in the scene', () => {
+    for (const id of [1, 25, 133, 649]) {
+      expect(sceneSpriteURL(id, false)).toBe(spriteURL(id, false, true))
+      expect(sceneSpriteURL(id, false)).toMatch(/\.gif$/)
+      expect(sceneSpriteURL(id, true)).toContain('/animated/shiny/')
+    }
   })
 
   // The status bar tooltip is the one *core* consumer of a sprite URL, and the core cannot
