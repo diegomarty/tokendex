@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-19
+
+### Added
+
+- **A streak or a spending milestone now summons a legendary.** Three days of accrued work
+  inside a rolling seven, or every billion tokens used, each owe one legendary encounter.
+  Three consecutive days _are_ three days within seven, so there is one rule and one award per
+  window rather than two that would pay twice for the same week — and days are recorded only
+  where a refresh actually credited usage, so it counts work rather than an open editor.
+  Forcing a legendary used to be impossible: the species index carried a capture rate and
+  nothing else, which is why a legendary egg could not exist. The two legendary flags now ride
+  the existing index query — two columns, once every thirty days — and an index cached before
+  they existed is treated as expired rather than deleted, so the pool comes back empty and the
+  reward waits instead of handing over an ordinary rare. The legendary itself gets no special
+  treatment: it flees like any other, and it is still roughly 3% per Poké Ball.
+- **A streak indicator on the wild tab.** Seven dots under the encounter bar, one per day of
+  the rolling window, with the day that pays marked and the row greyed once it has fired.
+
+### Changed
+
+- **The companion renders at its true size** — roughly twice what it was. It had been drawn as
+  a 48×48 still beside an 80px trainer, with the creature itself occupying 17 to 40 of those
+  pixels. It now uses the animated sheet the wild Pokémon has always used, which is cropped to
+  the feet, so the trainer, the companion and any wild Pokémon stand on one floor at every
+  species. (The still sheet centres its art over a transparent floor whose depth varies by
+  species — 8px under Charizard, 33px under Bulbasaur — which is why simply enlarging it made
+  companions sink through the ground line.)
+- **The shop says less and shows more**: thirteen cards down to ten, and 1,243px down to 980px
+  at sidebar width. Each ball is one card carrying both its single and its ten-pack, so the
+  three rows whose whole description was "10 at once, 10% off" are gone, and the ten-pack's
+  saving rides a badge on its own button. The catch multiplier is a figure now — 1×, 1.5×, 2×
+  — because three numbers in a column compare at a glance where three sentences do not. The
+  three eggs shared a sentence describing their cost rather than their difference, so it moved
+  to the group heading and each card kept only what it guarantees.
+
+### Fixed
+
+- **Several VS Code windows no longer fight over your save.** Every window runs its own
+  extension host, scan worker and companion store, and all of them write the same files — a
+  path keyed on the OS user, so the contenders include every profile and every fork, not just
+  two windows of one editor. The save was read once per worker and written unconditionally on
+  every tick, which made "last writer wins" the steady state rather than a rare race: an
+  afternoon's catches, purchases and growth could be overwritten by a window that had been
+  sitting idle. Both writers also used the same temporary filename, which could tear the file
+  outright — and the recovery path then wrote a fresh state over what was left. Every change
+  is now a read-modify-write under a short lock, so windows see each other's work instead of
+  trampling it, and a purchase that could not be committed says so instead of appearing to
+  have worked.
+- **Only one window pays for the scan.** A cold pass over a real corpus takes about thirty
+  seconds, and every open window was doing it independently. One window now scans and
+  publishes; the others read the publication. Where nothing has been published yet, a window
+  simply scans, exactly as before.
+- **A catch in one window reaches the others in about a second**, rather than waiting up to a
+  full refresh interval.
+- The shop's wide layout put every heading into the product grid, so "ITEMS" could sit beside
+  a ball and rows appeared under headings they did not belong to.
+- The ball multipliers shown in the shop were typed by hand and could drift from the ones the
+  purchase actually charges; they are derived from the same table now.
+
 ## [0.3.0] - 2026-09-19
 
 ### Fixed
