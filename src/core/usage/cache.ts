@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { gunzipSync, gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import * as AppPaths from '../appPaths.js'
+import { atomicWriteFile } from '../coordination/atomicWrite.js'
 import {
   type CodexParsedRollout,
   type CodexRolloutFile,
@@ -114,6 +115,22 @@ export interface CacheOptions {
   antigravityRoot?: string
   filePath?: string
   now?: () => number
+  /**
+   * Whether this window may publish the cache at all — the scan lease, injected.
+   *
+   * Derived data has a cheap failure mode (a re-parse, never lost progress), which is why it
+   * never takes the save's lock. What it does need is a *single writer*, and the lease already
+   * elects one: §3.5's worst moment is a window closing, because `deactivate` flushes
+   * unconditionally and writes that window's view over whatever the surviving window last
+   * published — so closing one window costs the other the 30 s parse it just paid for.
+   *
+   * Absent means "always", which is the right default for a cache with no lease behind it
+   * (every test, and the tools). A follower never reaches this: it skips the disk pass
+   * entirely, so nothing is ever dirty. The one window that does reach it is a *degraded*
+   * follower — one that scanned because no publication existed yet — and its parse is exactly
+   * the work the elected holder is doing at the same moment.
+   */
+  canPersist?: () => boolean
   /**
    * Throwing probe on purpose: a read failure and "no metadata" differ in whether the result
    * may be indexed. Folding them would freeze a transient I/O error into the cache until the
@@ -513,6 +530,7 @@ export class LocalUsageCache {
    */
   async flush(): Promise<void> {
     if (!this.dirty) return
+    if (!this.mayPersist) return
     await this.save()
   }
 
@@ -520,7 +538,16 @@ export class LocalUsageCache {
   private async saveIfNeeded(): Promise<void> {
     if (!this.dirty) return
     if (this.lastSave !== undefined && this.now - this.lastSave < SAVE_THROTTLE_MS) return
+    if (!this.mayPersist) return
     await this.save()
+  }
+
+  /**
+   * The lease gate. `dirty` is deliberately left set when this says no: the work stays
+   * pending, so a window that is later elected publishes it instead of having discarded it.
+   */
+  private get mayPersist(): boolean {
+    return this.options.canPersist?.() ?? true
   }
 
   /**
@@ -553,16 +580,13 @@ export class LocalUsageCache {
       codexSessionIndexVersion: CODEX_SESSION_INDEX_VERSION,
     }
     try {
-      const path = this.filePath
-      await fs.mkdir(join(path, '..'), { recursive: true })
       // Level 1 on purpose: megabytes of JSON still shrink to about a megabyte at a quarter
       // of the CPU of the default level, and this runs after every scan that parsed something
-      // new. Async so the compression leaves the worker's event loop free. Written to a
-      // temporary file and renamed so an interrupted write cannot leave a torn cache.
+      // new. Async so the compression leaves the worker's event loop free.
       const payload = await gzipAsync(Buffer.from(JSON.stringify(snapshot), 'utf8'), { level: 1 })
-      const temp = `${path}.tmp`
-      await fs.writeFile(temp, payload)
-      await fs.rename(temp, path)
+      // The single-flight above is intra-worker; every other VS Code window has its own
+      // worker writing this same path, so the temp name has to be per-writer too.
+      await atomicWriteFile(this.filePath, payload)
       this.lastSave = this.now
     } catch {
       this.dirty = true

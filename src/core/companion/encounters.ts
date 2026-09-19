@@ -47,6 +47,66 @@ export const EncounterBalance = {
 } as const
 
 /**
+ * When a *guaranteed legendary* encounter is earned by using the tools over time.
+ *
+ * Two rules, one award. The consecutive rule is what fires for someone who codes every day;
+ * the 3-of-7 rule catches someone who skips a day — and since three consecutive days are
+ * always three days inside seven, the first is strictly subsumed by the second. That is
+ * deliberate, and it is why `days` is not evaluated twice: a separate consecutive check could
+ * never fire on its own, so it would be dead code pretending to be a rule.
+ *
+ * Because they overlap, they share one guard: at most one streak legendary per rolling
+ * `windowDays`, whichever rule got there. Awarding per rule would hand out two legendaries for
+ * the same week's work.
+ */
+export const StreakBalance = {
+  /** Days with real accrual that earn a legendary. */
+  days: 3,
+  /**
+   * The rolling window those days are counted in, and the cooldown between awards. Seven days
+   * so a working week with a day off still qualifies, and so a daily user earns at most one a
+   * week (~52/year) rather than one every three days.
+   */
+  windowDays: 7,
+} as const
+
+/**
+ * Lifetime-usage milestones that earn a guaranteed legendary.
+ *
+ * `tokens` is picked against measured burn rather than taste: the reference corpus ran 561M
+ * tokens in 118 hours (~4.8M/h, so ~190M across a 40-hour week). At 1B that is one legendary
+ * every ~5.3 weeks — ~10 a year — which sits alongside the streak's ~52 for a combined ~1.2 a
+ * week. It is also legible against the rest of the economy: 1B is ~1.3 common graduations
+ * (750M), a sixth of a legendary one (6B), 200 eggs (5M) or 400 ordinary encounters (2.5M).
+ *
+ * Crossing several multiples in one fold awards **one**, never one per multiple — see
+ * `applyLegendaryTriggers`. A big first scan is not a jackpot.
+ */
+export const MilestoneBalance = {
+  tokens: 1_000_000_000,
+} as const
+
+/**
+ * Owes the player one guaranteed-legendary encounter.
+ *
+ * **This is the single entry point for every trigger that hands a legendary out** — the daily
+ * streak and the lifetime milestone today, a graduation reward or a completed Pokédex
+ * tomorrow. It deliberately takes no reason: delivery reuses the ordinary spawn path with the
+ * rarity forced, and the moment it could see *why* it was called, someone would add a
+ * `reason === '…'` branch to it. The copy that names the reason belongs to the trigger, which
+ * is the only place that knows the detail worth saying (which day, which milestone).
+ *
+ * It is a counter, not a flag: two triggers firing in the same fold owe two legendaries, so
+ * neither is silently swallowed. The cap is one full queue's worth — beyond that they could
+ * never all be delivered anyway, and an unbounded counter fed by a buggy trigger would mint
+ * legendaries for ever.
+ */
+export function grantLegendaryEncounter(state: CompanionState, count = 1): CompanionState {
+  const owed = Math.max(0, state.owedLegendaryEncounters) + Math.max(0, count)
+  return { ...state, owedLegendaryEncounters: Math.min(EncounterBalance.maxQueue, owed) }
+}
+
+/**
  * How long a wild Pokémon waits before wandering off.
  *
  * **This is what keeps the feature alive.** A full queue freezes accrual (see

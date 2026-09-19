@@ -32,8 +32,16 @@ export type DispatchRequest<Action> = BaseRequest &
     | { type: 'panel' }
     | { type: 'render' }
     /**
-     * Persist whatever is still held in memory, now. Queued like everything else, so it lands
-     * *after* the scan that may still be filling the cache rather than racing it.
+     * Another window changed something on disk. Re-read what it wrote and rebuild the
+     * snapshot from the last scan — no disk pass over the logs, and **no write**: this is
+     * driven by a filesystem watcher, and a handler that wrote would give the other window an
+     * event to answer for ever.
+     */
+    | { type: 'sync' }
+    /**
+     * Persist whatever is still held in memory, now, and hand back the scan lease. Queued
+     * like everything else, so it lands *after* the scan that may still be filling the cache
+     * rather than racing it.
      */
     | { type: 'flush' }
     /**
@@ -57,6 +65,11 @@ export interface DispatcherDeps<Action, Snapshot, Panel, Extra = never> {
   /** May return a result to ride the reply beside the panel (a throw's outcome). */
   applyAction: (action: Action) => Promise<Extra | undefined>
   buildPanel: (snapshot: Snapshot, locale: string | undefined, devMode: boolean) => Panel
+  /**
+   * Re-reads what other windows have written and recomposes the snapshot, without scanning
+   * and without writing. Answers the `sync` request.
+   */
+  sync: (locale: string | undefined) => Promise<Snapshot>
   /** Writes through whatever is buffered in memory. Answers the `flush` request. */
   flush: () => Promise<void>
   post: (response: DispatchResponse<Snapshot, Panel, Extra>) => void
@@ -73,6 +86,15 @@ export function createDispatcher<Action, Snapshot, Panel, Extra = never>(
       if (message.type === 'flush') {
         await deps.flush()
         deps.post({ id: message.id, ok: true, flushed: true })
+        return
+      }
+
+      // Recorded as the last scan, so the panel `render` the host sends straight afterwards
+      // rebuilds from the synced numbers rather than from the pre-sync ones.
+      if (message.type === 'sync') {
+        const synced = await deps.sync(message.locale)
+        lastScan = synced
+        deps.post({ id: message.id, ok: true, snapshot: synced })
         return
       }
 

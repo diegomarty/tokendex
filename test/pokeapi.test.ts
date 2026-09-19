@@ -57,6 +57,44 @@ describe('chooseBaseFromIndex', () => {
   })
 })
 
+// The legendary tier is the one `capture_rate` cannot express: every legendary sits at or
+// below 45, but so do plenty of ordinary rares. These tests are what keep a "guaranteed
+// legendary" from quietly handing over a Dratini.
+describe('a legendary-only pool', () => {
+  const withFlags: BaseSpecies[] = [
+    { id: 1, captureRate: 45 }, // rare, and indistinguishable from a legendary by rate alone
+    { id: 150, captureRate: 3, isLegendary: true }, // Mewtwo-class
+    { id: 151, captureRate: 45, isMythical: true }, // Mew-class
+    { id: 10, captureRate: 255 },
+  ]
+
+  it('draws only the flagged species', () => {
+    const picks = new Set<number | undefined>()
+    for (let r = 0; r < 400; r++)
+      picks.add(chooseBaseFromIndex(withFlags, 'legendary', new Set(), rng(r)))
+    expect(picks).toEqual(new Set([150, 151]))
+  })
+
+  it('counts a mythical as legendary, as the rarity table does', () => {
+    const mythicalOnly: BaseSpecies[] = [{ id: 151, captureRate: 45, isMythical: true }]
+    expect(chooseBaseFromIndex(mythicalOnly, 'legendary', new Set(), rng(0))).toBe(151)
+  })
+
+  // An index cached by a version that predates the flags. Empty is the honest answer: the
+  // reward stays owed until a fresh index lands, rather than being paid with a rare.
+  it('is empty, not wrong, for an index that predates the flags', () => {
+    expect(chooseBaseFromIndex(index, 'legendary', new Set(), rng(0))).toBeUndefined()
+  })
+
+  // Legendaries were always admitted by a rare guarantee, through the capture-rate ceiling.
+  // Adopting the flags must not have narrowed that.
+  it('still admits a legendary into a rare-or-better pool', () => {
+    const picks = new Set<number | undefined>()
+    for (let r = 0; r < 400; r++) picks.add(chooseBaseFromIndex(withFlags, 'rare', new Set(), rng(r)))
+    expect(picks).toEqual(new Set([1, 150, 151]))
+  })
+})
+
 describe('chooseBaseViaREST', () => {
   const provider = (bases: Record<number, BaseSpecies | undefined>) => ({
     baseSpecies: async (id: number) => bases[id],

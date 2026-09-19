@@ -21,10 +21,16 @@ import {
   todayTokensByProvider,
   totalsFor,
 } from '../core/snapshot.js'
+import {
+  ScanLease,
+  type ScanObservation,
+  observeThroughLease,
+  readPublishedScan,
+} from '../core/coordination/scanLease.js'
 import { LocalUsageCache } from '../core/usage/cache.js'
 import { type Entry, enrichmentScanStart, todayKey } from '../core/usage/entry.js'
 import { claudeProjectRoots, codexSessionsDir } from '../core/usage/roots.js'
-import { CompanionStore } from '../core/companion/store.js'
+import { CompanionStore, SaveBusyError } from '../core/companion/store.js'
 import { LimitsPoller, highestUtilization, isLimitWarning } from '../core/limits/poller.js'
 import { candyEligibleWindows, limitSeverity } from '../core/limits/windows.js'
 import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
@@ -32,6 +38,7 @@ import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
 import {
   type AppLanguage,
+  type CompanionState,
   type ItemKind,
   type Rarity,
   currentSpeciesID,
@@ -56,6 +63,7 @@ import { type DevAction, DEV_GROUPS, DEV_SCENARIOS, devSummary } from '../core/d
 import { promises as devFS } from 'node:fs'
 import { join as devJoin } from 'node:path'
 import { ourData } from '../core/appPaths.js'
+import { atomicWriteFile, sweepOrphanTemporaries } from '../core/coordination/atomicWrite.js'
 import { compact, percent } from '../core/tokenFormatter.js'
 import { f } from '../core/i18n/strings.js'
 import { stage as stageLabel } from '../core/i18n/dispatch.js'
@@ -126,19 +134,35 @@ export interface RenderRequest {
 }
 
 /**
- * Persist what is still buffered, and say when it is done.
+ * Another window changed a file in `ourData()`; re-read it and rebuild.
+ *
+ * Sent by the host's watcher, debounced, so a catch or a purchase in one window reaches the
+ * other in about a second instead of at its next tick. Strictly read-only: it never scans and
+ * never writes, which is what keeps two watching windows from answering each other for ever.
+ */
+export interface SyncRequest {
+  id: number
+  type: 'sync'
+  locale?: string
+}
+
+/**
+ * Shut down cleanly: persist what is still buffered, then hand back the scan lease.
  *
  * The usage cache throttles its writes to once a minute, so a window closed shortly after a
  * scan that parsed something new would otherwise discard that work and re-parse it on the next
- * launch. The host sends this from `deactivate`, bounded by a timeout — a flush queued behind a
- * cold scan must never be what keeps a window open.
+ * launch. Releasing the lease is the other half: without it the next window waits out the
+ * staleness ceiling before it may scan, for a window that closed politely. The host sends this
+ * from `deactivate`, bounded by a timeout — a flush queued behind a cold scan must never be
+ * what keeps a window open.
  */
 export interface FlushRequest {
   id: number
   type: 'flush'
 }
 
-export type WorkerRequest = ScanRequest | PanelRequest | ActionRequest | RenderRequest | FlushRequest
+export type WorkerRequest =
+  ScanRequest | PanelRequest | ActionRequest | RenderRequest | SyncRequest | FlushRequest
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
@@ -229,20 +253,94 @@ async function readDev(): Promise<void> {
 
 async function saveDev(): Promise<void> {
   try {
-    await devFS.mkdir(ourData(), { recursive: true })
-    await devFS.writeFile(DEV_FILE, JSON.stringify(dev), 'utf8')
+    // Per-writer temp then rename: every other window's worker writes this same path, and a
+    // plain `writeFile` there truncates in place — a reader lands in the hole and the offsets
+    // read back as a fresh dev state.
+    await atomicWriteFile(DEV_FILE, JSON.stringify(dev), 'utf8')
   } catch {
     // Dev-only: a write failure must never break a refresh.
   }
 }
 
+/**
+ * The scan lease (`docs/multi-window.md` §6 stage 2, §3.6).
+ *
+ * **It lives here, in the worker, and not on the extension host.** Three facts decide that.
+ * The decision it drives — scan, or read what the holder published — has to be taken at the
+ * moment the scan runs, and a flag piggybacked from the host on the request would be a
+ * decision taken one round trip ago about a lease another window may since have broken. The
+ * publication is produced here, because the aggregated providers only exist here. And the
+ * heartbeat has to be touched after each scan, which is an event only this side sees.
+ *
+ * What the host keeps is the half that is genuinely its own: the lifecycle. `deactivate`
+ * sends `flush`, and releasing the lease is the last thing that request does.
+ */
+const lease = new ScanLease({ directory: ourData() })
+
+/**
+ * The lease holder's heartbeat cadence.
+ *
+ * Deliberately independent of `tokendex.refreshInterval`. Touching only after each scan would
+ * tie staleness to a setting that ranges from 30 s to 10 minutes and is stretched further by
+ * the host's unfocused backoff (three skipped ticks), so a ten-minute interval would need a
+ * half-hour ceiling — and a window killed at the start of that would own the scan, dead, for
+ * half an hour. `LEASE_STALE_AFTER_MS` is four missed touches at this cadence.
+ */
+const LEASE_HEARTBEAT_MS = 20_000
+let leaseHeartbeat: NodeJS.Timeout | undefined
+
 const cache = new LocalUsageCache({
+  // Only the elected window publishes the cache. The gate matters most at the moment §3.5
+  // names: a closing window's `flush` writing its view over the survivor's fresher parse.
+  canPersist: () => lease.owned,
   ...(config.cacheFilePath !== undefined ? { filePath: config.cacheFilePath } : {}),
   ...(config.claudeRoots !== undefined ? { claudeRoots: config.claudeRoots } : {}),
   ...(config.codexRoot !== undefined ? { codexRoot: config.codexRoot } : {}),
 })
 
-async function scan(locale: string | undefined) {
+/**
+ * The last observation, for the `sync` path — it recomposes rather than re-observing.
+ *
+ * `ScanObservation` carries `scannedAt`: when the disk pass behind `providers` ran, ours or
+ * the holder's. Everything time-shaped downstream reads that rather than `Date.now()`,
+ * because a follower's numbers are as of the holder's scan. The tooltip would otherwise claim
+ * a freshness they do not have, and — the part that costs progress rather than honesty — a
+ * follower folding yesterday's cumulative totals against today's date would re-open the
+ * ledger's day rollover and credit a whole day a second time.
+ */
+let lastObservation: ScanObservation | undefined
+
+/** One refresh's worth of observation. The policy lives in `observeThroughLease`. */
+async function observe(locale: string | undefined): Promise<ScanObservation> {
+  const result = await observeThroughLease({
+    directory: ourData(),
+    lease,
+    scanCorpus: () => readCorpus(locale),
+    onOwned: startLeaseHeartbeat,
+  })
+  return result.observation
+}
+
+/**
+ * Keeps the lease alive while this window owns it, and stops owning it the moment it does not.
+ *
+ * `heartbeat()` answering `false` means another window judged us stale and broke the hold —
+ * the residual window in break-by-rename that `fileLock.ts` documents as unclosable. A lease
+ * that ignored that answer would go on publishing snapshots and writing the usage cache as if
+ * it were the elected window, which is two writers with one of them convinced otherwise.
+ * `ScanLease.touch` drops the handle, so `lease.owned` is false from that instant and the next
+ * `observe` competes for the lease again like any other follower.
+ */
+function startLeaseHeartbeat(): void {
+  if (leaseHeartbeat !== undefined) return
+  leaseHeartbeat = setInterval(() => {
+    void lease.touch()
+  }, LEASE_HEARTBEAT_MS)
+  // The worker is kept alive by its message port; this timer must not be what holds it open.
+  leaseHeartbeat.unref?.()
+}
+
+async function readCorpus(locale: string | undefined): Promise<ScanObservation> {
   const now = Date.now()
   const since = enrichmentScanStart(now, locale)
   const errors: string[] = []
@@ -302,7 +400,54 @@ async function scan(locale: string | undefined) {
   // Aggregate once. The same reports feed the ledger, the burn tier and the final snapshot:
   // building a full snapshot here just to read them meant paying the three passes over every
   // entry twice per scan (and its status text and tooltip were thrown away unread).
-  const providers = aggregateProviders(sources, now)
+  return { providers: aggregateProviders(sources, now), errors, scannedAt: now }
+}
+
+/**
+ * A full refresh: observe, fold the observation into the save, and compose the snapshot.
+ */
+async function scan(locale: string | undefined) {
+  const observation = await observe(locale)
+  lastObservation = observation
+  return compose(observation, locale, { accrue: true })
+}
+
+/**
+ * Another window wrote something. Re-read it and recompose — no disk pass, and **no write**.
+ *
+ * Driven by the watcher on `ourData()`. Two things it deliberately does not do. It does not
+ * scan: a catch or a purchase changes the save, not the logs. And it does not accrue — the
+ * fold ends in a write, and a watch handler that wrote would hand the other window a change
+ * to answer, for ever. Accrual belongs to the timer, whose tick is nobody's event.
+ *
+ * A follower also re-reads the publication here, so the holder finishing a scan reaches every
+ * other window in about a second rather than at their own next tick.
+ */
+async function sync(locale: string | undefined) {
+  await companion.syncFromDisk()
+  const published = lease.owned ? undefined : await readPublishedScan(ourData())
+  const observation = published ?? lastObservation
+  // Nothing observed yet by anyone: there is no snapshot to recompose, so do the real thing.
+  if (observation === undefined) return scan(locale)
+  lastObservation = observation
+  return compose(observation, locale, { accrue: false })
+}
+
+/**
+ * Turns one observation into the snapshot the UI renders.
+ *
+ * `accrue` is what separates a refresh from a re-read: only a refresh folds the observation
+ * into the ledger, grants candy and drains celebrations. Everything below that line is pure
+ * presentation and runs on both paths, which is what makes a follower's panel identical in
+ * shape to the holder's — same code, same already-localised text, different freshness.
+ */
+async function compose(
+  observation: ScanObservation,
+  locale: string | undefined,
+  options: { accrue: boolean },
+) {
+  const { providers, scannedAt } = observation
+  const errors = [...observation.errors]
   const totals = totalsFor(providers)
 
   let view: CompanionView | undefined
@@ -311,46 +456,10 @@ async function scan(locale: string | undefined) {
   let limitRows: LimitRow[] = []
   try {
     await loadDev()
-    // Synthetic dev tokens ride on top of the real observation, so they travel the whole
-    // production pipeline (ledger, crediting, growth) instead of being written into the save.
-    const observed = applyDevOffsets(todayTokensByProvider(providers), dev)
-    await companion.update({
-      todayTokensByProvider: observed,
-      todayDate: dev.dateOverride ?? todayKey(now),
-      hasUsageData: providers.some((p) => p.entries > 0),
-    })
-    // After `update`, so the grant lands on the state that was just persisted rather than on
-    // a copy `update` is about to overwrite.
+    // Returns what is already known and fetches for next time, on its own ten-minute cadence,
+    // so calling it from the cheap path costs nothing and keeps the limits in the snapshot.
     const known = limits.refresh()
-    const outcome = grantCandies(
-      companion.snapshot(),
-      candyEligibleWindows(known.sources, companion.snapshot().language),
-      known.ready,
-    )
-    if (outcome.changed) {
-      // Re-arming counts as a change even with no grant: dropping it leaves a stale tier, and
-      // the next genuine crossing is then mistaken for one already paid.
-      companion.replaceState(outcome.state)
-      await companion.save()
-    }
-    // The game's peak moments — hatch, evolution, graduation, a candy grant — accumulate in
-    // the store and would otherwise happen in silence. They ride their own broadcast (not the
-    // response) so a panel request and a timer scan celebrate exactly once each.
-    const celebrations: CelebrationEvent[] = [
-      ...companion.drainEvents(),
-      ...outcome.grants.map((g): CelebrationEvent => ({
-        kind: 'candyGranted',
-        count: g.count,
-        windowName: g.windowName,
-      })),
-    ]
-    if (celebrations.length > 0) {
-      const lang = companion.snapshot().language
-      parentPort?.postMessage({
-        celebrate: celebrations.map((event) => celebrationText(lang, event)),
-        openLabel: openPanelLabel(lang),
-      })
-    }
+    if (options.accrue) await accrue(observation, known)
 
     limitWarning = isLimitWarning(known.sources)
     // Only providers that actually logged something today: a limit window for a tool you have
@@ -375,8 +484,11 @@ async function scan(locale: string | undefined) {
     errors.push(`Companion: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  return buildSnapshot(sources, {
-    now,
+  // The empty `sources`: `buildSnapshot` only aggregates them when `providers` is absent, and
+  // it never is here. Republishing the entries so a follower could re-aggregate them would be
+  // republishing the usage cache, megabytes of it, for an answer the holder already computed.
+  return buildSnapshot([], {
+    now: scannedAt,
     providers,
     ...(locale !== undefined ? { locale } : {}),
     lang: companion.snapshot().language,
@@ -386,6 +498,66 @@ async function scan(locale: string | undefined) {
     limitWarning,
     limitRows,
   })
+}
+
+/**
+ * Folds one observation into the save: the ledger, the candy grant, the celebrations.
+ *
+ * Everything here writes, which is exactly why it is separated from `compose`. The `sync`
+ * path must be able to recompose the panel without touching the file — see `sync` above.
+ */
+async function accrue(observation: ScanObservation, known: ReturnType<LimitsPoller['refresh']>) {
+  const { providers, scannedAt } = observation
+  // Synthetic dev tokens ride on top of the real observation, so they travel the whole
+  // production pipeline (ledger, crediting, growth) instead of being written into the save.
+  const observed = applyDevOffsets(todayTokensByProvider(providers), dev)
+  await companion.update({
+    todayTokensByProvider: observed,
+    // The *observation's* day, not this window's. A follower rendering a publication made
+    // before midnight must fold it against the day it was made, or the ledger's rollover
+    // branch counts that whole day's cumulative total as new usage a second time.
+    todayDate: dev.dateOverride ?? todayKey(scannedAt),
+    hasUsageData: providers.some((p) => p.entries > 0),
+  })
+  // After `update`, so the grant lands on the state that was just persisted rather than on
+  // a copy `update` is about to overwrite.
+  //
+  // One transaction, so the grant is decided against the file rather than against this
+  // window's copy. Both windows poll the same account-wide limit windows and both cross
+  // 100 %, but the second one re-reads a tier the first already armed, so `changed` is
+  // false and no candy is granted twice.
+  const granted = await companion.mutate((tx) => {
+    const outcome = grantCandies(
+      tx.state,
+      candyEligibleWindows(known.sources, tx.state.language),
+      known.ready,
+    )
+    // Re-arming counts as a change even with no grant: dropping it leaves a stale tier, and
+    // the next genuine crossing is then mistaken for one already paid.
+    if (outcome.changed) tx.commit(outcome.state)
+    return outcome.grants
+  })
+  // Accrual-shaped, so a busy lock is a skip: the tier stays where it was and the next tick
+  // re-evaluates the same limit windows.
+  const grants = granted.committed ? granted.value : []
+  // The game's peak moments — hatch, evolution, graduation, a candy grant — accumulate in
+  // the store and would otherwise happen in silence. They ride their own broadcast (not the
+  // response) so a panel request and a timer scan celebrate exactly once each.
+  const celebrations: CelebrationEvent[] = [
+    ...companion.drainEvents(),
+    ...grants.map((g): CelebrationEvent => ({
+      kind: 'candyGranted',
+      count: g.count,
+      windowName: g.windowName,
+    })),
+  ]
+  if (celebrations.length > 0) {
+    const lang = companion.snapshot().language
+    parentPort?.postMessage({
+      celebrate: celebrations.map((event) => celebrationText(lang, event)),
+      openLabel: openPanelLabel(lang),
+    })
+  }
 }
 
 /**
@@ -469,26 +641,66 @@ function throwResultText(
 }
 
 /**
+ * One state-changing action, as a single read-modify-write under the save's cross-window lock.
+ *
+ * Every site here used to read `companion.snapshot()`, transform it and write the result back
+ * — which is the §3.2 bug in miniature, once per action: a purchase in one window overwritten
+ * by another window's morning-old copy, with the toast already fired. `mutate` closes it by
+ * re-reading the file inside the lock, so `fn` always sees the balance, the bag and the queue
+ * as they actually are.
+ *
+ * `undefined` from `fn` means the rule declined (not enough tokens, nothing to use); that is a
+ * committed no-op, not a failure. A lock that could not be taken **is** a failure and throws
+ * the same `SaveBusyError` the store's own action methods throw, so `applyAction` has exactly
+ * one place to turn contention into a sentence the user reads.
+ */
+async function commit(
+  fn: (state: Readonly<CompanionState>) => CompanionState | undefined,
+  keepLine = true,
+): Promise<void> {
+  const result = await companion.mutate((tx) => {
+    const next = fn(tx.state)
+    if (next !== undefined) tx.commit(next, keepLine)
+  })
+  if (!result.committed) throw new SaveBusyError()
+}
+
+/**
  * Applies a user action, then rescans so the reply carries a fully consistent snapshot. The
  * webview never mutates state itself — it only asks, and re-renders whatever comes back.
  *
  * A throw returns its outcome, which the dispatcher attaches to the reply beside the panel.
+ *
+ * A `SaveBusyError` becomes localised text here, which is the one and only place it happens:
+ * the dispatcher turns a throw into `{ ok: false, error }`, and `handlePanelRequest` shows
+ * that string. The core emits the sentence; the host never composes one.
  */
 async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | undefined> {
   await companion.load()
-  const state = companion.snapshot()
-
-  switch (payload.action) {
-    case 'buyItem': {
-      const next = buyItem(state, payload.item, payload.quantity ?? 1)
-      if (next !== undefined) companion.replaceState(next)
-      break
+  try {
+    return await applyActionOn(payload)
+  } catch (error) {
+    if (error instanceof SaveBusyError) {
+      throw new Error(D.saveBusyText(companion.snapshot().language))
     }
+    throw error
+  }
+}
+
+async function applyActionOn(payload: WorkerAction): Promise<PanelThrowResult | undefined> {
+  switch (payload.action) {
+    case 'buyItem':
+      await commit((state) => buyItem(state, payload.item, payload.quantity ?? 1))
+      return undefined
 
     case 'throwBall': {
       // The name is captured before the throw: a caught or fled encounter is gone afterwards.
-      const target = state.wild.find((e) => e.id === payload.encounterID)
-      const name = target?.names?.[state.language] ?? `#${target?.speciesID ?? '?'}`
+      // Read from this window's last-known queue rather than from inside the hold, because it
+      // only feeds the animation's caption — the throw itself resolves against the re-read
+      // queue, so an encounter another window already caught answers `unknownEncounter`.
+      const before = companion.snapshot()
+      const target = before.wild.find((e) => e.id === payload.encounterID)
+      const name = target?.names?.[before.language] ?? `#${target?.speciesID ?? '?'}`
       const outcome = await companion.throwBallAt(payload.encounterID, payload.ball)
       const shakes = 'shakes' in outcome ? outcome.shakes : 0
       return {
@@ -506,48 +718,57 @@ async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | un
 
     case 'runFrom':
       await companion.runFrom(payload.encounterID)
-      break
+      return undefined
 
     case 'setTrainer':
       await companion.setTrainer(payload.trainerID)
-      break
+      return undefined
+
     case 'useItem': {
       if (payload.item === 'rareCandy') {
-        const next = consumeRareCandy(state)
-        if (next !== undefined) {
-          companion.replaceState(next)
-          companion.applyCandy()
-        }
+        // The debit and the XP it buys are one operation, so they share one hold: committing
+        // the spend and then growing outside it would let another window's write land between
+        // them and swallow the candy's effect while keeping the charge.
+        const result = await companion.mutate((tx) => {
+          const next = consumeRareCandy(tx.state)
+          if (next === undefined) return
+          tx.commit(next)
+          tx.applyCandy()
+        })
+        if (!result.committed) throw new SaveBusyError()
       } else if (payload.item === 'mint') {
-        const result = useMint(state, () => Math.floor(Math.random() * 0x7fffffff))
-        if (result !== undefined) companion.replaceState(result.state)
+        await commit((state) => useMint(state, () => Math.floor(Math.random() * 0x7fffffff))?.state)
       }
-      break
+      return undefined
     }
-    case 'buyEgg': {
-      const next = buyEgg(state, payload.tier)
-      if (next !== undefined) companion.replaceState(next)
-      break
-    }
+
+    case 'buyEgg':
+      await commit((state) => buyEgg(state, payload.tier))
+      return undefined
+
     case 'setLanguage':
-      companion.replaceState({ ...state, language: payload.language })
-      break
+      await commit((state) => ({ ...state, language: payload.language }))
+      return undefined
 
     // ---- development-only ----
+    //
+    // The dev offsets live in their own file and are this window's alone, so they are not
+    // under the save's lock. Anything that touches the *save* still goes through `commit`.
 
     case 'devAddTokens':
       await loadDev()
       dev = addOffset(dev, payload.provider, payload.amount)
       await saveDev()
-      break
+      return undefined
 
     case 'devAddToMilestone': {
       await loadDev()
+      const state = companion.snapshot()
       const amount =
         payload.scope === 'graduation' ? tokensToGraduation(state) : tokensToMilestone(state).amount
       dev = addOffset(dev, 'claude_code', amount)
       await saveDev()
-      break
+      return undefined
     }
 
     case 'devClearOffsets':
@@ -557,66 +778,70 @@ async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | un
       dev = clearOffsets(dev)
       delete dev.dateOverride
       await saveDev()
-      break
+      return undefined
 
     case 'devGrantItem':
-      companion.replaceState(grantItem(state, payload.item, payload.count))
-      break
+      await commit((state) => grantItem(state, payload.item, payload.count))
+      return undefined
 
     case 'devGrantTokens':
-      companion.replaceState(grantTokens(state, payload.amount))
-      break
+      await commit((state) => grantTokens(state, payload.amount))
+      return undefined
 
     case 'devSetShiny':
-      companion.replaceState(setShiny(state, payload.value))
-      break
+      await commit((state) => setShiny(state, payload.value))
+      return undefined
 
     case 'devSetDitto':
-      companion.replaceState(setDittoDisguise(state, payload.value))
-      break
+      await commit((state) => setDittoDisguise(state, payload.value))
+      return undefined
 
     case 'devSetEggTier':
-      companion.replaceState(setEggTier(state, payload.tier))
-      break
+      await commit((state) => setEggTier(state, payload.tier))
+      return undefined
 
     case 'devDayRollover':
       await loadDev()
       // A date the ledger has never seen forces the rollover branch on the next observation.
       dev.dateOverride = `2099-01-${String(1 + (new Date().getSeconds() % 28)).padStart(2, '0')}`
       await saveDev()
-      break
+      return undefined
 
     case 'devResetSave':
-      companion.replaceState(freshCompanionState(), false)
+      await commit(() => freshCompanionState(), false)
       await loadDev()
       dev = clearOffsets(dev)
       delete dev.dateOverride
       await saveDev()
-      break
+      return undefined
 
     case 'devSpawnEncounter':
-      companion.replaceState(spawnTestEncounter(state, payload.variant, Date.now()))
-      break
+      await commit((state) => spawnTestEncounter(state, payload.variant, Date.now()))
+      return undefined
 
     case 'devGrantBalls':
-      companion.replaceState(grantBalls(state, payload.count))
-      break
+      await commit((state) => grantBalls(state, payload.count))
+      return undefined
 
     case 'devSnapshot':
       if (payload.slot === 'save') {
-        await devFS.writeFile(DEV_SNAPSHOT_FILE, JSON.stringify(state), 'utf8')
+        // Read inside a hold so the copy is the file's state, not this window's: a snapshot
+        // taken from a stale copy would resurrect that copy whenever it was restored. The
+        // write to the snapshot file itself needs no lock — nothing else writes that path.
+        const taken = await companion.mutate((tx) => JSON.stringify(tx.state))
+        if (!taken.committed) throw new SaveBusyError()
+        await atomicWriteFile(DEV_SNAPSHOT_FILE, taken.value, 'utf8')
       } else {
+        let restored: CompanionState | undefined
         try {
-          const raw = await devFS.readFile(DEV_SNAPSHOT_FILE, 'utf8')
-          companion.replaceState(JSON.parse(raw) as typeof state, false)
+          restored = JSON.parse(await devFS.readFile(DEV_SNAPSHOT_FILE, 'utf8')) as CompanionState
         } catch {
           // Nothing snapshotted yet.
         }
+        if (restored !== undefined) await commit(() => restored, false)
       }
-      break
+      return undefined
   }
-  await companion.save()
-  return undefined
 }
 
 /**
@@ -680,10 +905,12 @@ const dispatch = createDispatcher<
   scan,
   applyAction,
   buildPanel,
+  sync,
   // The companion store already saves on every change, so the usage cache — which throttles
   // its writes — is the only thing that can still be holding work in memory. `flush`, not
-  // `save`: a window closed with nothing new parsed must not pay for a full rewrite.
-  flush: () => cache.flush(),
+  // `save`: a window closed with nothing new parsed must not pay for a full rewrite. The
+  // scan lease is handed back in the same request; see `shutdown` for why in that order.
+  flush: shutdown,
   post: (response) => parentPort?.postMessage(response),
 })
 
@@ -698,6 +925,34 @@ parentPort?.on('message', (message: WorkerRequest) => {
   dispatch(message)
 })
 
+/**
+ * The closing sequence, in this order and for a reason.
+ *
+ * The cache is flushed **while the lease is still held**, because the flush is gated on
+ * exactly that (`canPersist`); releasing first would silently discard the parse this window
+ * just paid for. Releasing second hands the scan to the next window immediately rather than
+ * making it wait out the staleness ceiling for a window that closed politely.
+ *
+ * Both halves are best effort. The host bounds this request at 1.5 s, and a lease that is not
+ * released simply goes stale — which is the path a `kill -9` takes anyway.
+ */
+async function shutdown(): Promise<void> {
+  await cache.flush()
+  stopLeaseHeartbeat()
+  await lease.release()
+}
+
+function stopLeaseHeartbeat(): void {
+  if (leaseHeartbeat !== undefined) clearInterval(leaseHeartbeat)
+  leaseHeartbeat = undefined
+}
+
 // Keep the resolved roots warm so the first scan does not also pay for discovery.
 void claudeProjectRoots().catch(() => undefined)
 void Promise.resolve(codexSessionsDir())
+
+// Per-writer temp names removed the shared-name corruption of §3.1 by trading it for one
+// orphan per `kill -9` mid-write, and nothing else in the product would ever collect them.
+// Once per worker, detached: housekeeping must never be on a refresh's critical path, and the
+// one-hour floor means several windows sweeping at once cannot touch a live writer's file.
+void sweepOrphanTemporaries(ourData())

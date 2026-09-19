@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
@@ -474,6 +483,75 @@ describe('save behaviour', () => {
     } finally {
       writes.mockRestore()
     }
+  })
+})
+
+/**
+ * The cache is derived data, so it never takes the save's lock: the cost of getting it wrong
+ * is CPU, never progress. What it does need is a **single writer**, and the scan lease already
+ * elects one — `LocalUsageCache` only has to ask.
+ *
+ * §3.5's worst moment is a window closing. `deactivate` flushes unconditionally, so a window
+ * whose view of the corpus is older or smaller writes it straight over the surviving window's
+ * fresher parse: closing one window costs the other the ~30 s it just paid.
+ */
+describe('only the window that owns the scan publishes the cache', () => {
+  /** Two windows, one cache file, and a follower whose view is genuinely the poorer one. */
+  async function twoWindows() {
+    const file = join(tempDir(), 'shared.gz')
+    const holderRoot = tempDir()
+    const followerRoot = tempDir()
+    rewritePinningMtime(join(holderRoot, 'a.jsonl'), claudeLine('A', 10))
+    rewritePinningMtime(join(holderRoot, 'b.jsonl'), claudeLine('B', 20))
+    rewritePinningMtime(join(followerRoot, 'c.jsonl'), claudeLine('C', 30))
+    return { file, holderRoot, followerRoot }
+  }
+
+  const blobCount = (file: string): number =>
+    Object.keys(
+      (JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')) as { claude: object }).claude,
+    ).length
+
+  // [trigger branch] The follower loads the cache *before* the holder writes it, which is what
+  // makes its flush destructive rather than merely redundant: it holds neither the holder's
+  // blobs nor any knowledge that they exist.
+  it('does not let a closing follower overwrite the holder fresher parse', async () => {
+    const { file, holderRoot, followerRoot } = await twoWindows()
+    const follower = new LocalUsageCache({
+      claudeRoots: [followerRoot],
+      filePath: file,
+      canPersist: () => false,
+    })
+    // Its first read is of an empty directory, so it starts from nothing — the cold-start
+    // ordering, which is exactly when the two windows' views differ most.
+    await follower.claudeEntries(0)
+
+    const holder = new LocalUsageCache({ claudeRoots: [holderRoot], filePath: file })
+    await holder.claudeEntries(0)
+    await holder.flush()
+    expect(blobCount(file)).toBe(2)
+
+    await follower.flush() // the window closes
+    expect(blobCount(file)).toBe(2) // the survivor's work is still there
+  })
+
+  it('still publishes from the window that holds the lease', async () => {
+    const { file, holderRoot } = await twoWindows()
+    let owned = false
+    const holder = new LocalUsageCache({
+      claudeRoots: [holderRoot],
+      filePath: file,
+      canPersist: () => owned,
+    })
+    await holder.claudeEntries(0)
+    await holder.flush()
+    expect(existsSync(file)).toBe(false) // refused while it is a follower
+
+    // The work is kept, not discarded: a window elected later publishes what it has parsed
+    // rather than having thrown it away when it was refused.
+    owned = true
+    await holder.flush()
+    expect(blobCount(file)).toBe(2)
   })
 })
 

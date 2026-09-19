@@ -9,6 +9,7 @@ import {
   ENCOUNTER_EXPIRY_MS,
   RARE_ENCOUNTER_EXPIRY_MS,
   enqueueEncounter,
+  grantLegendaryEncounter,
   withoutWanderedOff,
   fleeChance,
   owedEncounters,
@@ -191,6 +192,35 @@ describe('enqueueEncounter', () => {
     expect(queue.map((e) => e.id)).toContain('f0')
     expect(queue.map((e) => e.id)).not.toContain('f1')
     expect(queue.map((e) => e.id)).toContain('new')
+  })
+
+  // The other half of the same rule, and the one an earned legendary depends on: arriving into
+  // a full queue must cost a common its place, never the reward its existence.
+  it('makes room for an incoming legendary by dropping a common', () => {
+    const full = Array.from({ length: EncounterBalance.maxQueue }, (_, i) => wild({ id: `f${i}` }))
+    const queue = enqueueEncounter(full, wild({ id: 'earned', rarity: 'legendary' }))
+    expect(queue.map((e) => e.id)).toContain('earned')
+    expect(queue).toHaveLength(EncounterBalance.maxQueue)
+  })
+})
+
+// The "deliver" half of the legendary reward. It has no idea which trigger called it, which is
+// exactly what lets a new trigger reuse it without touching anything here.
+describe('grantLegendaryEncounter', () => {
+  it('owes one legendary per grant, so two triggers in one fold owe two', () => {
+    expect(grantLegendaryEncounter(state()).owedLegendaryEncounters).toBe(1)
+    expect(grantLegendaryEncounter(grantLegendaryEncounter(state())).owedLegendaryEncounters).toBe(2)
+  })
+
+  // An IOU the spawn path pays out for ever: a runaway trigger must not become a faucet.
+  it('never owes more than a queue could ever hold', () => {
+    let owing = state()
+    for (let i = 0; i < 50; i++) owing = grantLegendaryEncounter(owing)
+    expect(owing.owedLegendaryEncounters).toBe(EncounterBalance.maxQueue)
+  })
+
+  it('ignores a negative grant rather than cancelling a debt with it', () => {
+    expect(grantLegendaryEncounter(grantLegendaryEncounter(state()), -5).owedLegendaryEncounters).toBe(1)
   })
 })
 

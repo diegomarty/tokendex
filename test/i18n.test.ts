@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { APP_LANGUAGES, ITEM_KINDS, RARITIES } from '../src/core/companion/model.js'
 import { f, s } from '../src/core/i18n/strings.js'
 import * as d from '../src/core/i18n/dispatch.js'
+import { MilestoneBalance } from '../src/core/companion/encounters.js'
 
 // The value of this suite is coverage, not spot-checking translations: 191 entries across
 // four languages is where a mechanical port silently loses one, and a missing Japanese
@@ -106,6 +107,21 @@ describe('switch-dispatched entries', () => {
     expect(d.eggDescription('en', 'rare')).toContain(d.rarityLabel('en', 'rare'))
   })
 
+  // [trigger branch] All three shop eggs used to open with the same clause — "Send off your
+  // current Pokémon…" — which is the price they share, not what separates them, so each card
+  // spent two of its three lines on the sentence next to it. The check is mechanical rather
+  // than a keyword hunt, so it holds in a language whose words this suite does not know: if the
+  // three lines share a run of opening text, they are repeating each other again.
+  it.each(APP_LANGUAGES)('leaves no clause shared by all three eggs in %s', (lang) => {
+    const lines = [undefined, 'uncommon', 'rare'].map((tier) => d.eggDescription(lang, tier as never))
+    expect(new Set(lines).size).toBe(3)
+    let shared = 0
+    while (lines.every((l) => l[shared] !== undefined && l[shared] === lines[0]![shared])) shared++
+    expect(shared, `shared opening: "${lines[0]!.slice(0, shared)}"`).toBeLessThanOrEqual(3)
+    // And the sentence they used to share is said once, on the group heading instead.
+    for (const line of lines) expect(d.shopEggsNote(lang)).not.toContain(line)
+  })
+
   it('maps codex windows to their named equivalents', () => {
     expect(d.codexWindow('en', 300)).toBe(s('en', 'fiveHourSession'))
     expect(d.codexWindow('en', 10_080)).toBe(s('en', 'weekly'))
@@ -160,6 +176,71 @@ describe('celebration toasts', () => {
     expect(d.openPanelLabel(lang)).not.toBe('')
   })
 
+  // The two reward toasts are the only copy that has to hold true *before* the species is
+  // known: the legendary is owed the moment it is earned, and only rolled when there is room
+  // and an index to roll from. Each also has to carry its own reason — a bare "a legendary is
+  // coming" would leave the player with no idea what they did to earn it.
+  it.each(APP_LANGUAGES)('says why a legendary was earned in %s', (lang) => {
+    const streak = d.celebrationText(lang, { kind: 'legendaryEarned', via: 'streak', days: 3 })
+    expect(streak).toContain('3')
+    expect(streak.trim()).not.toBe('')
+
+    const milestone = d.celebrationText(lang, {
+      kind: 'legendaryEarned',
+      via: 'milestone',
+      tokens: MilestoneBalance.tokens,
+    })
+    // Formatted by the core, never by the view: the copy shows the amount that was reached.
+    expect(milestone).toContain('1B')
+    expect(streak).not.toBe(milestone)
+  })
+
+  // Both triggers can fire in one fold, and that must be one notification. The combined line
+  // still has to carry both numbers — they are the entire information content — and it must be
+  // written rather than composed: neither single sentence may simply appear inside it.
+  it.each(APP_LANGUAGES)('merges both triggers into one written line in %s', (lang) => {
+    const both = d.celebrationText(lang, {
+      kind: 'legendaryEarned',
+      via: 'both',
+      days: 4,
+      tokens: MilestoneBalance.tokens * 2,
+    })
+    expect(both).toContain('4')
+    expect(both).toContain('2B')
+
+    const streak = d.celebrationText(lang, { kind: 'legendaryEarned', via: 'streak', days: 4 })
+    const milestone = d.celebrationText(lang, {
+      kind: 'legendaryEarned',
+      via: 'milestone',
+      tokens: MilestoneBalance.tokens * 2,
+    })
+    expect(both).not.toBe(`${streak} ${milestone}`)
+    expect(both).not.toContain(streak)
+    expect(both).not.toContain(milestone)
+  })
+
+  // Two are owed when both fire, and the one line that announces them says so.
+  it('says two legendaries are coming when both triggers fired', () => {
+    const both = d.celebrationText('en', {
+      kind: 'legendaryEarned',
+      via: 'both',
+      days: 4,
+      tokens: MilestoneBalance.tokens,
+    })
+    expect(both).toContain('two legendaries')
+  })
+
+  // "On its way", not "has appeared" — the wild Pokémon announces itself separately, by name.
+  it('does not promise that the legendary is already there', () => {
+    for (const event of [
+      { kind: 'legendaryEarned', via: 'streak', days: 3 },
+      { kind: 'legendaryEarned', via: 'milestone', tokens: MilestoneBalance.tokens },
+      { kind: 'legendaryEarned', via: 'both', days: 3, tokens: MilestoneBalance.tokens },
+    ] as const) {
+      expect(d.celebrationText('en', event)).not.toContain('appeared')
+    }
+  })
+
   it('marks a shiny hatch and keeps the event kinds distinguishable', () => {
     expect(d.celebrationText('en', { kind: 'hatched', name: 'Pidove', isShiny: true })).toContain('✨')
     const kinds = [
@@ -177,13 +258,54 @@ describe('shop and first-run strings', () => {
       d.shopGroupBalls(lang),
       d.shopGroupItems(lang),
       d.shopGroupEggs(lang),
+      d.shopEggsNote(lang),
       d.getBallsCta(lang),
+      d.buyActionLabel(lang, 'Poké Ball', '5M'),
+      d.ownedActionLabel(lang, 'Shiny Charm'),
     ]) {
       expect(text.trim()).not.toBe('')
     }
-    // Derived numbers, like the candy's XP copy: the discount shown must be the one charged.
-    const bundle = d.bundleDescription(lang, 10, 10)
+    // Derived numbers, like the candy's XP copy: the discount spoken must be the one charged.
+    const bundle = d.bundleBuyLabel(lang, 'Poké Ball ×10', '45M', 10)
     expect(bundle).toContain('10')
+    expect(bundle).toContain('45M')
+    // The button says "×10"; its name has to say what that buys and what it saves, since a
+    // screen reader is given the name and never the row around it.
+    expect(bundle).not.toBe(d.buyActionLabel(lang, 'Poké Ball ×10', '45M'))
+  })
+
+  // [trigger branch] The badge on the bundle is the only place the 10% survives now that the
+  // ×10 has no card of its own, so it is derived from the constants the price is divided by.
+  it('formats the bundle saving from the discount it is handed', () => {
+    expect(d.bundleSaveText(10)).toBe('−10%')
+    expect(d.bundleSaveText(25)).toBe('−25%')
+    // A true minus sign, not a hyphen: it sits at digit height beside a price.
+    expect(d.bundleSaveText(10)).not.toContain('-')
+  })
+
+  // [trigger branch] "Catches 1.5x better than a Poké Ball" is a sentence whose whole content is
+  // its number, sitting under a POKÉ BALLS heading beside a Great Ball sprite. As a stat it
+  // compares at a glance — and both forms now read the multiplier the dice actually roll.
+  it.each(APP_LANGUAGES)('states a ball as a stat drawn from the balance table in %s', (lang) => {
+    expect(d.ballCatchStat(lang, 'pokeBall')).toBe('1×')
+    expect(d.ballCatchStat(lang, 'ultraBall')).toBe('2×')
+    // An unconditional catch is not a multiplier, so the Master Ball has no figure at all.
+    expect(d.ballCatchStat(lang, 'masterBall')).toBeUndefined()
+    expect(d.ballCatchLabel(lang, 'masterBall')).toBeUndefined()
+    for (const kind of ['pokeBall', 'greatBall', 'ultraBall'] as const) {
+      expect(d.ballCatchLabel(lang, kind)?.trim()).toBeTruthy()
+    }
+    // The sentence in the bag and the badge in the shop quote the same figure.
+    expect(d.itemDescription(lang, 'greatBall')).toContain(
+      d.ballCatchStat(lang, 'greatBall')!.replace('×', ''),
+    )
+  })
+
+  it('writes the decimal mark the language uses', () => {
+    expect(d.ballCatchStat('en', 'greatBall')).toBe('1.5×')
+    expect(d.ballCatchStat('es', 'greatBall')).toBe('1,5×')
+    expect(d.itemDescription('es', 'greatBall')).toContain('1,5')
+    expect(d.itemDescription('es', 'greatBall')).not.toContain('1.5')
   })
 
   it.each(APP_LANGUAGES)('asks before letting a marked encounter go, naming it, in %s', (lang) => {
@@ -256,5 +378,22 @@ describe('wildNextEncounterText', () => {
   it('is phrased like its sibling on the companion bar', () => {
     expect(d.wildNextEncounterText('en', '1.2M')).toBe('1.2M to the next encounter')
     expect(d.wildNextEncounterText('es', '1.2M')).toBe('1.2M al siguiente encuentro')
+  })
+})
+
+/**
+ * The one string a *failure* depends on. An action that could not take the save's
+ * cross-window lock is reported to the user through this and nothing else, so a language that
+ * silently fell back to another's copy — or to nothing — would leave the user staring at a
+ * purchase that quietly did not happen.
+ */
+describe('a save the lock refused', () => {
+  it.each(APP_LANGUAGES)('says nothing was changed, in %s', (lang) => {
+    expect(d.saveBusyText(lang).trim()).not.toBe('')
+  })
+
+  it('is written per language rather than falling back to one', () => {
+    const said = APP_LANGUAGES.map((lang) => d.saveBusyText(lang))
+    expect(new Set(said).size).toBe(APP_LANGUAGES.length)
   })
 })

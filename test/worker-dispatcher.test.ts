@@ -21,6 +21,7 @@ function harness(extraFor?: (action: Action) => string | undefined) {
   const scans: ReturnType<typeof deferred<Snap>>[] = []
   const applied: string[] = []
   const flushes: number[] = []
+  const syncs: ReturnType<typeof deferred<Snap>>[] = []
   const dispatch = createDispatcher<Action, Snap, Panel, string>({
     scan: () => {
       const d = deferred<Snap>()
@@ -32,13 +33,18 @@ function harness(extraFor?: (action: Action) => string | undefined) {
       return extraFor?.(a)
     },
     buildPanel: (snapshot, _locale, devMode) => ({ fromSeq: snapshot.seq, devMode }),
+    sync: () => {
+      const d = deferred<Snap>()
+      syncs.push(d)
+      return d.promise
+    },
     flush: async () => {
       flushes.push(scans.length)
     },
     post: (r) => posted.push(r),
   })
   const settle = () => new Promise((r) => setImmediate(r))
-  return { posted, scans, applied, flushes, dispatch, settle }
+  return { posted, scans, applied, flushes, syncs, dispatch, settle }
 }
 
 describe('dispatcher', () => {
@@ -188,5 +194,54 @@ describe('dispatcher', () => {
     await h.settle()
     expect(h.scans).toHaveLength(0)
     expect(h.posted).toEqual([{ id: 1, ok: true, flushed: true }])
+  })
+
+  // The watcher's request. A sync that scanned would put the ~30 s cold pass on a filesystem
+  // event, and — because a scan ends in a write — would give the other window an event to
+  // answer, for ever.
+  it('never scans for a sync', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'sync' })
+    await h.settle()
+    expect(h.scans).toHaveLength(0)
+    expect(h.syncs).toHaveLength(1)
+
+    h.syncs[0]!.resolve({ seq: 5 })
+    await h.settle()
+    expect(h.posted).toEqual([{ id: 1, ok: true, snapshot: { seq: 5 } }])
+  })
+
+  // The host follows a sync with a panel refresh, and that refresh must rebuild from what the
+  // sync just read rather than from the numbers it replaced.
+  it('makes a sync the snapshot a later render reuses', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'scan' })
+    await h.settle()
+    h.scans[0]!.resolve({ seq: 1 })
+    await h.settle()
+
+    h.dispatch({ id: 2, type: 'sync' })
+    await h.settle()
+    h.syncs[0]!.resolve({ seq: 9 })
+    await h.settle()
+
+    h.dispatch({ id: 3, type: 'render' })
+    await h.settle()
+    expect(h.scans).toHaveLength(1) // still no second disk pass
+    expect(h.posted.at(-1)).toEqual({ id: 3, ok: true, panel: { fromSeq: 9, devMode: false } })
+  })
+
+  // Queued like everything else: a sync landing mid-scan must not interleave a re-read with
+  // the fold that scan is about to commit.
+  it('serializes a sync behind a running scan', async () => {
+    const h = harness()
+    h.dispatch({ id: 1, type: 'scan' })
+    h.dispatch({ id: 2, type: 'sync' })
+    await h.settle()
+    expect(h.syncs).toHaveLength(0)
+
+    h.scans[0]!.resolve({ seq: 1 })
+    await h.settle()
+    expect(h.syncs).toHaveLength(1)
   })
 })

@@ -5,8 +5,8 @@
  * flat four-way tables.
  */
 
-import type { AppLanguage, ItemKind, Rarity } from '../companion/model.js'
-import { RareCandy } from '../companion/model.js'
+import type { AppLanguage, BallKind, ItemKind, Rarity } from '../companion/model.js'
+import { Pokeball, RareCandy } from '../companion/model.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
 
@@ -131,6 +131,57 @@ export function itemName(lang: AppLanguage, kind: ItemKind): string {
   }
 }
 
+/**
+ * A catch multiplier as a bare figure: `1.5`, and `1,5` where the comma is the decimal mark.
+ *
+ * Small, but it has to live here rather than at the two call sites: the shop's stat badge and
+ * the ball's own sentence show the same number, and a Spanish reader must not meet `1,5` in
+ * one and `1.5` in the other.
+ */
+function multiplierFigure(lang: AppLanguage, value: number): string {
+  const plain = String(value)
+  return t(lang, plain, plain, plain, plain.replace('.', ','))
+}
+
+/**
+ * The catch multiplier as a stat, not a sentence.
+ *
+ * The ball rack on Home already prints a catch percentage under every ball, so a figure is the
+ * house form for this fact; in the shop it replaces three sentences that differed only in their
+ * number, and it lets a reader compare the rack at a glance instead of parsing prose. Derived
+ * from `Pokeball.multiplier` — the same table `catchChance` rolls against.
+ *
+ * Absent for the Master Ball: its multiplier is `Infinity`, and an unconditional catch is not a
+ * number. That one keeps its sentence, which is also the only ball copy that gives advice.
+ */
+export function ballCatchStat(lang: AppLanguage, kind: BallKind): string | undefined {
+  const multiplier = Pokeball.multiplier[kind]
+  if (!Number.isFinite(multiplier)) return undefined
+  return `${multiplierFigure(lang, multiplier)}×`
+}
+
+/**
+ * The accessible name behind `ballCatchStat` — a screen reader hearing "one point five times"
+ * beside a ball's name has been told a number, not a fact.
+ *
+ * For the Great and Ultra Balls it is the sentence the badge replaced, which the bag still
+ * shows in full. The Poké Ball has none of its own: its stat is the baseline the others are
+ * quoted against, and that is what its label says.
+ */
+export function ballCatchLabel(lang: AppLanguage, kind: BallKind): string | undefined {
+  if (!Number.isFinite(Pokeball.multiplier[kind])) return undefined
+  if (kind === 'pokeBall') {
+    return t(
+      lang,
+      '다른 볼의 포획률은 모두 이 볼을 기준으로 해요.',
+      'The baseline every other ball is measured against.',
+      'ほかのボールの基準になる捕獲率です。',
+      'La referencia con la que se miden las demás balls.',
+    )
+  }
+  return itemDescription(lang, kind)
+}
+
 export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
   switch (kind) {
     case 'rareCandy': {
@@ -171,21 +222,18 @@ export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
         'La ball estándar para lanzar a un Pokémon salvaje.',
       )
     case 'greatBall':
+    case 'ultraBall': {
+      // Derived from the multiplier the dice actually use, like the candy's XP copy: a
+      // hand-typed "1.5x" here would go on claiming 1.5 after a balance change.
+      const m = multiplierFigure(lang, Pokeball.multiplier[kind])
       return t(
         lang,
-        '몬스터볼보다 1.5배 잘 잡혀요.',
-        'Catches 1.5x better than a Poké Ball.',
-        'モンスターボールより1.5倍つかまえやすい。',
-        'Captura 1,5 veces mejor que una Poké Ball.',
+        `몬스터볼보다 ${m}배 잘 잡혀요.`,
+        `Catches ${m}× better than a Poké Ball.`,
+        `モンスターボールより${m}倍つかまえやすい。`,
+        `Captura ${m} veces mejor que una Poké Ball.`,
       )
-    case 'ultraBall':
-      return t(
-        lang,
-        '몬스터볼보다 2배 잘 잡혀요.',
-        'Catches 2x better than a Poké Ball.',
-        'モンスターボールより2倍つかまえやすい。',
-        'Captura 2 veces mejor que una Poké Ball.',
-      )
+    }
     case 'masterBall':
       return t(
         lang,
@@ -217,24 +265,24 @@ export function eggName(lang: AppLanguage, tier: Rarity | undefined): string {
   }
 }
 
+/**
+ * What an egg guarantees — and only that.
+ *
+ * All three shop eggs used to open with "Send off your current Pokémon…", almost verbatim. That
+ * clause is the *price* the three share, not what separates them, so three cards spent their
+ * first two lines saying the same thing and the reader had to reach the tail of each sentence
+ * to find the one word that differed. The shared half is stated once, on the group heading
+ * (`shopEggsNote`); what is left here is the only line that can change a choice.
+ *
+ * The guaranteed tiers delegate to `eggGuaranteeHint`, which says exactly this fact for the
+ * incubation badge: the guarantee a card sells and the guarantee the egg then displays are one
+ * sentence, so they cannot drift apart.
+ */
 export function eggDescription(lang: AppLanguage, tier: Rarity | undefined): string {
   if (tier === undefined || tier === 'common') {
-    return t(
-      lang,
-      '지금 포켓몬을 놓아주고 새 알로 다시 시작해요.',
-      'Send off your current Pokémon and start fresh with a new egg.',
-      'いまのポケモンを手放して新しいタマゴからやり直します。',
-      'Suelta a tu Pokémon actual y empieza de nuevo con un huevo nuevo.',
-    )
+    return t(lang, '등급은 무작위', 'Any rarity', 'レアリティはランダム', 'Rareza aleatoria')
   }
-  const r = rarityLabel(lang, tier)
-  return t(
-    lang,
-    `지금 포켓몬을 놓아주고 ${r} 이상이 확정으로 나오는 알을 받아요.`,
-    `Send off your current Pokémon for an egg guaranteed to hatch ${r} or better.`,
-    `いまのポケモンを手放して ${r} 以上が確定で孵るタマゴをもらいます。`,
-    `Suelta a tu Pokémon actual y consigue un huevo garantizado de ${r} o superior.`,
-  )
+  return eggGuaranteeHint(lang, tier)
 }
 
 /** Badge shown while incubating, naming the guarantee in one line. */
@@ -337,14 +385,85 @@ export const shopGroupItems = (lang: AppLanguage): string => t(lang, '도구', '
 
 export const shopGroupEggs = (lang: AppLanguage): string => t(lang, '알', 'Eggs', 'タマゴ', 'Huevos')
 
+/**
+ * The one sentence every egg on sale shares, said once under the heading instead of three
+ * times over on the cards. See `eggDescription` for what each card kept.
+ */
+export const shopEggsNote = (lang: AppLanguage): string =>
+  t(
+    lang,
+    '어떤 알이든 지금 포켓몬을 놓아주고 부화를 처음부터 다시 시작해요.',
+    'Every egg sends off your current Pokémon and starts incubation over.',
+    'どのタマゴも、いまのポケモンを手放してふかをやり直します。',
+    'Cualquier huevo suelta a tu Pokémon actual y reinicia la incubación.',
+  )
+
 /** The call-to-action under an empty ball rack — the moment of highest purchase intent. */
 export const getBallsCta = (lang: AppLanguage): string =>
   t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Comprar Poké Balls')
 
 /**
- * The ten-pack's description. Derived from the balance constants, like the candy's XP copy:
- * hard-coding "10% off" would let the discount drift from what `shopEntryPrice` actually
- * charges.
+ * The saving marked on the ten-pack's own action.
+ *
+ * A figure, not a sentence, and deliberately the same figure in all four languages: a minus
+ * sign and a percent read the same everywhere Tokendex does, and this sits inside a button
+ * beside a price where a clause would not fit at sidebar width. The words a screen reader
+ * hears instead are `bundleBuyLabel`'s.
+ *
+ * It takes the percentage rather than computing one, because the caller derives it from
+ * `Pokeball.bundleMultiplier` / `bundleSize` — the same two constants `shopEntryPrice` divides
+ * by. Advertising a discount the till does not give is the one failure this copy can have.
+ */
+export const bundleSaveText = (discountPercent: number): string => `−${discountPercent}%`
+
+/**
+ * Accessible name for a shop action.
+ *
+ * A row can now carry two of them — the single and the ten-pack — and a screen reader
+ * announces a button by its own name, not by the card it sits in: two buttons both saying
+ * "Buy" would be a coin toss. So the name carries what is being bought and what it costs.
+ */
+export const buyActionLabel = (lang: AppLanguage, name: string, price: string): string =>
+  t(
+    lang,
+    `${name} 구매 — ${price}`,
+    `Buy ${name} — ${price}`,
+    `${name} を購入 — ${price}`,
+    `Comprar ${name} — ${price}`,
+  )
+
+/** `buyActionLabel` for the ten-pack, spelling out the saving its `−10%` badge shows. */
+export const bundleBuyLabel = (
+  lang: AppLanguage,
+  name: string,
+  price: string,
+  discountPercent: number,
+): string =>
+  t(
+    lang,
+    `${name} 구매 — ${price}, ${discountPercent}% 할인`,
+    `Buy ${name} — ${price}, ${discountPercent}% off`,
+    `${name} を購入 — ${price}、${discountPercent}%お得`,
+    `Comprar ${name} — ${price}, ${discountPercent}% de descuento`,
+  )
+
+/** `buyActionLabel`'s counterpart for a passive already bought: the button is inert, and the
+ *  word "Owned" alone does not say what is owned. */
+export const ownedActionLabel = (lang: AppLanguage, name: string): string =>
+  t(
+    lang,
+    `${name} — 보유 중`,
+    `${name} — already owned`,
+    `${name} — 所持済み`,
+    `${name} — ya en posesión`,
+  )
+
+/**
+ * The ten-pack's old sentence form, still read by the shop's current row builder.
+ *
+ * Superseded by `bundleBuyLabel` + `bundleSaveText`, which attach the saving to the action that
+ * grants it instead of spending a description line on it. Kept until the panel builder moves
+ * over.
  */
 export function bundleDescription(lang: AppLanguage, size: number, discountPercent: number): string {
   return t(
@@ -398,6 +517,34 @@ export function wildNextEncounterText(lang: AppLanguage, toNextAmount: string): 
     `次の出現まで${toNextAmount}`,
     `${toNextAmount} al siguiente encuentro`,
   )
+}
+
+/**
+ * The streak row under the encounter bar: its accessible name, and the short line beside the
+ * dots.
+ *
+ * Kept to a few characters on purpose. It shares a 300px sidebar row with seven dots, and the
+ * sentence directly above it had to be cut down once already for wrapping to two lines there —
+ * so this one says only what the dots cannot: how many of them count, and whether the week has
+ * already paid out. Everything else (which days, how long the window is) is the drawing's job.
+ */
+export function streakRowLabel(lang: AppLanguage): string {
+  return t(lang, '이번 주 연속', "This week's streak", 'こんしゅうのれんぞく', 'Racha semanal')
+}
+
+export function streakProgressText(lang: AppLanguage, days: number, needed: number): string {
+  return t(
+    lang,
+    `${needed}일 중 ${days}일`,
+    `${days} of ${needed} days`,
+    `${needed}日のうち${days}日`,
+    `${days} de ${needed} días`,
+  )
+}
+
+/** Replaces the count once the week has paid out: there is nothing left to count toward. */
+export function streakEarnedText(lang: AppLanguage): string {
+  return t(lang, '전설 획득!', 'Legendary earned', 'でんせつ かくとく！', 'Legendario logrado')
 }
 
 // MARK: - Pokédex browsing
@@ -509,6 +656,15 @@ export type CelebrationEvent =
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
   | { kind: 'wildCaught'; name: string; isShiny: boolean }
+  /**
+   * A guaranteed legendary was earned. `via` is a union rather than two independent flags so
+   * the combined case has to be *written*, not composed: both triggers can fire in one fold,
+   * and two toasts in the same second for one piece of work read as a bug. A third trigger
+   * must decide here what it says alongside each of the others.
+   */
+  | { kind: 'legendaryEarned'; via: 'streak'; days: number }
+  | { kind: 'legendaryEarned'; via: 'milestone'; tokens: number }
+  | { kind: 'legendaryEarned'; via: 'both'; days: number; tokens: number }
 
 /**
  * Toast copy for the game's peak moments — the events `drainEvents` accumulates.
@@ -583,10 +739,63 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
       )
       return event.isShiny ? `${text} ✨` : text
     }
+    // "On its way", not "has appeared": the reward is owed the moment it is earned, but the
+    // species is only rolled when there is room in the queue and a species index to roll from.
+    // The wild Pokémon announces itself separately, by name, once it is actually there.
+    case 'legendaryEarned':
+      switch (event.via) {
+        case 'streak':
+          return t(
+            lang,
+            `최근 ${event.days}일 동안 작업했어요 — 전설의 포켓몬이 다가오고 있어요!`,
+            `${event.days} days of work this week — a legendary is on its way!`,
+            `このところ${event.days}日はたらいた — でんせつのポケモンがちかづいてくる！`,
+            `${event.days} días de trabajo esta semana: un legendario está en camino.`,
+          )
+        case 'milestone':
+          return t(
+            lang,
+            `누적 ${compact(event.tokens)} 토큰 돌파 — 전설의 포켓몬이 다가오고 있어요!`,
+            `${compact(event.tokens)} tokens used in all — a legendary is on its way!`,
+            `つうさん${compact(event.tokens)}トークン とっぱ — でんせつのポケモンがちかづいてくる！`,
+            `${compact(event.tokens)} tokens en total: un legendario está en camino.`,
+          )
+        // One achievement, not the two single lines glued together: the week and the lifetime
+        // total are one sentence, and it says two legendaries are coming because two are owed.
+        case 'both':
+          return t(
+            lang,
+            `최근 ${event.days}일 작업에 누적 ${compact(event.tokens)} 토큰 돌파 — 전설의 포켓몬 2마리가 다가오고 있어요!`,
+            `${event.days} days of work and ${compact(event.tokens)} tokens used — two legendaries are on their way!`,
+            `このところ${event.days}日はたらき つうさん${compact(event.tokens)}トークンもとっぱ — でんせつのポケモンが2ひきちかづいてくる！`,
+            `${event.days} días de trabajo y ${compact(event.tokens)} tokens en total: dos legendarios están en camino.`,
+          )
+      }
   }
 }
 
 /** The celebration toast's single button. */
 export function openPanelLabel(lang: AppLanguage): string {
   return t(lang, '패널 열기', 'Open panel', 'パネルをひらく', 'Abrir panel')
+}
+
+/**
+ * Shown when a user action could not take the save's cross-window lock and was therefore not
+ * applied at all.
+ *
+ * Every open window writes one `companion-state.json`, and a mutation that cannot get the
+ * lock inside its deadline writes nothing (`docs/multi-window.md` §5(d)). An *accrual* in
+ * that position simply skips — the tokens stay unclaimed and fold on the next tick — but a
+ * purchase, a throw or a language change has to say so: a Master Ball that was never bought
+ * must never look bought. The copy is explicit that nothing changed, because the failure the
+ * user can actually act on is "try again", not "something went wrong".
+ */
+export function saveBusyText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '다른 창이 저장 파일을 쓰고 있어서 아무것도 바뀌지 않았어요. 잠시 후 다시 시도해 주세요.',
+    'Another window was writing your save, so nothing was changed. Try again in a moment.',
+    'ほかのウィンドウがセーブデータを書きこんでいたため、なにも変更されていません。少しあとでもう一度おためしください。',
+    'Otra ventana estaba escribiendo tu partida, así que no se cambió nada. Inténtalo de nuevo.',
+  )
 }

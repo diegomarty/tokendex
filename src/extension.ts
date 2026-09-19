@@ -37,6 +37,9 @@ import { devScenarioByID } from './core/dev/scenarios.js'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import { hostname, homedir } from 'node:os'
 import { ourData } from './core/appPaths.js'
+import { atomicWriteFile } from './core/coordination/atomicWrite.js'
+import { type WatchHandle, watchDataDirectory } from './core/coordination/dataWatcher.js'
+import { FileLock, lockPathFor } from './core/coordination/fileLock.js'
 import { todayKey } from './core/usage/entry.js'
 import { parseCompanionState } from './core/companion/persistence.js'
 import {
@@ -171,6 +174,8 @@ export function activate(context: vscode.ExtensionContext): void {
   syncBundleWatcher(context)
   startWorker(context)
   scheduleTimer()
+  startDataWatcher()
+  context.subscriptions.push({ dispose: stopDataWatcher })
   void refresh(false)
   welcomeOnFirstRun(context)
 }
@@ -199,11 +204,81 @@ const FLUSH_TIMEOUT_MS = 1_500
 
 export async function deactivate(): Promise<void> {
   stopTimer()
-  // The usage cache throttles its writes to once a minute, so without this a window closed
-  // shortly after a scan that parsed something new discards that work — the cold parse the
-  // cache exists to avoid, paid again on the next launch.
+  stopDataWatcher()
+  // Two things, in the worker, in one request. The usage cache throttles its writes to once a
+  // minute, so without the flush a window closed shortly after a scan that parsed something
+  // new discards that work — the cold parse the cache exists to avoid, paid again on the next
+  // launch. And the scan lease is handed back, so the next window takes over immediately
+  // instead of waiting out the staleness ceiling for a window that closed politely.
+  //
+  // What stops the flush from *costing* the surviving window its parse (§3.5) is not the
+  // ordering here but the gate in the worker: only the window that holds the lease publishes
+  // the cache at all, so a closing follower has nothing to overwrite anybody with.
   await Promise.race([requestFlush(), new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS))])
   await stopWorker()
+}
+
+// MARK: - Cross-window watcher
+
+let dataWatcher: WatchHandle | undefined
+/** Whether a watcher is wanted, so a `deactivate` racing the directory creation still wins. */
+let dataWatcherWanted = false
+
+/**
+ * Watches `ourData()` so another window's catch, purchase or published scan reaches this one
+ * in about a second rather than at the next tick — up to two minutes away, or ten.
+ *
+ * **The timer stays the floor.** `fs.watch` sees nothing when the home directory lives on NFS
+ * or SMB and the write happens on the machine that owns the filesystem, so a design that
+ * trusted the watcher would stop updating entirely for exactly the users least able to
+ * diagnose it. This only closes the gap between ticks; `scheduleTimer` still runs untouched.
+ *
+ * The handler is a `sync`, never a `refresh`. A refresh ends in `CompanionStore.transact`,
+ * which writes on every hold whether anything changed or not — so two watching windows would
+ * answer each other's writes for ever at the debounce interval. A `sync` re-reads and
+ * recomposes without writing, and the exchange stops after one round.
+ */
+function startDataWatcher(): void {
+  if (dataWatcherWanted) return
+  dataWatcherWanted = true
+  const directory = ourData()
+  // `fs.watch` on a directory that does not exist throws, and the helper swallows that — so
+  // starting the watcher *before* awaiting the creation would leave a fresh install with no
+  // watcher at all until the next window reload. Detached rather than awaited: nothing on the
+  // activation path may wait on the filesystem.
+  void fs
+    .mkdir(directory, { recursive: true })
+    .catch(() => undefined)
+    .then(() => {
+      if (!dataWatcherWanted) return // the window closed while the directory was being made
+      dataWatcher = watchDataDirectory({ directory, onChange: () => void syncFromDisk() })
+    })
+}
+
+function stopDataWatcher(): void {
+  dataWatcherWanted = false
+  dataWatcher?.close()
+  dataWatcher = undefined
+}
+
+/**
+ * Answers a change another window made: re-read the save (and, for a follower, the published
+ * scan), then repaint.
+ *
+ * Skipped while a scan is in flight — that scan is about to re-read the same file and repaint
+ * anyway, and the dispatcher would only queue this behind it.
+ */
+async function syncFromDisk(): Promise<void> {
+  if (scanInFlight) return
+  const response = await requestSync()
+  if (!response.ok) {
+    output?.warn(`sync failed: ${response.error}`)
+    return
+  }
+  if (!('snapshot' in response)) return
+  lastSnapshot = response.snapshot
+  render(response.snapshot)
+  if (anySurfaceOpen()) void handlePanelRequest({ kind: 'refresh' })
 }
 
 // MARK: - Development bundle watcher
@@ -357,8 +432,15 @@ const requestScan = (): Promise<ScanResponse> =>
     refreshSeconds: refreshSeconds(),
   }))
 
-/** Asks the worker to persist what it still holds in memory. Sent once, from `deactivate`. */
+/**
+ * Asks the worker to persist what it still holds and hand back the scan lease. Sent once,
+ * from `deactivate`.
+ */
 const requestFlush = (): Promise<ScanResponse> => send((id) => ({ id, type: 'flush' }))
+
+/** Re-read what another window wrote and recompose, without scanning and without writing. */
+const requestSync = (): Promise<ScanResponse> =>
+  send((id) => ({ id, type: 'sync', locale: vscode.env.language }))
 
 /** `tokendex.encounterNotifications`: 'rare' (the default — shiny/legendary only) or 'off'. */
 function encounterToastsOn(): boolean {
@@ -456,6 +538,19 @@ function dispatchPanelRequest(request: PanelRequestKind): void {
     void vscode.window.showErrorMessage(`Tokendex: ${detail}`)
   })
 }
+
+/**
+ * The panel requests that ask the worker to *change* the save, as opposed to re-render it.
+ * A failure in one of these has to reach the user; a failed re-render only reaches the log.
+ */
+const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
+  'buy',
+  'use',
+  'setLanguage',
+  'throw',
+  'run',
+  'setTrainer',
+])
 
 async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
   let response: ScanResponse
@@ -568,6 +663,16 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
 
   if (!response.ok) {
     output?.error(`panel action failed: ${response.error}`)
+    // Shown, not only logged — this is the end of the road for a user action that did not
+    // commit, a purchase the save's lock refused above all (`docs/multi-window.md` §5(d)).
+    // Logging it alone left the panel re-rendering the old state, which is precisely the "it
+    // looked like it worked" outcome the contention policy exists to prevent. The worker has
+    // already localised the text; the host must not compose one of its own.
+    //
+    // Only for the kinds that *changed* something. A failed re-render is a background
+    // refresh: it retries on the next tick, and an error toast every two minutes would train
+    // the user to dismiss the one that matters.
+    if (CHANGING_REQUESTS.has(request.kind)) void vscode.window.showErrorMessage(response.error)
     return
   }
   if ('panel' in response) {
@@ -753,25 +858,37 @@ async function importSave(): Promise<void> {
   await stopWorker()
   try {
     const target = savePath()
-    let previous: string | undefined
-    try {
-      previous = await fs.readFile(target, 'utf8')
-    } catch (error) {
-      // No save yet is fine; anything else means we cannot promise a way back.
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
+    // The same lock every `CompanionStore` write takes. Stopping this window's worker was
+    // never enough — the comment above describes exactly the bug another window reproduces,
+    // verbatim, complete with the "Save imported." confirmation. The lock makes the
+    // backup-and-replace one transaction; what makes it *stick* is that every other window's
+    // next write re-reads this file before folding anything into it.
+    const lock = new FileLock({ path: lockPathFor(target) })
+    const done = await lock.withLock(async () => {
+      let previous: string | undefined
+      try {
+        previous = await fs.readFile(target, 'utf8')
+      } catch (error) {
+        // No save yet is fine; anything else means we cannot promise a way back.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
 
-    if (previous !== undefined) {
-      await fs.mkdir(ourData(), { recursive: true })
-      await fs.writeFile(join(ourData(), backupFileName(Date.now())), previous, 'utf8')
-    }
+      if (previous !== undefined) {
+        await fs.mkdir(ourData(), { recursive: true })
+        await fs.writeFile(join(ourData(), backupFileName(Date.now())), previous, 'utf8')
+      }
 
-    const current = parseCompanionState(previous ?? '') ?? freshCompanionState(vscode.env.language)
-    const rebased = rebasedForThisDevice(envelope.state, current, ledgerObservation())
+      const current = parseCompanionState(previous ?? '') ?? freshCompanionState(vscode.env.language)
+      const rebased = rebasedForThisDevice(envelope.state, current, ledgerObservation())
 
-    await fs.mkdir(ourData(), { recursive: true })
-    await fs.writeFile(target, JSON.stringify(rebased), 'utf8')
-    await pruneBackups(ourData())
+      // The live save, so it goes through the shared atomic helper like every other writer of
+      // it: this window stops its own worker first, but every *other* window's is still running.
+      await atomicWriteFile(target, JSON.stringify(rebased), 'utf8')
+      await pruneBackups(ourData())
+    })
+    // A user action, so contention fails visibly: replacing someone's whole save is the last
+    // thing that may quietly not happen.
+    if (!done.acquired) throw new Error('another window is writing the save')
     void vscode.window.showInformationMessage('Save imported.')
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)

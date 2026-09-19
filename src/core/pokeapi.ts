@@ -8,6 +8,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import * as AppPaths from './appPaths.js'
+import { atomicWriteFile } from './coordination/atomicWrite.js'
 import {
   ANIMATED_SPECIES_MAX,
   type EvoLine,
@@ -15,15 +16,28 @@ import {
   PokemonOdds,
   type Rarity,
   makeEvoLine,
+  meetsRarityFloor,
   rarityFrom,
-  rarityIncludes,
 } from './companion/model.js'
 
-/** A hatch candidate: the start of an evolution line, plus its official rarity signal. */
+/**
+ * A hatch candidate: the start of an evolution line, plus its official rarity signals.
+ *
+ * The two flags are what make a legendary-only pool possible at all — `capture_rate` cannot
+ * express the tier (see `captureRateCeiling`), so without them a guaranteed-legendary
+ * encounter would have to be faked from a hard-coded species list, which is both a licence
+ * problem and a lie. They cost one column each on the index query that was already being made.
+ *
+ * Optional because an index cached by an earlier version predates them. A missing flag reads
+ * as "not legendary", so the other three tiers are unaffected and the legendary pool is empty
+ * rather than wrong until the cache is refreshed — which `INDEX_SCHEMA` forces on first use.
+ */
 export interface BaseSpecies {
   id: number
   /** 3 (Mewtwo-class) to 255 (Caterpie-class). */
   captureRate: number
+  isLegendary?: boolean
+  isMythical?: boolean
 }
 
 /**
@@ -58,6 +72,14 @@ const REST_BASE = 'https://pokeapi.co/api/v2'
 const GRAPHQL_URL = 'https://graphql.pokeapi.co/v1beta2'
 const LANG_CODES = ['ko', 'en', 'ja-Hrkt', 'ja', 'es']
 const INDEX_TTL_MS = 30 * 86_400_000
+/**
+ * Shape of the on-disk index. A file written at a lower version is treated as *expired* rather
+ * than deleted: it is refetched at the next opportunity, but it still stands in offline, where
+ * a stale index beats no index — the only thing it cannot do is answer a legendary pool, and a
+ * reward that waits is better than one that hands over the wrong species. History: 1 = id and
+ * capture rate only, 2 = with `is_legendary`/`is_mythical`.
+ */
+const INDEX_SCHEMA = 2
 // 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
 // timeout is what bounds how long a sick network can hold `update()` — and with it the scan.
 const REQUEST_TIMEOUT_MS = 8_000
@@ -198,7 +220,12 @@ export class PokeAPIClient implements PokeProviding {
 
   private async loadBaseIndex(): Promise<BaseSpecies[]> {
     const disk = await this.readDiskIndex()
-    if (disk !== undefined && Date.now() - disk.fetchedAt < INDEX_TTL_MS && disk.entries.length > 0) {
+    if (
+      disk !== undefined &&
+      disk.version === INDEX_SCHEMA &&
+      Date.now() - disk.fetchedAt < INDEX_TTL_MS &&
+      disk.entries.length > 0
+    ) {
       this.baseIndexCache = disk.entries
       return disk.entries
     }
@@ -227,7 +254,7 @@ export class PokeAPIClient implements PokeProviding {
   private async fetchBaseIndex(): Promise<BaseSpecies[]> {
     // Official GraphQL: evolves_from IS NULL (a base) and id <= 649, the gen-V animated
     // sprite ceiling. Ditto (#132) is excluded — it exists only for the disguise reveal.
-    const query = `{ pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate } }`
+    const query = `{ pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate is_legendary is_mythical } }`
     const response = await fetch(GRAPHQL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -236,11 +263,23 @@ export class PokeAPIClient implements PokeProviding {
     })
     if (!response.ok) throw new Error(`graphql: HTTP ${response.status}`)
     const decoded = (await response.json()) as {
-      data?: { pokemonspecies?: { id: number; capture_rate: number }[] }
+      data?: {
+        pokemonspecies?: {
+          id: number
+          capture_rate: number
+          is_legendary?: boolean
+          is_mythical?: boolean
+        }[]
+      }
     }
     const rows = decoded.data?.pokemonspecies ?? []
     if (rows.length === 0) throw new Error('graphql: empty base index')
-    return rows.map((r) => ({ id: r.id, captureRate: r.capture_rate }))
+    return rows.map((r) => ({
+      id: r.id,
+      captureRate: r.capture_rate,
+      isLegendary: r.is_legendary === true,
+      isMythical: r.is_mythical === true,
+    }))
   }
 
   /**
@@ -270,15 +309,29 @@ export class PokeAPIClient implements PokeProviding {
     if (id === PokemonOdds.dittoSpeciesID) return undefined // reveal-only, never hatched
     const dto = await this.species(id)
     if (dto.evolves_from_species !== null && dto.evolves_from_species !== undefined) return undefined
-    return { id, captureRate: dto.capture_rate }
+    // The flags travel with the REST path too, so the fallback index is not a second-class one
+    // that silently cannot express a legendary.
+    return {
+      id,
+      captureRate: dto.capture_rate,
+      isLegendary: dto.is_legendary,
+      isMythical: dto.is_mythical,
+    }
   }
 
-  private async readDiskIndex(): Promise<{ fetchedAt: number; entries: BaseSpecies[] } | undefined> {
+  private async readDiskIndex(): Promise<
+    { version: number; fetchedAt: number; entries: BaseSpecies[] } | undefined
+  > {
     try {
       const raw = await fs.readFile(this.indexFilePath, 'utf8')
-      const parsed = JSON.parse(raw) as { fetchedAt?: number; entries?: BaseSpecies[] }
+      const parsed = JSON.parse(raw) as {
+        version?: number
+        fetchedAt?: number
+        entries?: BaseSpecies[]
+      }
       if (!Array.isArray(parsed.entries)) return undefined
-      return { fetchedAt: parsed.fetchedAt ?? 0, entries: parsed.entries }
+      // A file with no version is the original shape, which predates the legendary flags.
+      return { version: parsed.version ?? 1, fetchedAt: parsed.fetchedAt ?? 0, entries: parsed.entries }
     } catch {
       return undefined
     }
@@ -286,8 +339,12 @@ export class PokeAPIClient implements PokeProviding {
 
   private async writeDiskIndex(entries: BaseSpecies[]): Promise<void> {
     try {
-      await fs.mkdir(join(this.indexFilePath, '..'), { recursive: true })
-      await fs.writeFile(this.indexFilePath, JSON.stringify({ fetchedAt: Date.now(), entries }))
+      // Temp-then-rename, per writer: a torn index reads back as `undefined` and the client
+      // rebuilds it over REST — hundreds of requests across the whole species range.
+      await atomicWriteFile(
+        this.indexFilePath,
+        JSON.stringify({ version: INDEX_SCHEMA, fetchedAt: Date.now(), entries }),
+      )
     } catch {
       // A cache write failure must never break hatching.
     }
@@ -315,10 +372,12 @@ export type RNG = () => number
  * Weighted pick from the index. A species whose line is already collected weighs half, so
  * repeats thin out without ever becoming impossible.
  *
- * A guaranteed egg narrows the pool first: the capture-rate ceiling *is* the rarity floor, so
- * legendaries are naturally included ("rare or better" containing legendary is correct). If
- * narrowing empties the pool the guarantee cannot be honoured, so it returns undefined and
- * the egg is kept — falling back to the full pool would silently break what was paid for.
+ * A guarantee narrows the pool first, through `meetsRarityFloor`: "rare or better" still
+ * contains legendary, and `'legendary'` itself now means exactly the flagged species instead
+ * of the empty set it used to mean. If narrowing empties the pool the guarantee cannot be
+ * honoured, so it returns undefined and the caller keeps the egg — or, for a guaranteed
+ * legendary encounter, keeps the reward owed. Falling back to the full pool would silently
+ * hand over something other than what was earned.
  */
 export function chooseBaseFromIndex(
   index: BaseSpecies[],
@@ -326,7 +385,10 @@ export function chooseBaseFromIndex(
   collectedFinals: ReadonlySet<string>,
   rng: RNG,
 ): number | undefined {
-  const pool = tier === undefined ? index : index.filter((e) => rarityIncludes(tier, e.captureRate))
+  const pool =
+    tier === undefined
+      ? index
+      : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
   if (pool.length === 0) return undefined
 
   const weights = pool.map((e) => {
@@ -365,7 +427,12 @@ export async function chooseBaseViaREST(
       return undefined // network down too: keep the egg, retry next tick
     }
     if (candidate === undefined) continue // not a line start
-    if (tier !== undefined && !rarityIncludes(tier, candidate.captureRate)) continue
+    if (
+      tier !== undefined &&
+      !meetsRarityFloor(tier, candidate.captureRate, candidate.isLegendary, candidate.isMythical)
+    ) {
+      continue
+    }
     return id
   }
   return undefined

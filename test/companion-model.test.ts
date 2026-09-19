@@ -25,6 +25,8 @@ import {
   encodeCompanionState,
   parseCompanionState,
 } from '../src/core/companion/persistence.js'
+import { MilestoneBalance, StreakBalance } from '../src/core/companion/encounters.js'
+import { applyLegendaryTriggers } from '../src/core/companion/ledger.js'
 
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
 
@@ -302,6 +304,53 @@ describe('CompanionState decoding', () => {
     expect(
       decodeCompanionState({ claimedTodayTokensByProvider: {} }).claimedTodayTokensByProvider,
     ).toEqual({})
+  })
+
+  // An existing save carries billions of lifetime tokens that predate the milestone reward.
+  // Defaulting the ratchet to zero would read every one of those as unclaimed and pay a
+  // legendary out on the first refresh after the update — the retro-award the candy grant's
+  // `candyFeatureSeeded` already exists to prevent.
+  it('seeds the milestone ratchet from an old save instead of retro-awarding', () => {
+    const state = decodeCompanionState({ usedSinceInstall: MilestoneBalance.tokens * 9 + 5 })
+    expect(state.milestonesAwarded).toBe(9)
+    expect(applyLegendaryTriggers(state, '2026-08-19').awards).toEqual([])
+    expect(state.owedLegendaryEncounters).toBe(0)
+  })
+
+  // Key present, even as zero, means the feature has already seen this save. Re-seeding it
+  // would erase a ratchet on every load and hand out a legendary per launch.
+  it('honours a present milestone ratchet verbatim', () => {
+    const state = decodeCompanionState({
+      usedSinceInstall: MilestoneBalance.tokens * 9,
+      milestonesAwarded: 0,
+    })
+    expect(state.milestonesAwarded).toBe(0)
+  })
+
+  // No recorded days means the streak starts from the next fold that actually accrues.
+  it('starts an old save with no accrual days, so no streak is retro-awarded', () => {
+    const state = decodeCompanionState({ usedSinceInstall: 5 })
+    expect(state.accrualDays).toEqual([])
+    expect(applyLegendaryTriggers(state, '2026-08-19').awards).toEqual([])
+  })
+
+  // A duplicate would count one day twice toward "three days", and an unbounded array is read
+  // on every fold.
+  it('filters, de-duplicates and caps the accrual days', () => {
+    const state = decodeCompanionState({
+      accrualDays: ['2026-08-19', '2026-08-19', 'yesterday', 42, null, '2026-08-18'],
+    })
+    expect(state.accrualDays).toEqual(['2026-08-18', '2026-08-19'])
+
+    const many = Array.from({ length: 40 }, (_, i) => `2026-07-${String((i % 28) + 1).padStart(2, '0')}`)
+    expect(decodeCompanionState({ accrualDays: many }).accrualDays.length).toBeLessThanOrEqual(
+      StreakBalance.windowDays,
+    )
+  })
+
+  it('never decodes a negative legendary debt', () => {
+    expect(decodeCompanionState({ owedLegendaryEncounters: -4 }).owedLegendaryEncounters).toBe(0)
+    expect(decodeCompanionState({ owedLegendaryEncounters: 2 }).owedLegendaryEncounters).toBe(2)
   })
 
   it('throws only when the payload is not an object at all', () => {

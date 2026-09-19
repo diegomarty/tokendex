@@ -12,7 +12,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
-import { EncounterBalance } from './encounters.js'
+import { EncounterBalance, StreakBalance } from './encounters.js'
 import { decodeCompanionState } from './persistence.js'
 import { isTrainerID } from './trainers.js'
 
@@ -247,17 +247,36 @@ export function sanitized(state: CompanionState): CompanionState {
     delete next.pendingHatchID
   }
 
-  // An unsatisfiable guarantee locks the egg forever: legendary cannot be expressed via
-  // capture_rate, so both roll paths find zero candidates, the guarantee is never consumed,
-  // and buying another egg is blocked by the active-Pokémon gate. Decoding *succeeds*, so
-  // corruption recovery never fires either. Lenient decoding only filters unknown values —
-  // a known but impossible one passes straight through.
+  // A legendary egg guarantee is dropped rather than honoured. It was never sold
+  // (`FreshEgg.shopTiers`), so a state carrying one came from a hand edit or an odd version
+  // combination — and decoding *succeeds* for it, since lenient decoding only filters unknown
+  // values and `'legendary'` is a perfectly known one.
+  //
+  // Historically this guard also prevented a lock-up: capture_rate cannot express the tier, so
+  // both roll paths found zero candidates, the guarantee was never consumed and buying another
+  // egg stayed blocked by the active-Pokémon gate. The index now carries the legendary flags
+  // (see `meetsRarityFloor`), so the pool would no longer be empty — which makes dropping it a
+  // pricing decision now rather than a data one, and the reason to keep it is that nobody paid
+  // for it.
   if (next.eggTier !== undefined && captureRateCeiling(next.eggTier) === undefined) {
     delete next.eggTier
   }
 
   next.encounterUsage = clamp(state.encounterUsage ?? 0)
   next.encountersSeen = clamp(state.encountersSeen ?? 0)
+  next.milestonesAwarded = clamp(state.milestonesAwarded ?? 0)
+
+  // An owed legendary is an IOU the spawn path pays out one per refresh, for ever, so an
+  // imported `1e9` would turn the wild tab into a legendary faucet. One full queue is the most
+  // that could ever be waiting to be delivered at once, which makes it the honest ceiling.
+  next.owedLegendaryEncounters = Math.min(
+    Math.max(0, state.owedLegendaryEncounters ?? 0),
+    EncounterBalance.maxQueue,
+  )
+
+  // Deduplicated and capped for the same reason the decoder does it: a repeated day would
+  // count twice toward the streak, and the array is read on every fold.
+  next.accrualDays = [...new Set(state.accrualDays ?? [])].sort().slice(-StreakBalance.windowDays)
 
   // The wild queue is the one collection that *is* trimmed here, and it is not data loss in
   // the way a Pokédex would be: an encounter is a pending offer, not something earned. A save

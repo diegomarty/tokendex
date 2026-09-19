@@ -6,11 +6,36 @@
  * That split is deliberate. Interleaving the rules with saving, notifications and network
  * calls is what leaves branches without a reachable test. Here the orchestrator is thin
  * enough to read in one sitting.
+ *
+ * ## Every write is a transaction (`docs/multi-window.md` §5(d))
+ *
+ * Every open VS Code window — and every profile, fork and Extension Development Host on the
+ * machine — runs its own copy of this store over the *same* `companion-state.json`. The state
+ * used to be read once per worker and written unconditionally at the end of every scan, so
+ * two windows alternated writing hours-old private forks over each other.
+ *
+ * The fix is `mutate`/`transact`: take a short file lock, **re-read the file**, apply, write,
+ * release. Re-reading is the whole design, and the reason it is cheap is that
+ * `applyProviderLedger(previous, observation)` is already the merge function. Fold the same
+ * observation against a ledger the other window has already advanced and the answer is
+ * `delta = 0` — no double hatch, no double encounter, no double toast, by arithmetic rather
+ * than by exclusion. Everything else in the state is then safe by construction: with no stale
+ * base to write from, last-writer-wins has nothing left to lose.
+ *
+ * **The lock is never held across a PokéAPI call.** `update()` is a pure fold committed in one
+ * hold, followed by the network effects (hatch, spawn, pre-roll) each committing its own
+ * result in a second short hold. `test/companion-store.test.ts` asserts that against the stub
+ * provider rather than trusting the intent.
+ *
+ * The in-memory-only fields — `line`, `eventUntil`, the network backoff, `pendingEvents` —
+ * deliberately stay per window. They are display state, not progress.
  */
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
+import { atomicWriteFile } from '../coordination/atomicWrite.js'
+import { FileLock, lockPathFor, type LockResult } from '../coordination/fileLock.js'
 import type { BaseSpecies, PokeProviding } from '../pokeapi.js'
 import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
 import {
@@ -34,7 +59,14 @@ import {
   type BurnTier,
 } from './display.js'
 import { applyUsage, makeEvolutionPlan, normalizedEvolutionState, type RNG } from './growth.js'
-import { applyProviderLedger, creditDelta, spendableBalance } from './ledger.js'
+import {
+  applyLegendaryTriggers,
+  applyProviderLedger,
+  creditDelta,
+  noteAccrualDay,
+  spendableBalance,
+  type LegendaryAward,
+} from './ledger.js'
 import {
   type BallKind,
   type CompanionState,
@@ -64,6 +96,15 @@ const GRADUATE_EVENT_WINDOW_MS = 6_000
 const ENCOUNTER_TOAST_COOLDOWN_MS = 60 * 60_000
 /** Egg progress past which the next species is pre-rolled. See `prefetchHatchIfNeeded`. */
 const HATCH_PREFETCH_PROGRESS = 0.5
+/**
+ * How long a transaction waits for the save's lock before giving up.
+ *
+ * Generous, because every hold is milliseconds of local I/O: reaching this deadline means
+ * another window is wedged, not merely busy. What happens then is the caller's decision —
+ * an accrual skips (the delta stays unclaimed in the file's ledger and folds on the next
+ * tick) and a user action throws `SaveBusyError`.
+ */
+const LOCK_TIMEOUT_MS = 5_000
 
 export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
@@ -78,6 +119,59 @@ export type CompanionEvent =
    * not an event either: the player is watching the animation that announces it.
    */
   | { kind: 'wildAppeared'; speciesID: number; name: string; rarity: Rarity; isShiny: boolean }
+  /**
+   * A guaranteed legendary was *earned*. Emitted by the trigger, at the moment it fires, and
+   * separate from `wildAppeared` on purpose: the two answer different questions ("why did this
+   * happen" and "who turned up"), and the reward can be owed for a while before the species is
+   * known — offline, or with a full queue. The copy therefore says a legendary is on its way
+   * rather than that one has appeared.
+   *
+   * **One event per fold, however many triggers fired.** Both can fire at once — a milestone
+   * crossed on the third day of a week — and two notifications in the same second for one
+   * piece of work read as a bug rather than as a bigger reward. The entitlements still add up
+   * (two legendaries are owed); only the announcement is merged.
+   */
+  | { kind: 'legendaryEarned'; via: 'streak'; days: number }
+  | { kind: 'legendaryEarned'; via: 'milestone'; tokens: number }
+  | { kind: 'legendaryEarned'; via: 'both'; days: number; tokens: number }
+
+/**
+ * A user action that could not take the save's lock inside its deadline.
+ *
+ * Thrown rather than swallowed on purpose: a purchase that did not commit must never look
+ * like it worked (`docs/multi-window.md` §5(d)). The worker turns this into localised text;
+ * the host shows it. An *accrual* never throws — it just skips, and loses nothing.
+ */
+export class SaveBusyError extends Error {
+  constructor() {
+    super('another window is writing the save')
+    this.name = 'SaveBusyError'
+  }
+}
+
+/** What `mutate` reports back: it either committed under the lock, or the lock was busy. */
+export type CommitResult<T> = { committed: true; value: T } | { committed: false }
+
+/**
+ * The transaction handed to `mutate`. Everything on it runs inside one lock hold, against the
+ * state **as it is on disk right now** — never against the copy this window has been holding
+ * since its first scan.
+ */
+export interface Mutation {
+  /** The freshly re-read state, and the new state once `commit` has been called. */
+  readonly state: Readonly<CompanionState>
+  /**
+   * Replaces the state. The last call wins; not calling it at all commits the re-read state
+   * unchanged, which is how a rule that decides "not enough tokens" reports a no-op.
+   *
+   * `keepLine` matters: a shop purchase does not change the species, so dropping the loaded
+   * evolution line would force a needless refetch and briefly disable the candy (which is
+   * gated on the line being loaded).
+   */
+  commit(next: CompanionState, keepLine?: boolean): void
+  /** Injects one Rare Candy's XP through the ordinary growth path (carry, evolve, graduate). */
+  applyCandy(): void
+}
 
 export interface StoreOptions {
   provider: PokeProviding
@@ -85,6 +179,11 @@ export interface StoreOptions {
   now?: () => number
   rng?: RNG
   hostLanguage?: string
+  /**
+   * How long a transaction waits for the save's lock. Tests shorten it so contention is a
+   * fast, deterministic outcome instead of a five-second pause.
+   */
+  lockTimeoutMs?: number
   /** Disabled in tests so the Ditto disguise roll is deterministic. */
   dittoEnabled?: boolean
   /**
@@ -93,6 +192,24 @@ export interface StoreOptions {
    * update. Absent means on.
    */
   encounterToastsEnabled?: () => boolean
+}
+
+/**
+ * Folds this fold's awards into the one notification they are worth.
+ *
+ * Kept as a function rather than inlined so the rare both-fired case is reachable from a test
+ * without driving a store through a milestone *and* a week of days — and so a third trigger has
+ * one obvious place to decide what it says beside the others.
+ */
+function legendaryEarnedEvent(awards: readonly LegendaryAward[]): CompanionEvent | undefined {
+  const days = awards.find((a) => a.kind === 'streak')?.days
+  const tokens = awards.find((a) => a.kind === 'milestone')?.tokens
+  if (days !== undefined && tokens !== undefined) {
+    return { kind: 'legendaryEarned', via: 'both', days, tokens }
+  }
+  if (days !== undefined) return { kind: 'legendaryEarned', via: 'streak', days }
+  if (tokens !== undefined) return { kind: 'legendaryEarned', via: 'milestone', tokens }
+  return undefined
 }
 
 export class CompanionStore {
@@ -115,6 +232,13 @@ export class CompanionStore {
   private spawning = false
   /** Same guard for the egg pre-roll: two overlapping runs would roll the species twice. */
   private prefetching = false
+  /**
+   * Disambiguates encounter ids inside one clock tick. A *paid* encounter is separated by
+   * `encountersSeen`, but a granted legendary deliberately does not touch that counter, so two
+   * grants of the same species in the same millisecond would otherwise share an id — and the
+   * webview addresses encounters by id, so the second throw would resolve the first one.
+   */
+  private spawnSerial = 0
 
   constructor(private readonly options: StoreOptions) {
     this.state = freshCompanionState(options.hostLanguage)
@@ -131,6 +255,20 @@ export class CompanionStore {
   private get filePath(): string {
     return this.options.filePath ?? join(AppPaths.ourData(), 'companion-state.json')
   }
+
+  /**
+   * The lock guarding `filePath`, minted once.
+   *
+   * Deliberately **not** given this store's injected `now`. That clock is the game's, and
+   * tests freeze it; an acquire deadline computed from a frozen clock never passes, so a
+   * contended lock would spin for ever instead of reporting contention. Lock timestamps are
+   * operational, so they belong on the real clock.
+   */
+  private get lock(): FileLock {
+    this.fileLock ??= new FileLock({ path: lockPathFor(this.filePath) })
+    return this.fileLock
+  }
+  private fileLock: FileLock | undefined
 
   // MARK: - Persistence
 
@@ -177,15 +315,110 @@ export class CompanionStore {
     await pruneBackups(directory)
   }
 
-  async save(): Promise<void> {
+  /**
+   * Re-reads the save from disk, mid-life, inside a lock hold. **This is the design.**
+   *
+   * Without it every write starts from a base that may be hours old and the file is simply
+   * overwritten; with it, the fold that follows sees what every other window has already
+   * done, and `applyProviderLedger` answers `delta = 0` for work that is already claimed.
+   *
+   * Unlike `readSave`, an unparseable file here is *kept* rather than backed up and replaced
+   * by a fresh state. `load()` owns the corruption path; repeating it on every write would
+   * rotate the five kept backups away (`saveTransfer.BACKUPS_TO_KEEP`) and, worse, would let
+   * one bad read persist a fresh state over real progress. Holding what we have and writing
+   * it back is the strictly better recovery.
+   */
+  private async reread(): Promise<void> {
+    let raw: string
     try {
-      await fs.mkdir(join(this.filePath, '..'), { recursive: true })
-      // Written to a temp file and renamed: an interrupted write must never truncate a save.
-      const temp = `${this.filePath}.tmp`
-      await fs.writeFile(temp, encodeCompanionState(this.state), 'utf8')
-      await fs.rename(temp, this.filePath)
+      raw = await fs.readFile(this.filePath, 'utf8')
+    } catch {
+      return // no save on disk yet: what we hold *is* the state
+    }
+    try {
+      this.adopt(decodeCompanionState(JSON.parse(raw), this.options.hostLanguage))
+    } catch {
+      // Unreadable right now. Keep this window's state; the write below republishes it.
+    }
+  }
+
+  private async write(): Promise<void> {
+    try {
+      // A private temp file, then a rename: an interrupted write must never truncate a save,
+      // and every other VS Code window writes this same path with its own worker.
+      await atomicWriteFile(this.filePath, encodeCompanionState(this.state), 'utf8')
     } catch {
       // Never let a save failure break a refresh; the next tick retries.
+    }
+  }
+
+  /**
+   * One read-modify-write under the save's lock: re-read, run `body`, write, release.
+   *
+   * `body` mutates `this.state` exactly as the code did before the lock existed. The only
+   * thing that changed is the base it starts from. `{ acquired: false }` means the lock was
+   * busy and **nothing was written** — the caller decides whether that is a skip or an error.
+   *
+   * Nothing inside `body` may touch the network. That is the invariant the two-hold shape of
+   * `update()` exists to keep, and `test/companion-store.test.ts` asserts it on the provider.
+   */
+  private async transact<T>(body: () => T | Promise<T>): Promise<LockResult<T>> {
+    return this.lock.withLock(async () => {
+      await this.reread()
+      const value = await body()
+      await this.write()
+      return value
+    }, this.options.lockTimeoutMs ?? LOCK_TIMEOUT_MS)
+  }
+
+  /**
+   * The public transaction: everything outside this module that changes the save goes through
+   * it, so the `snapshot()` → transform → write-back pattern has nowhere left to live.
+   *
+   * ```ts
+   * const result = await companion.mutate((tx) => {
+   *   const next = buyItem(tx.state, 'masterBall', 1)
+   *   if (next !== undefined) tx.commit(next)
+   *   return next !== undefined
+   * })
+   * ```
+   *
+   * `{ committed: false }` means the lock was busy. For a user action that must be surfaced,
+   * never swallowed.
+   */
+  async mutate<T>(fn: (tx: Mutation) => T | Promise<T>): Promise<CommitResult<T>> {
+    await this.load()
+    const result = await this.transact(() => fn(this.mutation()))
+    return result.acquired ? { committed: true, value: result.value } : { committed: false }
+  }
+
+  /**
+   * Adopts whatever another window has written, **without writing anything back**.
+   *
+   * This is what a watch event on `companion-state.json` runs. It takes no lock and needs
+   * none: every writer publishes through `atomicWriteFile`, so a concurrent read sees one
+   * writer's complete payload or the previous one, never a torn mixture — and holding a lock
+   * to read would only mean waiting for a writer whose bytes we would then read anyway.
+   *
+   * **Not writing is the load-bearing half.** `transact` writes on every hold, changed or
+   * not, so a watch handler that answered a change with a mutation would hand the other
+   * window a change to answer, for ever, at the debounce interval. Two windows ping-ponging
+   * once a second is worse than the two-minute staleness this exists to remove.
+   */
+  async syncFromDisk(): Promise<void> {
+    await this.load()
+    await this.reread()
+  }
+
+  private mutation(): Mutation {
+    // A getter, not a captured value: `applyCandy` has to grow the state a `commit` just set.
+    const store = this
+    return {
+      get state(): Readonly<CompanionState> {
+        return store.state
+      },
+      commit: (next, keepLine = true) => store.adopt(next, keepLine),
+      applyCandy: () => store.applyCandy(),
     }
   }
 
@@ -237,18 +470,15 @@ export class CompanionStore {
   }
 
   /**
-   * Replaces the state in place, used by shop actions and by importing a save.
+   * Takes on a new state — from a `commit` inside a transaction, or from re-reading the file.
    *
-   * `keepLine` matters: a shop purchase does not change the species, so dropping the loaded
-   * evolution line would force a needless refetch and briefly disable the candy (which is
-   * gated on the line being loaded).
+   * The one rule: the per-window caches (`line`, and with it the celebration window) survive
+   * only while the species is the same object it was. Compared as identities including
+   * "no Pokémon at all", so a graduation this window performed keeps its own six seconds of
+   * celebration while a *different* window's graduation correctly ends it.
    */
-  replaceState(state: CompanionState, keepLine = true): void {
-    const sameSpecies =
-      keepLine &&
-      this.state.active !== undefined &&
-      state.active !== undefined &&
-      state.active.baseID === this.state.active.baseID
+  private adopt(state: CompanionState, keepLine = true): void {
+    const sameSpecies = keepLine && state.active?.baseID === this.state.active?.baseID
     this.state = sanitized(state)
     if (!sameSpecies) {
       this.line = undefined
@@ -257,7 +487,7 @@ export class CompanionStore {
   }
 
   /** Injects one Rare Candy's XP through the ordinary growth path (carry, evolve, graduate). */
-  applyCandy(): void {
+  private applyCandy(): void {
     if (this.state.active === undefined || this.line === undefined) return
     this.grow(RareCandy.xp)
   }
@@ -278,6 +508,43 @@ export class CompanionStore {
   }): Promise<void> {
     await this.load()
 
+    // Hold one: the pure fold. Nothing here touches the network, so the lock is held for a
+    // read, some arithmetic and a write.
+    //
+    // A busy lock skips the whole tick and loses nothing. The observation is cumulative and
+    // the delta is derived from what the *file* has claimed, so the tokens stay unclaimed and
+    // fold on the next tick — exactly as if this window had been asleep for two minutes.
+    const folded = await this.transact(() => this.foldObservation(observation))
+    if (!folded.acquired) return
+
+    // Holds two and beyond, each opened by the effect that needs it and each preceded by the
+    // PokéAPI call it commits the result of. Read once: a failure reported by an earlier
+    // effect must not silently cancel the later ones this pass, only the next one.
+    const networkAllowed = this.now >= this.nextNetworkAttempt
+    if (eggReadyToHatch(this.state) && !this.hatching && networkAllowed) await this.hatchIfNeeded()
+    if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
+      await this.loadCurrentLine()
+    }
+    if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
+    if (networkAllowed && !this.prefetching) await this.prefetchHatchIfNeeded()
+  }
+
+  /**
+   * The fold itself: pure with respect to the outside world, and therefore safe to run inside
+   * a lock hold.
+   *
+   * `applyProviderLedger` is the merge function this whole design leans on. Its `previous`
+   * argument is the state re-read from disk a moment ago, so a second window folding the same
+   * observation diffs it against a ledger the first has already advanced and gets `delta = 0`.
+   * Everything hanging off `delta > 0` — the egg, growth, a hatch, encounter usage, the
+   * legendary triggers and their toast — therefore runs exactly once per window-independent
+   * unit of work rather than once per open window.
+   */
+  private foldObservation(observation: {
+    todayTokensByProvider: Record<string, number>
+    todayDate: string
+    hasUsageData: boolean
+  }): void {
     const { state, delta } = applyProviderLedger(this.state, observation)
     this.state = state
 
@@ -288,6 +555,9 @@ export class CompanionStore {
     if (waiting.length !== this.state.wild.length) this.state = { ...this.state, wild: waiting }
 
     if (delta > 0) {
+      // Before crediting, so the day is recorded from the same fact the growth meter moves on:
+      // real accrual. A refresh that contributes nothing is not a day of work.
+      this.state = noteAccrualDay(this.state, observation.todayDate)
       this.state = creditDelta(this.state, delta)
       // creditDelta already moved usedAtStage, so growth is evaluated with a zero delta.
       if (this.state.active !== undefined) this.grow(0)
@@ -300,16 +570,16 @@ export class CompanionStore {
         ...this.state,
         encounterUsage: addEncounterUsage(this.state.encounterUsage, delta, this.state.wild.length),
       }
-    }
 
-    const networkAllowed = this.now >= this.nextNetworkAttempt
-    if (eggReadyToHatch(this.state) && !this.hatching && networkAllowed) await this.hatchIfNeeded()
-    if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
-      await this.loadCurrentLine()
+      // Evaluated after crediting, so the milestone rule reads the total this fold produced,
+      // and only on a fold that accrued: both rewards are earned by *using* the tools, never by
+      // leaving the editor open. The triggers decide; `grantLegendaryEncounter` (inside) owes;
+      // `spawnEncountersIfNeeded` delivers. None of the three knows what the others are for.
+      const triggered = applyLegendaryTriggers(this.state, observation.todayDate)
+      this.state = triggered.state
+      const earned = legendaryEarnedEvent(triggered.awards)
+      if (earned !== undefined) this.pendingEvents.push(earned)
     }
-    if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
-    if (networkAllowed && !this.prefetching) await this.prefetchHatchIfNeeded()
-    await this.save()
   }
 
   // MARK: - Wild encounters
@@ -320,16 +590,26 @@ export class CompanionStore {
    * Usage is spent only once an encounter exists (`payForEncounter` after the fetch, never
    * before), so an offline spell defers encounters instead of losing them — the same bargain
    * `hatchIfNeeded` strikes with the egg, and it shares that path's backoff.
+   *
+   * Two phases, because the rolls are PokéAPI calls and the lock may not be held across one.
+   * Rolling is **speculative**: this window rolls what its own copy says it is owed, and the
+   * re-read state inside the hold decides how many of those are actually paid for. A window
+   * whose encounters another has already minted finds `owedEncounters` at zero and drops its
+   * rolls on the floor — one wasted request, no double spawn.
    */
   private async spawnEncountersIfNeeded(): Promise<void> {
     const owed = owedEncounters(this.state.encounterUsage, this.state.encountersSeen)
+    const owedLegendaries = this.state.owedLegendaryEncounters
     // Never mint into a full queue: paying the threshold and letting `enqueueEncounter` drop
     // something would waste tokens on encounters nobody sees — and could announce a Pokémon
     // that was itself the one dropped. Accrual is already capped by the queue's room, but owed
     // usage can still exceed it (an imported save, or a spawn deferred by a network failure
     // while the queue filled), so the guard stays.
     const room = EncounterBalance.maxQueue - this.state.wild.length
-    if (owed === 0 || room <= 0) return
+    // A full queue holds a granted legendary too, rather than letting `enqueueEncounter` make
+    // room for it: with twelve legendaries waiting, the one dropped would be a legendary.
+    // Deferring costs nothing — the entitlement is persisted, so it arrives when a slot frees.
+    if ((owed === 0 && owedLegendaries === 0) || room <= 0) return
 
     this.spawning = true
     try {
@@ -342,24 +622,77 @@ export class CompanionStore {
         return
       }
 
-      for (let i = 0; i < Math.min(owed, room); i++) {
+      // At most one granted legendary per refresh. Two triggers firing in the same fold owe
+      // two, and delivering both at once would dump a pair of legendaries into the queue in the
+      // same second; the second is carried, not dropped.
+      let slots = room
+      let reward: WildEncounter | undefined
+      if (owedLegendaries > 0) {
+        reward = await this.rollEncounter(index, 'legendary')
+        if (reward === undefined) {
+          // Either the network is down or the cached index predates the legendary flags. Both
+          // resolve themselves; the entitlement stays owed until one of them does.
+          this.noteNetworkFailure()
+          return
+        }
+        slots -= 1
+      }
+
+      const rolled: WildEncounter[] = []
+      let rollFailed = false
+      for (let i = 0; i < Math.min(owed, slots); i++) {
         const encounter = await this.rollEncounter(index)
         if (encounter === undefined) {
-          this.noteNetworkFailure()
-          return // usage stays banked: this encounter is deferred, not lost
+          rollFailed = true
+          break // usage stays banked: this encounter is deferred, not lost
         }
-
-        const paid = payForEncounter(this.state.encounterUsage, this.state.encountersSeen)
-        this.state = {
-          ...this.state,
-          ...paid,
-          wild: enqueueEncounter(this.state.wild, encounter),
-        }
-        this.noteEncounterAppeared(encounter)
+        rolled.push(encounter)
       }
-      this.noteNetworkSuccess()
+      if (rollFailed) this.noteNetworkFailure()
+      else this.noteNetworkSuccess()
+
+      // Every network call is behind us; the hold below is arithmetic and one write.
+      if (reward !== undefined || rolled.length > 0) {
+        await this.transact(() => this.commitSpawns(reward, rolled))
+      }
     } finally {
       this.spawning = false
+    }
+  }
+
+  /**
+   * Files the rolled encounters against the state as it is on disk **now**.
+   *
+   * Both counters are re-derived here rather than carried in from the rolling phase: another
+   * window that has already minted these encounters advanced `encountersSeen` and drained
+   * `encounterUsage`, so `owedEncounters` answers zero and this window's rolls are dropped.
+   * Same for the granted legendary, which is only delivered while the file still owes one.
+   */
+  private commitSpawns(reward: WildEncounter | undefined, rolled: readonly WildEncounter[]): void {
+    let room = EncounterBalance.maxQueue - this.state.wild.length
+    if (room <= 0) return
+
+    if (reward !== undefined && this.state.owedLegendaryEncounters > 0) {
+      this.state = {
+        ...this.state,
+        owedLegendaryEncounters: this.state.owedLegendaryEncounters - 1,
+        wild: enqueueEncounter(this.state.wild, reward),
+      }
+      this.noteEncounterAppeared(reward)
+      room -= 1
+    }
+
+    for (const encounter of rolled) {
+      if (room <= 0) break
+      if (owedEncounters(this.state.encounterUsage, this.state.encountersSeen) === 0) break
+      const paid = payForEncounter(this.state.encounterUsage, this.state.encountersSeen)
+      this.state = {
+        ...this.state,
+        ...paid,
+        wild: enqueueEncounter(this.state.wild, encounter),
+      }
+      this.noteEncounterAppeared(encounter)
+      room -= 1
     }
   }
 
@@ -393,7 +726,7 @@ export class CompanionStore {
    * makes common species common, and halving an already-collected line is exactly the bias a
    * Pokédex wants. No tier is passed — a wild encounter carries no guarantee.
    */
-  private async rollEncounter(index: BaseSpecies[]): Promise<WildEncounter | undefined> {
+  private async rollEncounter(index: BaseSpecies[], tier?: Rarity): Promise<WildEncounter | undefined> {
     // Wild catches never enter `collectedFinals` (that set steers evolution-branch diversity),
     // so without help the same Caterpie reappears at full weight for ever. The selector's
     // halve-if-seen bias is fed a *local* set instead: the real collection, plus every species
@@ -405,7 +738,11 @@ export class CompanionStore {
     }
     for (const queued of this.state.wild) seen.add(`${queued.speciesID}:${queued.speciesID}`)
 
-    const speciesID = chooseBaseFromIndex(index, undefined, seen, this.rng)
+    // `tier` is a floor, and the granted-legendary reward is the only caller that passes one.
+    // Reusing the ordinary roll rather than a parallel path is what keeps the reward an
+    // ordinary wild Pokémon: same weighting inside the pool, same shiny roll, same flee rules,
+    // same 24h window, same toast. A guaranteed prize would have been a different feature.
+    const speciesID = chooseBaseFromIndex(index, tier, seen, this.rng)
     if (speciesID === undefined) return undefined
 
     try {
@@ -414,7 +751,7 @@ export class CompanionStore {
       // exempting half the game from it would be the surprising reading.
       const isShiny = rollShiny(this.state, this.rng)
       const encounter: WildEncounter = {
-        id: `w${this.now}-${speciesID}-${this.state.encountersSeen}`,
+        id: `w${this.now}-${speciesID}-${this.state.encountersSeen}-${this.spawnSerial++}`,
         speciesID,
         captureRate: species.captureRate,
         rarity: species.rarity,
@@ -433,32 +770,43 @@ export class CompanionStore {
    * Throws one ball. The wobble count comes back with the outcome because the animation plays
    * it — deriving it again in the webview would be a second source of truth for a die already
    * cast.
+   *
+   * A user action, so a busy lock throws `SaveBusyError` rather than reporting a miss: a ball
+   * that was never thrown must not come back as "it broke free".
    */
   async throwBallAt(encounterID: string, ball: BallKind): Promise<ThrowOutcome> {
     await this.load()
-    const result = throwBall(this.state, encounterID, ball, this.rng, this.now)
-    this.state = result.state
+    // Under the lock and against the re-read queue: a Pokémon another window already caught
+    // is simply not there, so the throw answers `unknownEncounter` instead of resurrecting it.
+    const result = await this.transact(() => {
+      const thrown = throwBall(this.state, encounterID, ball, this.rng, this.now)
+      this.state = thrown.state
 
-    // No pendingEvent on a catch: the player is looking at the panel — they just clicked the
-    // throw — so a native toast would only repeat what the animation is showing. The event
-    // window still runs so the status bar celebrates alongside.
-    if (result.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
-
-    await this.save()
-    return result.outcome
+      // No pendingEvent on a catch: the player is looking at the panel — they just clicked the
+      // throw — so a native toast would only repeat what the animation is showing. The event
+      // window still runs so the status bar celebrates alongside.
+      if (thrown.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
+      return thrown.outcome
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
   }
 
   /** The player walks away. Spends nothing, so there is nothing to celebrate either. */
   async runFrom(encounterID: string): Promise<void> {
     await this.load()
-    this.state = runFromEncounter(this.state, encounterID)
-    await this.save()
+    const result = await this.transact(() => {
+      this.state = runFromEncounter(this.state, encounterID)
+    })
+    if (!result.acquired) throw new SaveBusyError()
   }
 
   async setTrainer(trainerID: string): Promise<void> {
     await this.load()
-    this.state = { ...this.state, trainerID: trainerIDOrDefault(trainerID) }
-    await this.save()
+    const result = await this.transact(() => {
+      this.state = { ...this.state, trainerID: trainerIDOrDefault(trainerID) }
+    })
+    if (!result.acquired) throw new SaveBusyError()
   }
 
   /** Applies a delta through the growth rules and records whatever happened. */
@@ -585,7 +933,13 @@ export class CompanionStore {
       } catch {
         warmed = false
       }
-      this.state = { ...this.state, pendingHatchID: baseID }
+
+      // Network done, lock now. Another window may have pre-rolled — or hatched outright —
+      // while we were away; its decision is on disk and stands, and ours is discarded.
+      await this.transact(() => {
+        if (this.state.active !== undefined || this.state.pendingHatchID !== undefined) return
+        this.state = { ...this.state, pendingHatchID: baseID }
+      })
       if (warmed) this.noteNetworkSuccess()
       else this.noteNetworkFailure()
     } finally {
@@ -596,15 +950,29 @@ export class CompanionStore {
   private async loadCurrentLine(): Promise<void> {
     const active = this.state.active
     if (active === undefined) return
+    let line: EvoLine
     try {
-      const line = await this.options.provider.line(active.baseID)
+      line = await this.options.provider.line(active.baseID)
+    } catch {
+      // Offline: keep the Pokémon and retry once the backoff allows.
+      this.noteNetworkFailure()
+      return
+    }
+    this.noteNetworkSuccess()
+
+    await this.transact(() => {
+      // The fetch answered for the species we held when it started. If the file now holds a
+      // different one — another window evolved, graduated or revealed a Ditto — this line
+      // describes nothing, and next tick refetches for the species that is actually there.
+      const current = this.state.active
+      if (current === undefined || current.baseID !== active.baseID) return
       this.line = line
       // Reconcile the saved path against the current asset tree without consuming RNG when
       // the plan is still complete — otherwise a restart would silently reroll the branch.
       this.state = {
         ...this.state,
         active: normalizedEvolutionState(
-          active,
+          current,
           line.tree,
           new Set(this.state.collectedFinals),
           this.rng,
@@ -612,11 +980,7 @@ export class CompanionStore {
       }
       // A threshold may already have been passed while the line was unavailable.
       this.grow(0)
-      this.noteNetworkSuccess()
-    } catch {
-      // Offline: keep the Pokémon and retry once the backoff allows.
-      this.noteNetworkFailure()
-    }
+    })
   }
 
   private noteNetworkSuccess(): void {
@@ -640,6 +1004,15 @@ export class CompanionStore {
     this.nextNetworkAttempt = this.now + this.networkBackoffMs
   }
 
+  /**
+   * Hatches the egg: the species pick and the line fetch outside the lock, the hatchling
+   * itself committed inside one.
+   *
+   * The split is what stops two windows hatching two different Pokémon from one egg. Both may
+   * roll — rolling is only a couple of requests — but the commit re-reads the file first, and
+   * the second window finds the egg already gone and throws its roll away without pushing a
+   * `hatched` event. One egg, one Pokémon, one toast.
+   */
   private async hatchIfNeeded(): Promise<void> {
     this.hatching = true
     try {
@@ -651,55 +1024,69 @@ export class CompanionStore {
         return
       }
 
-      const line = await this.options.provider.line(baseID)
-      const forms = totalForms(line)
-      const plan = makeEvolutionPlan(line.tree, baseID, new Set(this.state.collectedFinals), this.rng)
-
-      const isShiny = rollShiny(this.state, this.rng)
-      // Fixed at hatch, like shininess. The Mint exists precisely to reroll it later, so
-      // leaving it unset would make that item act on nothing.
-      const nature = NATURES[this.rng() % NATURES.length]!
-      const disguised = rollDittoDisguise(line.rarity, forms, this.options.dittoEnabled ?? true, this.rng)
-
-      const mon: MonState = {
-        baseID,
-        pathIDs: [baseID],
-        plannedPathIDs: plan,
-        stageIndex: 0,
-        // Anything spent beyond the hatch threshold carries into the hatchling's growth.
-        // Read from the balance table, never retyped: a literal here is a second source of
-        // truth that silently stops matching the threshold the egg was actually measured
-        // against the day that number moves.
-        usedAtStage: Math.max(0, this.state.eggUsage - PokemonBalance.eggHatchThreshold),
-        rarity: line.rarity,
-        totalForms: Math.max(forms, plan.length),
-        isShiny,
-        nature,
-        dittoRevealed: false,
+      let line: EvoLine
+      try {
+        line = await this.options.provider.line(baseID)
+      } catch {
+        // Network trouble: the egg survives and the retry waits out the backoff.
+        this.noteNetworkFailure()
+        return
       }
-      if (disguised) mon.dittoDisguise = PokemonOdds.dittoSpeciesID
-
-      const next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
-      // The guarantee is consumed here — the single consumption point.
-      delete next.eggTier
-      delete next.pendingHatchID
-      this.state = next
-      this.line = line
-
-      this.pendingEvents.push({
-        kind: 'hatched',
-        speciesID: baseID,
-        name: localizedName(line, baseID, this.state.language),
-        isShiny,
-      })
-      this.eventUntil = this.now + EVENT_WINDOW_MS
       this.noteNetworkSuccess()
-    } catch {
-      // Network trouble: the egg survives and the retry waits out the backoff.
-      this.noteNetworkFailure()
+
+      await this.transact(() => this.commitHatch(baseID, line))
     } finally {
       this.hatching = false
     }
+  }
+
+  /** The hatch itself, inside the hold and against the re-read state. Pure but for the RNG. */
+  private commitHatch(baseID: number, line: EvoLine): void {
+    // Another window got there first. Its hatchling is the one in the file we just re-read;
+    // ours never existed, so nothing is written and nothing is announced.
+    if (this.state.active !== undefined || !eggReadyToHatch(this.state)) return
+
+    const forms = totalForms(line)
+    const plan = makeEvolutionPlan(line.tree, baseID, new Set(this.state.collectedFinals), this.rng)
+
+    const isShiny = rollShiny(this.state, this.rng)
+    // Fixed at hatch, like shininess. The Mint exists precisely to reroll it later, so
+    // leaving it unset would make that item act on nothing.
+    const nature = NATURES[this.rng() % NATURES.length]!
+    const disguised = rollDittoDisguise(line.rarity, forms, this.options.dittoEnabled ?? true, this.rng)
+
+    const mon: MonState = {
+      baseID,
+      pathIDs: [baseID],
+      plannedPathIDs: plan,
+      stageIndex: 0,
+      // Anything spent beyond the hatch threshold carries into the hatchling's growth.
+      // Read from the balance table, never retyped: a literal here is a second source of
+      // truth that silently stops matching the threshold the egg was actually measured
+      // against the day that number moves.
+      usedAtStage: Math.max(0, this.state.eggUsage - PokemonBalance.eggHatchThreshold),
+      rarity: line.rarity,
+      totalForms: Math.max(forms, plan.length),
+      isShiny,
+      nature,
+      dittoRevealed: false,
+    }
+    if (disguised) mon.dittoDisguise = PokemonOdds.dittoSpeciesID
+
+    const next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
+    // The guarantee is consumed here — the single consumption point.
+    delete next.eggTier
+    delete next.pendingHatchID
+    this.state = next
+    this.line = line
+
+    this.pendingEvents.push({
+      kind: 'hatched',
+      speciesID: baseID,
+      name: localizedName(line, baseID, this.state.language),
+      isShiny,
+    })
+    this.eventUntil = this.now + EVENT_WINDOW_MS
   }
 
   /**

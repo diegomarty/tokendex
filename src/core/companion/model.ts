@@ -86,9 +86,11 @@ export function sortRank(rarity: Rarity): number {
  * writing the threshold in two places lets one drift and silently break the guarantee.
  *
  * `undefined` = a tier capture_rate cannot express. Legendaries are decided by
- * `is_legendary`/`is_mythical`, flags the hatch candidate index does not carry, so a
- * legendary-only egg cannot exist (and is not sold). Conversely every legendary has
- * capture_rate <= 45, so they fall naturally inside the uncommon/rare egg filters.
+ * `is_legendary`/`is_mythical`, which capture_rate cannot stand in for: every legendary has
+ * capture_rate <= 45, but so do plenty of ordinary rares. Those two flags now ride on
+ * `BaseSpecies`, so a legendary-only *pool* is expressible — `meetsRarityFloor` is the one
+ * that can express it, and the guaranteed-legendary encounter is built on it. A legendary
+ * **egg** is still not sold: that is a product decision, no longer a missing-data one.
  */
 export function captureRateCeiling(rarity: Rarity): number | undefined {
   switch (rarity) {
@@ -114,6 +116,29 @@ export function rarityFrom(capture: number, isLegendary: boolean, isMythical: bo
   if (rarityIncludes('rare', capture)) return 'rare'
   if (rarityIncludes('uncommon', capture)) return 'uncommon'
   return 'common'
+}
+
+/**
+ * Whether a species is `floor` **or better** — the rarity filter every candidate pool uses.
+ *
+ * One rule for all four tiers, including the one `rarityIncludes` cannot answer: it is
+ * `rarityFrom` compared on `sortRank`, so "rare or better" still contains legendary (as it
+ * always did, since every legendary has capture_rate <= 45) and "legendary" now means exactly
+ * the flagged species rather than the empty set. Identical to the old capture-rate filter for
+ * common/uncommon/rare, so no pool changes shape by adopting it.
+ *
+ * The flags are optional because an index cached by an older version predates them. Missing
+ * reads as "not legendary", which keeps the other three tiers exactly right and makes the
+ * legendary pool empty rather than wrong — a reward that waits for a fresh index instead of
+ * quietly handing out a Caterpie.
+ */
+export function meetsRarityFloor(
+  floor: Rarity,
+  capture: number,
+  isLegendary = false,
+  isMythical = false,
+): boolean {
+  return sortRank(rarityFrom(capture, isLegendary, isMythical)) >= sortRank(floor)
 }
 
 // MARK: - Token economy
@@ -715,12 +740,51 @@ export interface CompanionState {
   encounterUsage: number
   /** Unresolved encounters, oldest first. */
   wild: WildEncounter[]
-  /** Lifetime encounters spawned, so the cheaper first-encounter threshold applies exactly once. */
+  /**
+   * Lifetime encounters **paid for out of usage**, so the cheaper first-encounter threshold
+   * applies exactly once.
+   *
+   * A granted legendary does not count: it spends no `encounterUsage`, so counting it would
+   * quietly consume a new player's cheap first encounter and charge them the full 2.5M for a
+   * gift they were given.
+   */
   encountersSeen: number
   /** Pokémon Showdown trainer slug. Absent = the roster default. */
   trainerID?: string
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
+  /**
+   * Local `yyyy-MM-dd` days on which usage was actually **accrued** — not days the editor was
+   * open. Written by `noteAccrualDay`, which dedupes and prunes to `StreakBalance.windowDays`,
+   * so this array is bounded on disk and a day counts once however many refreshes land in it.
+   *
+   * Absent in an older save, which decodes to an empty array: the streak then starts from the
+   * next accrual, so an upgrade can never retro-award a legendary for days nobody recorded.
+   */
+  accrualDays: string[]
+  /**
+   * The day a streak legendary was last awarded. The one-per-rolling-window guard, and the
+   * only thing stopping the two overlapping streak rules from paying twice for one week.
+   */
+  lastStreakAwardDate?: string
+  /**
+   * Lifetime-usage milestones already paid out: `floor(usedSinceInstall / MilestoneBalance.tokens)`
+   * as of the last award. A ratchet, so crossing several at once awards one and a reload
+   * re-awards none.
+   *
+   * **Seeded, not defaulted, when the key is absent** (see `persistence.ts`): an existing save
+   * with billions of lifetime tokens must upgrade silently, not hand over a legendary for
+   * usage that predates the feature.
+   */
+  milestonesAwarded: number
+  /**
+   * Guaranteed-legendary encounters earned and not yet materialised.
+   *
+   * Reason-free on purpose — see `grantLegendaryEncounter`. Held rather than delivered when
+   * the queue is full or the species index is unavailable, so a reward is deferred, never
+   * lost, and never forces a legendary out of the queue to make room for itself.
+   */
+  owedLegendaryEncounters: number
 }
 
 export function freshCompanionState(hostLanguage?: string): CompanionState {
@@ -742,5 +806,8 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     encounterUsage: 0,
     wild: [],
     encountersSeen: 0,
+    accrualDays: [],
+    milestonesAwarded: 0,
+    owedLegendaryEncounters: 0,
   }
 }

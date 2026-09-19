@@ -21,7 +21,7 @@ import {
   type WildEncounter,
   freshCompanionState,
 } from './model.js'
-import { EncounterBalance } from './encounters.js'
+import { EncounterBalance, MilestoneBalance, StreakBalance } from './encounters.js'
 
 type Json = Record<string, unknown>
 
@@ -171,6 +171,22 @@ export function decodeWildEncounter(value: unknown): WildEncounter | undefined {
   return encounter
 }
 
+/** `yyyy-MM-dd`, the only shape the streak rules can read. */
+const isDayKey = (v: unknown): v is string => isString(v) && /^\d{4}-\d{2}-\d{2}$/.test(v)
+
+/**
+ * Accrual days: shape-filtered, de-duplicated and capped at the window's width.
+ *
+ * A duplicate would count one day twice toward the streak, and an unbounded array (a hand
+ * edit, a save from a future version with a wider window) would both bloat the file and make
+ * the "3 days" test trivially true, so both are fixed here rather than trusted.
+ */
+function decodeAccrualDays(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const unique = [...new Set(value.filter(isDayKey))].sort()
+  return unique.slice(-StreakBalance.windowDays)
+}
+
 /**
  * Decodes the whole state. Throws only when the payload is not a JSON object at all — the
  * caller backs that file up and starts fresh.
@@ -207,7 +223,32 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     // A save predating encounters decodes to 0, so its owner gets the cheap first encounter
     // too — the alternative is punishing existing players for having installed early.
     encountersSeen: Math.max(0, lenient(value, 'encountersSeen', isInt, 0)),
+    // Absent (an older save) decodes to no recorded days at all, which is the no-retro-award
+    // direction: the streak starts from the next fold that actually accrues, so upgrading
+    // never hands out a legendary for days that were never observed. Entries are filtered to
+    // the expected shape and capped, because everything downstream indexes by day.
+    accrualDays: decodeAccrualDays(value['accrualDays']),
+    // Seeded rather than defaulted — see below.
+    milestonesAwarded: 0,
+    owedLegendaryEncounters: Math.max(0, lenient(value, 'owedLegendaryEncounters', isInt, 0)),
   }
+
+  /**
+   * The milestone ratchet is the one field where "absent" must not mean zero.
+   *
+   * Zero on a save carrying billions of lifetime tokens would read as "every milestone is
+   * still unclaimed" and pay a legendary out on the first refresh after an update — the exact
+   * retro-award `candyFeatureSeeded` exists to prevent for candies. Key present (even as 0)
+   * means the feature has already seen this save, so it is honoured verbatim.
+   */
+  state.milestonesAwarded = Object.hasOwn(value, 'milestonesAwarded')
+    ? Math.max(0, lenient(value, 'milestonesAwarded', isInt, 0))
+    : Math.floor(state.usedSinceInstall / MilestoneBalance.tokens)
+
+  // Shape-checked, not date-checked: a value that is not a real date simply never matches a
+  // day, which leaves the guard open rather than jammed shut.
+  const lastStreakAwardDate = lenientOptional(value, 'lastStreakAwardDate', isString)
+  if (lastStreakAwardDate !== undefined) state.lastStreakAwardDate = lastStreakAwardDate
 
   // An unknown rawValue degrades to "no guarantee" — the safe direction, since inventing a
   // guarantee the user never bought is worse than losing one.
