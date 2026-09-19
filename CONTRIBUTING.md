@@ -111,6 +111,34 @@ Examples from this repository:
 🐛 Stop a copied conversation reading as fresh spend
 ```
 
+### The emoji also picks the version number
+
+A merge into `main` runs the `bump` workflow, which reads the gitmoji of everything landed
+since the last `vX.Y.Z` tag and moves `package.json` and `package-lock.json` to the version
+the next release will carry — 💥 major, ✨/🏗️ minor, 🐛/🎨/🔧/⬆️ and friends patch, and
+📝/✅/👷/🔖 nothing at all. It measures from the tag, so several merges between releases
+settle on one number rather than inflating it once each.
+
+**The CHANGELOG decides whether that bump is also a release.** After bumping, the workflow
+looks at `## [Unreleased]`. If you have written real notes there, it stamps them into
+`## [X.Y.Z] - <date>`, opens a fresh empty `## [Unreleased]` above, and pushes the `vX.Y.Z`
+tag — which is what starts `release.yml`. If the section is empty, it commits the bump and
+stops; the version moves, nothing ships, and the next merge that finds notes releases
+everything accumulated since the last tag.
+
+So the notes are the release switch. Nothing is ever generated from commit subjects, and a
+release cannot go out with invented notes. Leaving `## [Unreleased]` empty is also how you
+hold a release back while work lands.
+
+When the emoji undersells the change — a feature that shipped inside a 🎨 refactor, say — put
+`[bump minor]` (or `[bump major]`) in the PR body, and `[skip bump]` for a merge that must not
+move the version at all. Both are read from the squashed commit message, and both are
+permanent rather than per-run. To see what your branch would produce:
+
+```bash
+.github/scripts/next-version.sh --explain
+```
+
 **Group commits by coherent change, not by file or by layer.** A commit should read as one
 idea; spanning several files and layers is normal when they only make sense together.
 

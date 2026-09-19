@@ -1,0 +1,294 @@
+# Moves `package.json` and the lockfile to the version the next release will carry, every time
+# something lands on `main` — and, when the notes for it are written, stamps the CHANGELOG and
+# pushes the `vX.Y.Z` tag that `release.yml` has always listened for. `release.yml` is
+# unchanged: it still runs the full gates, packages the `.vsix` and cuts the GitHub release.
+#
+# ## The CHANGELOG is the release gate
+#
+# Every merge moves the version. Only a merge that finds real content under `## [Unreleased]`
+# is released. The entries in that file explain *why* a fix mattered and quote real
+# measurements ("~430 ms to ~190 ms against ~900 ms cold"), which no commit-log generator can
+# produce — so the notes stay hand-written, and writing them *is* the release signal rather
+# than a second ceremony beside it. A release therefore cannot ship with invented notes, and a
+# merge that lands with the section empty simply moves the version and waits: the next merge
+# that finds notes releases everything accumulated since the last tag.
+#
+# The gate asks "is `v<next>` tagged yet", never "did this run move the version" — otherwise
+# the common case breaks. A 🐛 merge with an empty section leaves 0.3.1 on `main`, untagged;
+# the merge that brings the notes may itself be 📝-only, so nothing bumps, and 0.3.1 would
+# never go out.
+#
+# ## Which token pushes what, and why
+#
+#   the bump/release commit  →  GITHUB_TOKEN   (the credential actions/checkout persists)
+#   the vX.Y.Z tag           →  RELEASE_TOKEN  (a PAT, from the secret of that name)
+#
+# This split is the whole safety design, and it is worth not collapsing. GitHub deliberately
+# starts no workflow run for a push made with `GITHUB_TOKEN`, so the commit this workflow
+# makes on `main` cannot re-trigger this workflow — the loop cannot begin at its only possible
+# source. The tag is the exception that has to be made with a PAT, precisely because it *must*
+# trigger something: `release.yml`. That is safe because a tag push matches no trigger here —
+# both `bump.yml` and `ci.yml` filter on `branches:`, which `refs/tags/…` never satisfies — so
+# the one workflow the PAT can start is `release.yml`, and `release.yml` pushes nothing.
+# `[skip ci]` in the commit body is the third layer, load-bearing only for whoever later
+# decides the commit should also go up with the PAT. Do not make that change casually.
+#
+# The commit is pushed *before* the tag, deliberately: `release.yml` re-checks the tag against
+# `package.json` and refuses a mismatch, so the tagged commit has to be on `main` first. If the
+# branch push loses a race to a merge that landed mid-run, it fails there and no tag is
+# created — a failed run, never a half-released one, and the next merge recomputes and heals.
+#
+# ## The secret
+#
+#   RELEASE_TOKEN  A fine-grained PAT on this repository with **Contents: Read and write** —
+#                  that single permission is all a tag push needs. (A classic PAT with `repo`
+#                  works too; a GitHub App installation token is the tidier long-term answer,
+#                  since it does not expire with the maintainer's account.) Settings → Secrets
+#                  and variables → Actions → New repository secret.
+#
+# Unlike the publish steps in `release.yml`, an absent secret here is a hard failure rather
+# than a skip, and only on the path that needs it: a run that bumped the version, stamped the
+# changelog and then quietly declined to tag would leave the repository looking released when
+# nothing was. Bumping without the secret is fine and keeps working.
+#
+# ## Which bump, from what
+#
+# `.github/scripts/next-version.sh` reads the gitmoji of every commit since the last `vX.Y.Z`
+# tag and takes the highest: 💥 major, ✨/🏗️ minor, 🐛/🎨/🔧/⬆️/… patch, 📝/✅/👷/🔖 nothing. It
+# measures from the *tag*, not from `package.json`, so several merges between releases settle
+# on one number instead of inflating it once per merge, and a re-run is a no-op. See the
+# reasoning for yourself with `.github/scripts/next-version.sh --explain`. Replayed over this
+# repository's history it reproduced 0.2.0, 0.2.1 and 0.2.2, and called 0.3.0 a patch — two
+# features had shipped inside commits subjected 🎨 and 🐛.
+#
+# Escape hatches, all in the commit message, all permanent (the range is recomputed from the
+# tag on every run, so a marker that only affected one run would be undone by the next merge):
+#
+#   [skip bump]            this commit counts for nothing — for a merge that must not ship
+#   [bump minor|major]     this commit counts for exactly that — for the 0.3.0 case above
+#
+# `[skip bump]` on a merge does not cancel the run, and must not: other commits since the tag
+# may still justify a bump. It takes one commit out of the reckoning, nothing more. To hold a
+# release back, leave `## [Unreleased]` empty — that is what the gate is for.
+#
+# And by hand: Actions → bump → Run workflow, with an explicit level. `major` from there is
+# the only route to 1.0.0 — an automatic 💥 stays a minor while the major is 0, because no
+# emoji should get to declare 1.0 on its own. `dry_run` prints the decision and stops.
+
+name: bump
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      level:
+        description: 'Bump level — auto reads the gitmoji since the last tag'
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+      dry_run:
+        description: 'Work out the decision and stop, committing and tagging nothing'
+        type: boolean
+        default: false
+
+# One commit and one tag on one repository. Everything else stays off.
+permissions: {}
+
+# Two merges a minute apart would otherwise race to push. Queued rather than cancelled: the
+# second run recomputes from the tag and finds there is nothing left to do.
+concurrency:
+  group: bump-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # Belt and braces behind the token rule above: the commits this workflow makes must never
+    # start it again, whoever changes which token pushes them.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.head_commit.author.name != 'github-actions[bot]' &&
+      !startsWith(github.event.head_commit.message, '🔖 Bump the version to') &&
+      !startsWith(github.event.head_commit.message, '🔖 Release '))
+    permissions:
+      contents: write
+    # Hoisted to job env for the same reason release.yml hoists its publish secrets: the
+    # `secrets` context in a step-level `if` is a workflow *parse* error, not a failed step.
+    env:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+    steps:
+      # The base is the last tag, so the tags have to be here — a shallow clone has none.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Reasoning to the log (stderr), decision to $GITHUB_OUTPUT (stdout).
+      - name: Work out the next version
+        id: next
+        env:
+          LEVEL: ${{ inputs.level }}
+        run: |
+          ARGS=(--explain)
+          if [ -n "${LEVEL:-}" ] && [ "$LEVEL" != auto ]; then
+            ARGS+=(--level "$LEVEL" --explicit)
+          fi
+          .github/scripts/next-version.sh "${ARGS[@]}" >>"$GITHUB_OUTPUT"
+
+      - name: Ask the CHANGELOG whether this is a release
+        id: gate
+        run: .github/scripts/changelog.sh has-notes >>"$GITHUB_OUTPUT"
+
+      - name: Decide what this merge is
+        id: plan
+        env:
+          BUMP: ${{ steps.next.outputs.bump }}
+          TAGGED: ${{ steps.next.outputs.tagged }}
+          NOTES: ${{ steps.gate.outputs.notes }}
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          ACTION=none
+          [ "$BUMP" = yes ] && ACTION=bump
+          if [ "$NOTES" = yes ] && [ "$TAGGED" = no ]; then ACTION=release; fi
+          echo "action=$ACTION" >>"$GITHUB_OUTPUT"
+          case "$ACTION" in
+            none) echo "Nothing shippable since the last tag, and no notes waiting." ;;
+            bump) echo "Bumping to $NEXT. No notes under ## [Unreleased], so no tag." ;;
+            release) echo "Releasing $NEXT: the notes are written." ;;
+          esac
+
+      # Before anything is written, not after: a run that bumped, stamped, and then declined to
+      # tag would leave the repository looking released when nothing was.
+      - name: Refuse to release without RELEASE_TOKEN
+        if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
+        run: |
+          if [ -z "${RELEASE_TOKEN:-}" ]; then
+            echo "::error::The CHANGELOG says this is a release, but the RELEASE_TOKEN secret" \
+              "is not set, so the vX.Y.Z tag cannot be pushed with a token that triggers" \
+              "release.yml. Add a fine-grained PAT with Contents: Read and write as" \
+              "RELEASE_TOKEN, or empty ## [Unreleased] to hold the release back."
+            exit 1
+          fi
+
+      # `npm version` rewrites both manifests. The check below is what makes that a promise
+      # rather than an assumption: a release commit here has always carried both.
+      - name: Bump package.json and package-lock.json
+        if: steps.next.outputs.bump == 'yes' && inputs.dry_run != true
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          npm version "$NEXT" --no-git-tag-version >/dev/null
+          LOCK="$(node -p "require('./package-lock.json').version")"
+          ROOT="$(node -p "require('./package-lock.json').packages[''].version")"
+          if [ "$LOCK" != "$NEXT" ] || [ "$ROOT" != "$NEXT" ]; then
+            echo "package-lock.json is out of step: $LOCK / $ROOT, expected $NEXT" >&2
+            exit 1
+          fi
+
+      # The notes stay where the human wrote them; only the heading above them changes, and a
+      # fresh empty one is opened for whoever writes next.
+      - name: Stamp the CHANGELOG
+        if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: .github/scripts/changelog.sh stamp "$NEXT"
+
+      # Never an entry, only a place to write one: a release consumes `## [Unreleased]`, and
+      # the next contributor should not have to remember to put it back.
+      - name: Re-open the Unreleased section if a release closed it
+        if: steps.plan.outputs.action == 'bump' && inputs.dry_run != true
+        run: .github/scripts/changelog.sh open
+
+      - name: Commit
+        if: steps.plan.outputs.action != 'none' && inputs.dry_run != true
+        env:
+          ACTION: ${{ steps.plan.outputs.action }}
+          NEXT: ${{ steps.next.outputs.next }}
+          LEVEL: ${{ steps.next.outputs.level }}
+          BASE: ${{ steps.next.outputs.base }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json CHANGELOG.md
+          if [ "$ACTION" = release ]; then
+            git commit --file - <<MSG
+          🔖 Release $NEXT
+
+          A $LEVEL bump from $BASE, read off the gitmoji of the commits since that tag, and the
+          notes that were waiting under ## [Unreleased]. The tag pushed next starts release.yml.
+
+          [skip ci]
+          MSG
+          else
+            git commit --file - <<MSG
+          🔖 Bump the version to $NEXT for the next release
+
+          A $LEVEL bump from $BASE, read off the gitmoji of the commits since that tag. No tag
+          is pushed: ## [Unreleased] is empty, so there are no notes to release yet.
+
+          [skip ci]
+          MSG
+          fi
+
+      # GITHUB_TOKEN, via the credential actions/checkout persisted. This push starts no
+      # workflow run, which is what keeps the loop shut at its only source.
+      - name: Push the commit
+        if: steps.plan.outputs.action != 'none' && inputs.dry_run != true
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: git push origin "HEAD:$BRANCH"
+
+      # RELEASE_TOKEN, and only here. The empty `extraheader` resets the credential checkout
+      # persisted for github.com — git documents an empty value as the way to override an
+      # inherited header — so this one push authenticates as the PAT and therefore does what
+      # GITHUB_TOKEN cannot: trigger release.yml.
+      - name: Tag the release
+        if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
+        env:
+          NEXT: ${{ steps.next.outputs.next }}
+        run: |
+          git tag --annotate "v$NEXT" --message "Release $NEXT"
+          git -c http.https://github.com/.extraheader= \
+            push "https://x-access-token:$RELEASE_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/v$NEXT"
+
+      - name: Say what happened
+        env:
+          ACTION: ${{ steps.plan.outputs.action }}
+          NEXT: ${{ steps.next.outputs.next }}
+          LEVEL: ${{ steps.next.outputs.level }}
+          CURRENT: ${{ steps.next.outputs.current }}
+          BASE: ${{ steps.next.outputs.base }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          {
+            case "$ACTION" in
+              none)
+                echo "### No change"
+                echo
+                echo "Nothing that ships has landed since the last tag, and no notes are"
+                echo "waiting. The version stays at \`$CURRENT\`."
+                ;;
+              bump)
+                echo "### $CURRENT → $NEXT"
+                echo
+                echo "A **$LEVEL** bump from the last tag (\`$BASE\`). Not released:"
+                echo "\`## [Unreleased]\` is empty. Write the notes, and the next merge"
+                echo "releases everything accumulated since \`$BASE\`."
+                ;;
+              release)
+                echo "### Released $NEXT"
+                echo
+                echo "A **$LEVEL** bump from the last tag (\`$BASE\`), stamped into the"
+                echo "CHANGELOG and tagged \`v$NEXT\`. \`release.yml\` takes it from here."
+                ;;
+            esac
+            if [ "$DRY_RUN" = true ]; then
+              echo
+              echo "Dry run — nothing was committed, stamped or tagged."
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
