@@ -8,16 +8,13 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/diegomarty/tokendex/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/diegomarty/tokendex/actions/workflows/ci.yml)
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.85%2B-0969da?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
-[![AI CLIs](https://img.shields.io/badge/AI%20CLIs-10-8957e5)](#works-with-what-you-already-use)
+[![AI tools](https://img.shields.io/badge/AI%20tools-11-8957e5)](#works-with-what-you-already-use)
 [![100% local](https://img.shields.io/badge/data-100%25%20local-444d56)](#privacy)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
-[![Version](https://img.shields.io/visual-studio-marketplace/v/diegomarty.tokendex?label=Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/diegomarty.tokendex)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
-
-<!-- Once published to Open VSX, add:
+[![VS Marketplace](https://vsmarketplacebadges.dev/version-short/diegomarty.tokendex.svg)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/diegomarty.tokendex.svg)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
 [![Open VSX](https://img.shields.io/open-vsx/v/diegomarty/tokendex?label=Open%20VSX)](https://open-vsx.org/extension/diegomarty/tokendex)
--->
 
 <br>
 
@@ -58,6 +55,7 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
   reveals itself mid-evolution, and guaranteed-tier eggs.
 - 🛍️ **Spend what you earned** — the tokens you burn are also your wallet: Poké, Great,
   Ultra and Master Balls and berries (ten-packs at 10% off), Rare Candy, Mints, the Shiny Charm.
+  A single ball or berry is one click; packs, eggs and the Master Ball ask first.
 
 <div align="center">
 
