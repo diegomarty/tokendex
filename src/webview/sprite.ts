@@ -73,25 +73,6 @@ export function sceneSpriteURL(speciesID: number, shiny: boolean): string {
   return spriteURL(speciesID, shiny, true)
 }
 
-/** Frames this tall or shorter count as small species on the wild side. */
-const SMALL_WILD_FRAME = 56
-/** The ×2 step is for the tiniest only, so it still fits the 96px sheet with room to spare. */
-const TINY_WILD_FRAME = 40
-
-/**
- * How much the wild sprite is enlarged. The wild Pokémon is the encounter's subject, and a small
- * species at native size is a speck in its own scene — but the scene's rule still holds: a scale
- * `pixelated` draws exactly, which means whole DEVICE pixels per sprite pixel. ×1.5 is exact on
- * a 2× display only; elsewhere a tiny frame may take ×2 and every other frame stays native.
- * Large species never grow: they already fill the sheet.
- */
-export function wildSpriteScale(frameHeight: number, devicePixelRatio: number): number {
-  if (frameHeight > SMALL_WILD_FRAME) return 1
-  if (Number.isInteger(1.5 * devicePixelRatio)) return 1.5
-  if (frameHeight <= TINY_WILD_FRAME && Number.isInteger(2 * devicePixelRatio)) return 2
-  return 1
-}
-
 /**
  * The egg's sprite is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet with
  * the egg drawn in the middle 28×30.

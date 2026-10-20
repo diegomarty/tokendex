@@ -7,7 +7,6 @@ import {
   itemSpriteURL,
   sceneSpriteURL,
   spriteURL,
-  wildSpriteScale,
 } from '../src/webview/sprite.js'
 
 // The webview cannot import the core — different bundle, no Node — so the Gen-V ceiling exists in
@@ -71,39 +70,6 @@ describe('spriteURL', () => {
       expect(stillSpriteURL(id, false)).toBe(spriteURL(id, false, false))
       expect(stillSpriteURL(id, true)).toBe(spriteURL(id, true, false))
     }
-  })
-})
-
-// The wild side is the encounter's subject, and a small species at native size is a speck in the
-// corner of its own scene. Small frames step up — but only to a size `pixelated` draws exactly,
-// which is a whole number of DEVICE pixels per sprite pixel, and never so far that they outgrow
-// the 96px sheet the large species are drawn on.
-describe('wildSpriteScale', () => {
-  it('lifts a small frame by half on a 2× display, where 1.5 lands on whole device pixels', () => {
-    expect(wildSpriteScale(54, 2)).toBe(1.5) // Karrablast
-    expect(wildSpriteScale(32, 2)).toBe(1.5) // Aron
-  })
-
-  it('keeps a large frame at its native size', () => {
-    expect(wildSpriteScale(75, 2)).toBe(1) // Snorlax
-    expect(wildSpriteScale(89, 1)).toBe(1) // Charizard
-  })
-
-  // [trigger branch] On a 1× display 1.5 is mush, so only a whole multiple is allowed — and
-  // only for a frame small enough that ×2 still fits the sheet.
-  it('doubles only a tiny frame on a 1× display, and leaves the middle sizes alone', () => {
-    expect(wildSpriteScale(32, 1)).toBe(2)
-    expect(wildSpriteScale(54, 1)).toBe(1)
-  })
-
-  // [trigger branch] A fractional ratio (Windows at 150%) has no exact 1.5 either.
-  it('never picks a scale that lands between device pixels', () => {
-    for (const dpr of [1, 1.25, 1.5, 2, 3])
-      for (const h of [20, 32, 40, 48, 54, 56, 60, 75, 96]) {
-        const scale = wildSpriteScale(h, dpr)
-        expect(Number.isInteger(scale * dpr) || scale === 1, `h=${h} dpr=${dpr} -> ${scale}`).toBe(true)
-        expect(h * scale, `h=${h} dpr=${dpr}`).toBeLessThanOrEqual(Math.max(h, 96))
-      }
   })
 })
 

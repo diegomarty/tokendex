@@ -24,7 +24,6 @@ import {
   sceneSpriteURL,
   spriteURL,
   trainerURL,
-  wildSpriteScale,
 } from './sprite.js'
 
 declare function acquireVsCodeApi(): {
@@ -1844,8 +1843,10 @@ document.addEventListener('visibilitychange', () => {
 // the two the same way in battle) — normalising them toward one size is what briefly made an
 // Aron tower over the trainer. The HERO is different: a portrait with no human beside it, so a
 // 32px companion would just look lost — there, and only there, small sprites are integer-scaled
-// up toward ~80px. Whole multiples only, the condition under which `pixelated` is exact. The
-// wild side's small species are the one exception in the scene, by `wildSpriteScale`'s rule.
+// up toward ~80px. Whole multiples only, the condition under which `pixelated` is exact.
+// The wild side was briefly an exception — small species at ×1.5 — and it put a Karrablast at
+// Arceus's height and a Pikachu at Groudon's: a scale that flattens the size hierarchy takes the
+// awe out of meeting a Lugia. The legendaries at ×1 (~100px) are the scene's ceiling.
 // Delegated in capture phase ('load' does not bubble), like the error fallback below.
 document.addEventListener(
   'load',
@@ -1864,14 +1865,7 @@ document.addEventListener(
       img.style.width = `${w * scale}px`
       img.style.height = `${h * scale}px`
     } else if (img.matches('.wild-mon img')) {
-      // The one exception on the wild side: a small species steps up, by a factor that stays
-      // exact on this display (see wildSpriteScale). The size just settled, so the arc's landing
-      // point may have moved.
-      const scale = wildSpriteScale(h, window.devicePixelRatio)
-      if (scale !== 1) {
-        img.style.width = `${w * scale}px`
-        img.style.height = `${h * scale}px`
-      }
+      // Native size (×1): the size just settled, so the arc's landing point may have moved.
       measureThrowDistance()
     }
   },
