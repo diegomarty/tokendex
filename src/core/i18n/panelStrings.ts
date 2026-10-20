@@ -11,6 +11,9 @@ import type { PanelStrings } from '../../webview/protocol.js'
 import type { AppLanguage } from '../companion/model.js'
 import {
   closeLabel,
+  commandBack,
+  commandBalls,
+  commandPrompt,
   dexNoMatchesText,
   dexOwnedOnlyLabel,
   dexSearchPlaceholder,
@@ -21,6 +24,7 @@ import {
   providerColumn,
   runAwayLabel,
   shopGroupBalls,
+  shopGroupBerries,
   shopGroupEggs,
   shopGroupItems,
   shopEggsNote,
@@ -64,6 +68,10 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     getBalls: getBallsCta(lang),
     refreshInterval: refreshIntervalLabel(lang),
     shopBalls: shopGroupBalls(lang),
+    shopBerries: shopGroupBerries(lang),
+    commandPrompt: commandPrompt(lang),
+    commandBalls: commandBalls(lang),
+    commandBack: commandBack(lang),
     shopItems: shopGroupItems(lang),
     shopEggs: shopGroupEggs(lang),
     shopEggsNote: shopEggsNote(lang),

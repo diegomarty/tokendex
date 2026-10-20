@@ -3,6 +3,8 @@ import { ANIMATED_SPECIES_MAX, hasAnimatedSprite, stillSpriteURL } from '../src/
 import {
   ANIMATED_SPRITE_MAX,
   hasAnimatedSprite as webviewHasAnimatedSprite,
+  itemSpriteIsSheet,
+  itemSpriteURL,
   sceneSpriteURL,
   spriteURL,
 } from '../src/webview/sprite.js'
@@ -68,5 +70,24 @@ describe('spriteURL', () => {
       expect(stillSpriteURL(id, false)).toBe(spriteURL(id, false, false))
       expect(stillSpriteURL(id, true)).toBe(spriteURL(id, true, false))
     }
+  })
+})
+
+// The egg is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet. Named `egg` by
+// the core like any item sprite, it has to resolve there — the items folder has no egg.png — and
+// be flagged as a sheet, so the 30px icon box crops its middle instead of shrinking it.
+describe('the egg sprite', () => {
+  it('resolves to the Pokémon sheet, not the items folder', () => {
+    expect(itemSpriteURL('egg')).toBe(
+      'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/egg.png',
+    )
+    expect(itemSpriteURL('poke-ball')).toBe(
+      'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png',
+    )
+  })
+
+  it('is the one icon drawn from a full sheet', () => {
+    expect(itemSpriteIsSheet('egg')).toBe(true)
+    expect(itemSpriteIsSheet('poke-ball')).toBe(false)
   })
 })

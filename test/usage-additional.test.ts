@@ -4,9 +4,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import initSqlJs from 'sql.js'
 import {
+  COPILOT_VSCODE_SETTLE_MS,
   copilotDate,
   copilotDayCutoff,
   copilotEntries,
+  copilotVSCodeEntries,
+  copilotVSCodeRowQuery,
+  defaultCopilotVSCodeRoots,
   cursorEntries,
   cursorRowQuery,
   hermesEntries,
@@ -300,6 +304,152 @@ describe('copilot', () => {
       ])
     }
     expect((await copilotEntries(0, { roots: [a, b] })).entries).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Copilot in VS Code
+// ---------------------------------------------------------------------------
+
+describe('copilot in vs code', () => {
+  const NOW = DAY + 3_600_000
+  const SETTLED = NOW - COPILOT_VSCODE_SETTLE_MS - 1
+
+  interface Span {
+    id: string
+    trace?: string
+    operation?: string
+    agent?: string | null
+    requestModel?: string | null
+    responseModel?: string | null
+    input?: number | null
+    output?: number | null
+    cached?: number | null
+    start?: number
+    end?: number
+  }
+
+  const literal = (v: string | number | null | undefined) =>
+    v === null || v === undefined ? 'NULL' : typeof v === 'number' ? String(v) : `'${v}'`
+
+  const insert = (s: Span) =>
+    `INSERT INTO spans (span_id, trace_id, name, start_time_ms, end_time_ms, operation_name,
+       agent_name, request_model, response_model, input_tokens, output_tokens, cached_tokens)
+     VALUES (${[
+       s.id,
+       s.trace ?? 'trace-1',
+       s.operation ?? 'chat',
+       s.start ?? DAY,
+       s.end ?? SETTLED,
+       s.operation ?? 'chat',
+       s.agent,
+       s.requestModel === undefined ? 'gpt-5.5' : s.requestModel,
+       s.responseModel === undefined ? 'gpt-5.5-2026' : s.responseModel,
+       s.input === undefined ? 1000 : s.input,
+       s.output === undefined ? 50 : s.output,
+       s.cached === undefined ? 600 : s.cached,
+     ]
+       .map(literal)
+       .join(', ')})`
+
+  /** The columns the reader touches, in the shape the extension creates. */
+  async function tracesDB(root: string, spans: Span[]): Promise<void> {
+    await makeDatabase(join(root, 'agent-traces.db'), [
+      `CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_span_id TEXT,
+        name TEXT NOT NULL, start_time_ms INTEGER NOT NULL, end_time_ms INTEGER NOT NULL,
+        operation_name TEXT, agent_name TEXT, request_model TEXT, response_model TEXT,
+        input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER)`,
+      ...spans.map(insert),
+    ])
+  }
+
+  const read = (root: string, marks: Record<string, number> = {}, now = NOW) =>
+    copilotVSCodeEntries(0, { roots: [root], afterRowIDByPath: marks, now })
+
+  // input_tokens is the API's prompt_tokens, which already includes the cached part.
+  it('subtracts the cache from the prompt total', async () => {
+    const root = tempDir()
+    await tracesDB(root, [{ id: 'a' }])
+    const e = (await read(root)).entries[0]!
+    expect(e).toMatchObject({ input: 400, cacheRead: 600, output: 50, model: 'gpt-5.5-2026' })
+    expect(e.id).toBe('copilot_vscode|a')
+  })
+
+  // invoke_agent carries the same tokens again as a per-turn total: counting it doubles a turn.
+  it('counts chat spans only', async () => {
+    const root = tempDir()
+    await tracesDB(root, [
+      { id: 'a' },
+      { id: 'b', operation: 'invoke_agent', agent: 'GitHub Copilot Chat', input: 1000 },
+      { id: 'c', operation: 'execute_tool' },
+    ])
+    expect((await read(root)).entries.map((e) => e.id)).toEqual(['copilot_vscode|a'])
+  })
+
+  // A Copilot CLI session run from the editor is already counted from ~/.copilot. The control
+  // has the identical shape under another agent, so only agent_name decides.
+  it('leaves Copilot CLI turns to the Copilot provider', async () => {
+    const root = tempDir()
+    await tracesDB(root, [
+      { id: 'cli-chat', trace: 'cli' },
+      { id: 'cli-root', trace: 'cli', operation: 'invoke_agent', agent: 'copilotcli' },
+      { id: 'own-chat', trace: 'own' },
+      { id: 'own-root', trace: 'own', operation: 'invoke_agent', agent: 'GitHub Copilot Chat' },
+    ])
+    expect((await read(root)).entries.map((e) => e.id)).toEqual(['copilot_vscode|own-chat'])
+  })
+
+  // [trigger branch] A CLI chat span lands before its copilotcli parent. Filtering only the
+  // unsettled row is not enough: a settled row after it would carry the watermark past it, and
+  // it would never be read. Here row 2 is settled; row 1 must still hold the range back.
+  it('does not let the watermark pass an unsettled span', async () => {
+    const root = tempDir()
+    await tracesDB(root, [{ id: 'fresh', end: NOW - 1000 }, { id: 'old' }])
+
+    const first = await read(root)
+    expect(first.entries).toEqual([])
+
+    const later = await read(root, first.highWaterByPath, NOW + COPILOT_VSCODE_SETTLE_MS)
+    expect(later.entries.map((e) => e.id).sort()).toEqual(['copilot_vscode|fresh', 'copilot_vscode|old'])
+  })
+
+  it('falls back to the requested model when no response model was recorded', async () => {
+    const root = tempDir()
+    await tracesDB(root, [{ id: 'a', responseModel: null }])
+    expect((await read(root)).entries[0]!.model).toBe('gpt-5.5')
+  })
+
+  // A span that failed before usage arrived has no tokens and is not a billed call.
+  it('skips spans without usage', async () => {
+    const root = tempDir()
+    await tracesDB(root, [{ id: 'a', input: null, output: null, cached: null }])
+    expect((await read(root)).entries).toEqual([])
+  })
+
+  // [trigger branch] A correlated subquery is re-run for every candidate row — a scan of the
+  // whole table each time, quadratic on a cold read of a week of spans, in WASM. The CLI traces
+  // are collected once instead; the plan is what says which shape SQLite actually runs.
+  it('excludes Copilot CLI traces without a per-row subquery', async () => {
+    const SQL = await initSqlJs()
+    const db = new SQL.Database()
+    db.run(`CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, start_time_ms INTEGER,
+      end_time_ms INTEGER, operation_name TEXT, agent_name TEXT, request_model TEXT, response_model TEXT,
+      input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER)`)
+    const query = copilotVSCodeRowQuery(0, 0, NOW)
+    const plan = db
+      .exec(`EXPLAIN QUERY PLAN ${query.sql}`, query.params as never)
+      .flatMap((r) => r.values.map((v) => String(v[3])))
+      .join('\n')
+    db.close()
+    expect(plan).not.toMatch(/CORRELATED/)
+  })
+
+  it('looks in every editor build and in the remote server', () => {
+    const roots = defaultCopilotVSCodeRoots('/cfg', '/home/me')
+    const store = join('User', 'globalStorage', 'github.copilot-chat')
+    expect(roots).toContain(join('/cfg', 'Code', store))
+    expect(roots).toContain(join('/cfg', 'Code - Insiders', store))
+    expect(roots).toContain(join('/home/me', '.vscode-server', 'data', store))
   })
 })
 

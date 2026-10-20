@@ -15,11 +15,18 @@ import type {
   CompanionState,
   ItemKind,
   PokemonNature,
+  PokemonType,
   Rarity,
   WildEncounter,
 } from '../companion/model.js'
-import { BALL_KINDS, PokemonBalance, PokemonOdds } from '../companion/model.js'
-import { enqueueEncounter } from '../companion/encounters.js'
+import { BALL_KINDS, BERRY_KINDS, PokemonBalance, PokemonOdds } from '../companion/model.js'
+import {
+  appendTrail,
+  enqueueEncounter,
+  initialMood,
+  rollFind,
+  temperamentFrom,
+} from '../companion/encounters.js'
 
 export interface DevState {
   /** Synthetic tokens added to each provider's observed daily total, by provider id. */
@@ -129,14 +136,15 @@ export function grantItem(state: CompanionState, item: ItemKind, count: number):
   }
 }
 
-/** What a wild-encounter test session needs in one click: a working stock of every ball. */
+/** What a wild-encounter test session needs in one click: a working stock of every ball and berry. */
 export function grantBalls(state: CompanionState, count: number): CompanionState {
   const inventory = { ...state.inventory }
-  for (const kind of BALL_KINDS) inventory[kind] = Math.max(0, (inventory[kind] ?? 0) + count)
+  for (const kind of [...BALL_KINDS, ...BERRY_KINDS])
+    inventory[kind] = Math.max(0, (inventory[kind] ?? 0) + count)
   return { ...state, inventory }
 }
 
-export type TestEncounterVariant = 'common' | 'rare' | 'legendary' | 'shiny'
+export type TestEncounterVariant = 'common' | 'rare' | 'legendary' | 'angry' | 'shiny'
 
 /**
  * Fixed species per variant, chosen for recognisability at a glance in the queue. Hardcoded
@@ -145,12 +153,13 @@ export type TestEncounterVariant = 'common' | 'rare' | 'legendary' | 'shiny'
  */
 const TEST_SPECIES: Record<
   TestEncounterVariant,
-  { id: number; captureRate: number; rarity: Rarity; name: string }
+  { id: number; captureRate: number; rarity: Rarity; name: string; types: PokemonType[] }
 > = {
-  common: { id: 10, captureRate: 255, rarity: 'common', name: 'Caterpie' },
-  rare: { id: 147, captureRate: 45, rarity: 'rare', name: 'Dratini' },
-  legendary: { id: 150, captureRate: 3, rarity: 'legendary', name: 'Mewtwo' },
-  shiny: { id: 129, captureRate: 255, rarity: 'common', name: 'Magikarp' },
+  common: { id: 10, captureRate: 255, rarity: 'common', name: 'Caterpie', types: ['bug'] },
+  rare: { id: 147, captureRate: 45, rarity: 'rare', name: 'Dratini', types: ['dragon'] },
+  legendary: { id: 150, captureRate: 3, rarity: 'legendary', name: 'Mewtwo', types: ['psychic'] },
+  angry: { id: 150, captureRate: 3, rarity: 'legendary', name: 'Mewtwo', types: ['psychic'] },
+  shiny: { id: 129, captureRate: 255, rarity: 'common', name: 'Magikarp', types: ['water'] },
 }
 
 /**
@@ -169,8 +178,40 @@ export function spawnTestEncounter(state: CompanionState, variant: string, now: 
     appearedAt: now,
     throws: 0,
     names: { en: species.name, ko: species.name, ja: species.name, es: species.name },
+    types: species.types,
+    // A neutral temperament, so the mood bars show without a network call. The angry variant
+    // starts furious and on edge: it attacks often, which is what it exists to test.
+    nature: 'hardy',
+    temperament: temperamentFrom(undefined, 'hardy', undefined),
   }
+  encounter.mood =
+    variant === 'angry'
+      ? { anger: 90, nervousness: 40, trust: 0 }
+      : initialMood(encounter.temperament!, encounter.rarity)
   return { ...state, wild: enqueueEncounter(state.wild, encounter) }
+}
+
+/** Drops an item find into the queue, as the spawn path would. */
+export function spawnTestFind(state: CompanionState, rng: () => number, now: number): CompanionState {
+  const find = rollFind(rng, `dev-find-${now}-${state.finds.length}`, now)
+  return { ...state, finds: [...state.finds, find] }
+}
+
+/** A legendary that just got away: puts a Mewtwo on the trail without having to lose one. */
+export function loseTestLegendary(state: CompanionState, now: number): CompanionState {
+  const gone: WildEncounter = {
+    id: `dev-lost-${now}`,
+    speciesID: 150,
+    captureRate: 3,
+    rarity: 'legendary',
+    isShiny: false,
+    appearedAt: now,
+    throws: 0,
+    names: { en: 'Mewtwo', ko: 'Mewtwo', ja: 'Mewtwo', es: 'Mewtwo' },
+    nature: 'hardy',
+    temperament: temperamentFrom(undefined, 'hardy', undefined),
+  }
+  return { ...state, legendaryTrail: appendTrail(state.legendaryTrail, gone, now) }
 }
 
 export function grantTokens(state: CompanionState, amount: number): CompanionState {

@@ -36,6 +36,7 @@ import { parseGeminiFile } from './gemini.js'
 import { isGrokUsageFile, parseGrokFile } from './grok.js'
 import {
   copilotEntries,
+  copilotVSCodeEntries,
   cursorEntries,
   hermesEntries,
   kiroEntries,
@@ -109,6 +110,7 @@ export interface CacheOptions {
   grokRoot?: string
   cursorRoots?: string[]
   copilotRoots?: string[]
+  copilotVSCodeRoots?: string[]
   openCodeRoots?: string[]
   hermesRoots?: string[]
   kiroRoots?: string[]
@@ -229,24 +231,30 @@ export class LocalUsageCache {
   }
 
   /**
-   * Cursor and Copilot resume from a per-database watermark rather than re-reading.
+   * Cursor and the Copilot stores resume from a per-database watermark rather than re-reading.
    *
-   * A reset means the store was rebuilt, so the previously held entries are **discarded**
-   * rather than merged: keeping them would double count against the cold rescan that
-   * `scanIncrementalStores` has already performed.
+   * A reset means the store was rebuilt. When entry ids are row ids, the previously held
+   * entries are **discarded** rather than merged: a rebuilt store reuses those ids for other
+   * rows, and keeping them would double count against the cold rescan `scanIncrementalStores`
+   * has already performed. `globalIDs` declares ids that cannot be reused — then a reset is
+   * merged like any scan, because the store may have pruned history the cache still holds.
    */
   private async incrementalEntries(
-    key: 'cursor' | 'copilot',
+    key: 'cursor' | 'copilot' | 'copilot_vscode',
     scan: (marks: Record<string, number>) => Promise<{
       entries: Entry[]
       highWaterByPath: Record<string, number>
       didReset: boolean
     }>,
+    options: { globalIDs?: boolean } = {},
   ): Promise<Entry[]> {
     await this.ensureLoaded()
     const held = this.incremental[key] ?? { entries: [], highWaterByPath: {} }
     const result = await scan(held.highWaterByPath)
-    const merged = result.didReset ? result.entries : dedupKeepMax([...held.entries, ...result.entries])
+    const merged =
+      result.didReset && options.globalIDs !== true
+        ? result.entries
+        : dedupKeepMax([...held.entries, ...result.entries])
 
     // Dirty only when something moved. New entries and a reset are obvious; a watermark that
     // advanced with zero in-window entries still must be persisted, or the next launch
@@ -282,6 +290,25 @@ export class LocalUsageCache {
         afterRowIDByPath,
         ...(this.options.copilotRoots !== undefined ? { roots: this.options.copilotRoots } : {}),
       }),
+    )
+  }
+
+  /**
+   * The extension prunes its store to seven days, so beyond that the held entries are the only
+   * record of the month — which is why a reset must merge here, never replace.
+   */
+  async copilotVSCodeEntries(modifiedSince: number): Promise<Entry[]> {
+    return this.incrementalEntries(
+      'copilot_vscode',
+      (afterRowIDByPath) =>
+        copilotVSCodeEntries(modifiedSince, {
+          afterRowIDByPath,
+          now: this.now,
+          ...(this.options.copilotVSCodeRoots !== undefined
+            ? { roots: this.options.copilotVSCodeRoots }
+            : {}),
+        }),
+      { globalIDs: true },
     )
   }
 

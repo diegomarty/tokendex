@@ -22,10 +22,12 @@ import {
 import {
   decodeCompanionState,
   decodeMonState,
+  decodeTrailEntry,
+  decodeWildEncounter,
   encodeCompanionState,
   parseCompanionState,
 } from '../src/core/companion/persistence.js'
-import { MilestoneBalance, StreakBalance } from '../src/core/companion/encounters.js'
+import { LegendaryBalance, MilestoneBalance, StreakBalance } from '../src/core/companion/encounters.js'
 import { applyLegendaryTriggers } from '../src/core/companion/ledger.js'
 
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
@@ -356,5 +358,86 @@ describe('CompanionState decoding', () => {
   it('throws only when the payload is not an object at all', () => {
     expect(() => decodeCompanionState('nope')).toThrow()
     expect(parseCompanionState('not json')).toBeUndefined()
+  })
+})
+
+describe('decoding the wild area', () => {
+  // A save from before the encounter overhaul must load with nothing lost and every new field at
+  // its default.
+  it('loads an older save with empty finds and trail, armed notice and no mood', () => {
+    const state = decodeCompanionState({
+      usedSinceInstall: 10,
+      wild: [{ id: 'w1', speciesID: 10, captureRate: 255, rarity: 'common', appearedAt: 1, throws: 2 }],
+    })
+    expect(state.finds).toEqual([])
+    expect(state.legendaryTrail).toEqual([])
+    expect(state.queueFullArmed).toBe(true)
+    expect(state.wild[0]).toEqual({
+      id: 'w1',
+      speciesID: 10,
+      captureRate: 255,
+      rarity: 'common',
+      isShiny: false,
+      appearedAt: 1,
+      throws: 2,
+    })
+  })
+
+  // A hand-edited Master Ball lying in the queue would be a free one, a click away.
+  it('drops a find for an item that cannot be found', () => {
+    const state = decodeCompanionState({
+      finds: [
+        { id: 'a', item: 'masterBall', count: 1, rarity: 'legendary', appearedAt: 1 },
+        { id: 'b', item: 'pokeBall', count: 99, rarity: 'common', appearedAt: 1 },
+        { id: 'c', item: 'greatBall', count: 2, rarity: 'uncommon', appearedAt: 1 },
+      ],
+    })
+    expect(state.finds.map((f) => f.id)).toEqual(['c'])
+  })
+
+  // Out of range reads as "no mood", which is the initial mood — never as furious.
+  it('drops a mood or temperament that is out of range rather than trusting it', () => {
+    const state = decodeCompanionState({
+      wild: [
+        {
+          id: 'w1',
+          speciesID: 10,
+          captureRate: 255,
+          rarity: 'common',
+          mood: { anger: 1e9, nervousness: 0, trust: 0 },
+          temperament: { aggression: 50, skittishness: 50, appetite: 50 },
+          nature: 'not-a-nature',
+        },
+      ],
+    })
+    expect(state.wild[0]!.mood).toBeUndefined()
+    expect(state.wild[0]!.temperament).toEqual({ aggression: 50, skittishness: 50, appetite: 50 })
+    expect(state.wild[0]!.nature).toBeUndefined()
+  })
+
+  it('caps the legendaries owed at their own ceiling', () => {
+    expect(decodeCompanionState({ owedLegendaryEncounters: 1e6 }).owedLegendaryEncounters).toBe(
+      LegendaryBalance.maxOwed,
+    )
+  })
+})
+
+describe('wild types on disk', () => {
+  const base = { id: 'w', speciesID: 6, captureRate: 45, rarity: 'rare' }
+
+  // A Pokémon has one type or two. A hand-edited or future save may say anything; what this
+  // build does not know is dropped, and nothing valid left reads as "no types", never a guess.
+  it('keeps the known types, primary first, at most two', () => {
+    expect(
+      decodeWildEncounter({ ...base, types: ['fire', 'shadow', 'flying', 'dragon'] })?.types,
+    ).toEqual(['fire', 'flying'])
+    expect(decodeWildEncounter({ ...base, types: ['shadow'] })?.types).toBeUndefined()
+    expect(decodeWildEncounter({ ...base, types: 'fire' })?.types).toBeUndefined()
+  })
+
+  it('carries them on a legendary trail', () => {
+    expect(
+      decodeTrailEntry({ id: 'm', speciesID: 150, captureRate: 3, lostAt: 1, types: ['psychic'] })?.types,
+    ).toEqual(['psychic'])
   })
 })

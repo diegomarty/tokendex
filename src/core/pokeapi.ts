@@ -9,14 +9,17 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import * as AppPaths from './appPaths.js'
 import { atomicWriteFile } from './coordination/atomicWrite.js'
+import type { BaseStats } from './companion/encounters.js'
 import {
   ANIMATED_SPECIES_MAX,
   type EvoLine,
   type EvoNode,
   PokemonOdds,
+  type PokemonType,
   type Rarity,
   makeEvoLine,
   meetsRarityFloor,
+  pokemonTypes,
   rarityFrom,
 } from './companion/model.js'
 
@@ -55,6 +58,15 @@ export interface WildSpecies {
   rarity: Rarity
   /** langCode -> name, restricted to the languages the app supports. */
   names: Record<string, string>
+  /** PokéAPI `base_happiness`; feeds the temperament's appetite. Absent when unknown. */
+  baseHappiness?: number
+  /**
+   * Base stats of the default form, from `/pokemon/{id}`. Absent when that request failed — the
+   * temperament then falls back to neutral rather than the spawn waiting on it.
+   */
+  stats?: BaseStats
+  /** Types of the default form, primary first. Absent with the stats: one request carries both. */
+  types?: PokemonType[]
 }
 
 /** Injectable so tests use a stub rather than the network. */
@@ -93,6 +105,49 @@ interface SpeciesDTO {
   evolution_chain?: { url?: string }
   evolves_from_species?: unknown
   names?: { name: string; language: { name: string } }[]
+  base_happiness?: number | null
+}
+
+/**
+ * The slice of `/pokemon/{id}` an encounter reads: the stats for its temperament, the types for
+ * its terrain. The rest — the whole learnset — is ignored.
+ */
+interface PokemonDTO {
+  stats?: { base_stat: number; stat: { name: string } }[]
+  types?: { slot: number; type: { name: string } }[]
+}
+
+/** What an encounter keeps from `/pokemon/{id}`. */
+interface PokemonDetails {
+  stats?: BaseStats
+  types?: PokemonType[]
+}
+
+/** Primary first, by slot. A type this build does not know is dropped rather than guessed. */
+function typesFrom(dto: PokemonDTO): PokemonType[] | undefined {
+  const sorted = [...(dto.types ?? [])].sort((a, b) => a.slot - b.slot)
+  return pokemonTypes(sorted.map((entry) => entry.type?.name))
+}
+
+const STAT_KEYS: Record<string, keyof BaseStats> = {
+  hp: 'hp',
+  attack: 'attack',
+  defense: 'defense',
+  'special-attack': 'specialAttack',
+  'special-defense': 'specialDefense',
+  speed: 'speed',
+}
+
+/** All six stats, or nothing: a partial reading would quietly skew the temperament. */
+function baseStatsFrom(dto: PokemonDTO): BaseStats | undefined {
+  const stats: Partial<BaseStats> = {}
+  for (const entry of dto.stats ?? []) {
+    const key = STAT_KEYS[entry.stat.name]
+    if (key !== undefined && Number.isFinite(entry.base_stat)) stats[key] = entry.base_stat
+  }
+  return Object.keys(STAT_KEYS).every((name) => stats[STAT_KEYS[name]!] !== undefined)
+    ? (stats as BaseStats)
+    : undefined
 }
 
 interface ChainLinkDTO {
@@ -100,8 +155,15 @@ interface ChainLinkDTO {
   evolves_to: ChainLinkDTO[]
 }
 
-async function getJSON<T>(url: string): Promise<T> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+/**
+ * The base-stats request's own deadline, well under `REQUEST_TIMEOUT_MS`. The stats only shape a
+ * temperament that has a neutral fallback, and the species data they wait beside is usually
+ * already cached — a slow `/pokemon` must not hold the spawn for the full request timeout.
+ */
+const STATS_TIMEOUT_MS = 2_500
+
+async function getJSON<T>(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`)
   return (await response.json()) as T
 }
@@ -137,6 +199,8 @@ function validatedChainURL(raw: string | undefined): string | undefined {
 
 export class PokeAPIClient implements PokeProviding {
   private speciesCache = new Map<number, SpeciesDTO>()
+  /** Only the six numbers are kept: the full `/pokemon` response carries the whole learnset. */
+  private detailsCache = new Map<number, PokemonDetails>()
   /** Prefetching populates this so hatching costs no network at all. */
   private lineCache = new Map<number, EvoLine>()
   private baseIndexCache: BaseSpecies[] | undefined
@@ -150,7 +214,10 @@ export class PokeAPIClient implements PokeProviding {
   private indexInFlight: Promise<BaseSpecies[]> | undefined
   private restBuildTried = false
 
-  constructor(private readonly indexFilePath = join(AppPaths.ourData(), 'base-index.json')) {}
+  constructor(
+    private readonly indexFilePath = join(AppPaths.ourData(), 'base-index.json'),
+    private readonly options: { statsTimeoutMs?: number } = {},
+  ) {}
 
   // MARK: - Lines
 
@@ -186,12 +253,44 @@ export class PokeAPIClient implements PokeProviding {
    * the index or a previous encounter already pulled.
    */
   async wildSpecies(id: number): Promise<WildSpecies> {
-    const dto = await this.species(id)
-    return {
+    // In parallel, and the stats may fail on their own: they shape the temperament, which has a
+    // neutral fallback, so a slow or missing `/pokemon` response must never throw here — throwing
+    // would defer the encounter and count against the network backoff.
+    const [dto, details] = await Promise.all([this.species(id), this.pokemonDetails(id)])
+    const wild: WildSpecies = {
       id,
       captureRate: dto.capture_rate,
       rarity: rarityFrom(dto.capture_rate, dto.is_legendary, dto.is_mythical),
       names: namesByLanguage(dto),
+    }
+    if (typeof dto.base_happiness === 'number') wild.baseHappiness = dto.base_happiness
+    if (details.stats !== undefined) wild.stats = details.stats
+    if (details.types !== undefined) wild.types = details.types
+    return wild
+  }
+
+  /**
+   * Base stats and types for the default form. For the gen 1–5 species the game draws from, the
+   * default variety's id is the species id. A failure is not cached, so the next spawn of that
+   * species tries again.
+   */
+  private async pokemonDetails(id: number): Promise<PokemonDetails> {
+    const cached = this.detailsCache.get(id)
+    if (cached !== undefined) return cached
+    try {
+      const dto = await getJSON<PokemonDTO>(
+        `${REST_BASE}/pokemon/${id}`,
+        this.options.statsTimeoutMs ?? STATS_TIMEOUT_MS,
+      )
+      const details: PokemonDetails = {}
+      const stats = baseStatsFrom(dto)
+      if (stats !== undefined) details.stats = stats
+      const types = typesFrom(dto)
+      if (types !== undefined) details.types = types
+      if (stats !== undefined) this.detailsCache.set(id, details)
+      return details
+    } catch {
+      return {}
     }
   }
 

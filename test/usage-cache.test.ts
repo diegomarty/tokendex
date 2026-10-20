@@ -466,6 +466,44 @@ describe('save behaviour', () => {
     }
   })
 
+  // [trigger branch] The extension prunes spans after seven days. A user away that long comes
+  // back to an emptied store whose row ids restart at 1 — a reset. With row-id entry ids the
+  // cache must discard what it held; with span ids that would throw away the only copy of the
+  // month, so this store merges.
+  it('keeps Copilot-in-VS-Code history across a store the extension pruned', async () => {
+    async function tracesDB(root: string, spanIDs: string[]): Promise<void> {
+      const SQL = await initSqlJs()
+      const db = new SQL.Database()
+      db.run(`CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT, start_time_ms INTEGER,
+        end_time_ms INTEGER, operation_name TEXT, agent_name TEXT, request_model TEXT,
+        response_model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER)`)
+      for (const id of spanIDs) {
+        db.run(
+          `INSERT INTO spans VALUES ('${id}', 't-${id}', 1000, 1000, 'chat', NULL, 'm', 'm', 100, 10, 0)`,
+        )
+      }
+      mkdirSync(root, { recursive: true })
+      writeFileSync(join(root, 'agent-traces.db'), Buffer.from(db.export()))
+      db.close()
+    }
+
+    const root = tempDir()
+    const cache = new LocalUsageCache({
+      copilotVSCodeRoots: [root],
+      filePath: join(tempDir(), 'c.gz'),
+      now: () => 10_000_000,
+    })
+    await tracesDB(root, ['a', 'b'])
+    expect((await cache.copilotVSCodeEntries(0)).length).toBe(2)
+
+    await tracesDB(root, ['c']) // pruned and refilled: MAX(rowid) 1, below the watermark of 2
+    expect((await cache.copilotVSCodeEntries(0)).map((e) => e.id).sort()).toEqual([
+      'copilot_vscode|a',
+      'copilot_vscode|b',
+      'copilot_vscode|c',
+    ])
+  })
+
   // The ten providers finish a scan close together and each calls saveIfNeeded; without
   // single-flighting they gzip the same snapshot concurrently and race on one `.tmp` file.
   it('single-flights concurrent saves into one write', async () => {

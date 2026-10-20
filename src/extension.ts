@@ -35,7 +35,7 @@ import {
 import { pickScenario } from './dev.js'
 import { devScenarioByID } from './core/dev/scenarios.js'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
-import { hostname, homedir } from 'node:os'
+import { homedir } from 'node:os'
 import { ourData } from './core/appPaths.js'
 import { atomicWriteFile } from './core/coordination/atomicWrite.js'
 import { type WatchHandle, watchDataDirectory } from './core/coordination/dataWatcher.js'
@@ -54,11 +54,23 @@ import {
   suggestedFileName,
   summarize,
 } from './core/companion/saveTransfer.js'
+import { deviceIdentity } from './core/companion/device.js'
+import { mergeSaves, withRevision } from './core/companion/merge.js'
 import type { AppLanguage, Rarity } from './core/companion/model.js'
-import { BALL_KINDS, ITEM_KINDS, Pokeball } from './core/companion/model.js'
+import { BALL_KINDS, ITEM_KINDS, Pokeball, isBerryKind, itemIsBundled } from './core/companion/model.js'
+import { purchaseNeedsConfirmation } from './core/companion/shop.js'
 import { isTrainerID } from './core/companion/trainers.js'
 import { freshCompanionState, systemDefaultLanguage } from './core/companion/model.js'
-import { openPanelLabel, welcomeToast } from './core/i18n/dispatch.js'
+import {
+  importChoiceDetail,
+  importMergeLabel,
+  importReplaceLabel,
+  importSourceText,
+  importedText,
+  mergedText,
+  openPanelLabel,
+  welcomeToast,
+} from './core/i18n/dispatch.js'
 
 const DEFAULT_REFRESH_SECONDS = 120
 
@@ -514,7 +526,7 @@ function parseEntryID(id: string): WorkerAction | undefined {
     const item = ITEM_KINDS.find((i) => i === value)
     if (item === undefined) return undefined
     if (quantityRaw === undefined) return { action: 'buyItem', item }
-    if (quantityRaw !== String(Pokeball.bundleSize) || item === 'masterBall') return undefined
+    if (quantityRaw !== String(Pokeball.bundleSize) || !itemIsBundled(item)) return undefined
     return { action: 'buyItem', item, quantity: Pokeball.bundleSize }
   }
   if (kind === 'egg') {
@@ -548,9 +560,18 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'use',
   'setLanguage',
   'throw',
+  'feed',
+  'collect',
+  'collectAll',
+  'track',
   'run',
   'setTrainer',
 ])
+
+/** Ids echoed back by the webview are opaque, but a bounded string is the least they must be. */
+function isOpaqueID(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 80
+}
 
 async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
   let response: ScanResponse
@@ -569,13 +590,27 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
       // word travels with the message because the host does not know the game's language —
       // display-only text in a modal the user still has to approve, so a stale webview can at
       // worst mislabel a button, and the length cap keeps a hostile one from filling the modal.
-      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
-      const confirm = await vscode.window.showWarningMessage(
-        `${request.title} — ${request.priceText}`,
-        { modal: true },
-        confirmLabel,
-      )
-      if (confirm !== confirmLabel) return
+      // Whether to ask at all is the core's call on the parsed action, never the webview's: a
+      // single ball or berry goes straight through, everything harder to take back still asks.
+      const entry =
+        action.action === 'buyItem'
+          ? {
+              kind: 'item' as const,
+              item: action.item,
+              ...(action.quantity === undefined ? {} : { quantity: action.quantity }),
+            }
+          : action.action === 'buyEgg'
+            ? { kind: 'egg' as const, tier: action.tier }
+            : undefined
+      if (entry === undefined || purchaseNeedsConfirmation(entry)) {
+        const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
+        const confirm = await vscode.window.showWarningMessage(
+          `${request.title} — ${request.priceText}`,
+          { modal: true },
+          confirmLabel,
+        )
+        if (confirm !== confirmLabel) return
+      }
       response = await requestAction(action)
       break
     }
@@ -605,6 +640,40 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
         { action: 'throwBall', encounterID: request.encounterID, ball },
         true,
       )
+      break
+    }
+
+    case 'feed': {
+      // Same rule as the ball: the slug is checked here, never trusted into the inventory.
+      if (!isBerryKind(request.berry) || !isOpaqueID(request.encounterID)) return
+      response = await requestAction(
+        { action: 'feedBerry', encounterID: request.encounterID, berry: request.berry },
+        true,
+      )
+      break
+    }
+
+    case 'collect': {
+      if (!isOpaqueID(request.findID)) return
+      response = await requestAction({ action: 'collectFind', findID: request.findID }, true)
+      break
+    }
+
+    case 'collectAll':
+      response = await requestAction({ action: 'collectAllFinds' }, true)
+      break
+
+    case 'track': {
+      if (!isOpaqueID(request.trailID)) return
+      // Spends tokens, so it is confirmed natively like a purchase — same capped, display-only copy.
+      const confirmLabel = (request.confirmLabel ?? 'Track').slice(0, 30) || 'Track'
+      const confirm = await vscode.window.showWarningMessage(
+        `${request.title.slice(0, 160)} — ${request.priceText.slice(0, 30)}`,
+        { modal: true },
+        confirmLabel,
+      )
+      if (confirm !== confirmLabel) return
+      response = await requestAction({ action: 'trackLegendary', trailID: request.trailID })
       break
     }
 
@@ -794,7 +863,10 @@ async function exportSave(): Promise<void> {
   if (target === undefined) return
 
   try {
-    const envelope = encodeSave(sanitized(state), version(), hostname(), Date.now())
+    // The device label, never `hostname()`: a hostname often carries its owner's real name, and
+    // this file is made to be handed to someone else's machine.
+    const { label } = await deviceIdentity(ourData())
+    const envelope = encodeSave(sanitized(state), version(), label, Date.now())
     await fs.writeFile(target.fsPath, envelope, 'utf8')
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -844,15 +916,24 @@ async function importSave(): Promise<void> {
   }
 
   const summary = summarize(envelope.state)
-  const confirmed = await vscode.window.showWarningMessage(
-    `Your current progress will be replaced by this save (${summary.dexCount} in the Pokédex).`,
-    {
-      modal: true,
-      detail: 'A backup of your current state is saved before it is replaced.',
-    },
-    'Replace',
+  // The copy is the core's, in the game's language — read from this machine's save, which is the
+  // language the player chose here (an imported save never changes it).
+  const lang = (
+    parseCompanionState(await fs.readFile(savePath(), 'utf8').catch(() => '')) ??
+    freshCompanionState(vscode.env.language)
+  ).language
+  const mergeLabel = importMergeLabel(lang)
+  const replaceLabel = importReplaceLabel(lang)
+  const answer = await vscode.window.showWarningMessage(
+    importSourceText(lang, envelope.sourceDevice, envelope.exportedAt, summary.dexCount),
+    { modal: true, detail: importChoiceDetail(lang) },
+    mergeLabel,
+    replaceLabel,
   )
-  if (confirmed !== 'Replace') return
+  if (answer !== mergeLabel && answer !== replaceLabel) return
+  const choice = answer === mergeLabel ? 'Merge' : 'Replace'
+  const device = await deviceIdentity(ourData())
+  let mergeReport: ReturnType<typeof mergeSaves> | undefined
 
   // Everything below owns the save file exclusively, which is why the worker goes first.
   await stopWorker()
@@ -879,7 +960,15 @@ async function importSave(): Promise<void> {
       }
 
       const current = parseCompanionState(previous ?? '') ?? freshCompanionState(vscode.env.language)
-      const rebased = rebasedForThisDevice(envelope.state, current, ledgerObservation())
+      let rebased
+      if (choice === 'Merge') {
+        mergeReport = mergeSaves(current, envelope.state)
+        // A merge is a change made here, so this device's counter moves: the other machine then
+        // sees a save that contains its own history and adopts it rather than forking again.
+        rebased = withRevision(mergeReport.state, device.id)
+      } else {
+        rebased = rebasedForThisDevice(envelope.state, current, ledgerObservation())
+      }
 
       // The live save, so it goes through the shared atomic helper like every other writer of
       // it: this window stops its own worker first, but every *other* window's is still running.
@@ -889,7 +978,11 @@ async function importSave(): Promise<void> {
     // A user action, so contention fails visibly: replacing someone's whole save is the last
     // thing that may quietly not happen.
     if (!done.acquired) throw new Error('another window is writing the save')
-    void vscode.window.showInformationMessage('Save imported.')
+    void vscode.window.showInformationMessage(
+      mergeReport === undefined
+        ? importedText(lang)
+        : mergedText(lang, mergeReport.dexAdded, mergeReport.narrative),
+    )
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     output?.error(`import failed: ${detail}`)

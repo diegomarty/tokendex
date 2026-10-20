@@ -73,9 +73,24 @@ export function sceneSpriteURL(speciesID: number, shiny: boolean): string {
   return spriteURL(speciesID, shiny, true)
 }
 
-/** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...). */
+/**
+ * The egg's sprite is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet with
+ * the egg drawn in the middle 28×30.
+ */
+const EGG_SPRITE = 'egg'
+
+/** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...) — or the egg. */
 export function itemSpriteURL(name: string): string {
+  if (name === EGG_SPRITE) return `${SPRITE_BASE}/egg.png`
   return `${ITEM_SPRITE_BASE}/${name}.png`
+}
+
+/**
+ * Whether an icon comes from a full 96px sheet rather than a 30px item sheet. Shrinking it to
+ * the icon box would be a fractional scale of pixel art; the box crops its middle instead.
+ */
+export function itemSpriteIsSheet(name: string): boolean {
+  return name === EGG_SPRITE
 }
 
 /** The player's avatar. The slug comes from the core's roster and is never built here. */

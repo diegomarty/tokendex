@@ -35,6 +35,7 @@ import { LimitsPoller, highestUtilization, isLimitWarning } from '../core/limits
 import { candyEligibleWindows, limitSeverity } from '../core/limits/windows.js'
 import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
+import { spendableBalance } from '../core/companion/ledger.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
 import {
   type AppLanguage,
@@ -71,9 +72,15 @@ import { type CelebrationEvent, celebrationText, openPanelLabel } from '../core/
 import * as D from '../core/i18n/dispatch.js'
 import { panelStrings } from '../core/i18n/panelStrings.js'
 import { cost } from '../core/tokenFormatter.js'
-import { type BallKind } from '../core/companion/model.js'
-import { spawnTestEncounter, grantBalls } from '../core/dev/simulation.js'
-import type { PanelDevControl, PanelState, PanelThrowResult } from '../webview/protocol.js'
+import { type BallKind, type BerryKind } from '../core/companion/model.js'
+import { TrailBalance } from '../core/companion/encounters.js'
+import {
+  spawnTestEncounter,
+  spawnTestFind,
+  grantBalls,
+  loseTestLegendary,
+} from '../core/dev/simulation.js'
+import type { PanelDevControl, PanelState, PanelEncounterResult } from '../webview/protocol.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -81,6 +88,10 @@ export type WorkerAction =
   | { action: 'buyEgg'; tier?: Rarity }
   | { action: 'setLanguage'; language: AppLanguage }
   | { action: 'throwBall'; encounterID: string; ball: BallKind }
+  | { action: 'feedBerry'; encounterID: string; berry: BerryKind }
+  | { action: 'collectFind'; findID: string }
+  | { action: 'collectAllFinds' }
+  | { action: 'trackLegendary'; trailID: string }
   | { action: 'runFrom'; encounterID: string }
   | { action: 'setTrainer'; trainerID: string }
   // Development-only. Declared in `core/dev/scenarios.ts` so the panel's Dev tab, the quick pick
@@ -176,7 +187,7 @@ export type ScanResponse =
   | { id: number; ok: true; flushed: true }
   /** `extra` rides beside the panel on a throw reply — never inside `PanelState`, which is
    *  replayed to late-opening surfaces and would replay the animation. */
-  | { id: number; ok: true; panel: PanelState; extra?: PanelThrowResult }
+  | { id: number; ok: true; panel: PanelState; extra?: PanelEncounterResult }
   | { id: number; ok: false; error: string }
 
 interface WorkerConfig {
@@ -358,25 +369,37 @@ async function readCorpus(locale: string | undefined): Promise<ScanObservation> 
     }
   }
 
-  const [claude, codex, gemini, grok, cursor, copilot, opencode, hermes, kiro, antigravity] =
-    await Promise.all([
-      read('Claude', () => cache.claudeEntries(since)),
-      read('Codex', () => cache.codexEntries(since)),
-      read('Gemini', () => cache.geminiEntries(since)),
-      read('Grok', () => cache.grokEntries(since)),
-      read('Cursor', () => cache.cursorEntries(since)),
-      read('Copilot', () => cache.copilotEntries(since)),
-      read('OpenCode', () => cache.openCodeEntries(since)),
-      read('Hermes', () => cache.hermesEntries(since)),
-      read('Kiro', () => cache.kiroEntries(since)),
-      read('Antigravity', async () => {
-        // Its diagnostics ride along with the entries: an unreadable conversation store makes
-        // the total quietly low, which is exactly the kind of silence worth breaking.
-        const scan = await cache.antigravityScan(since)
-        errors.push(...scan.notes)
-        return scan.entries
-      }),
-    ])
+  const [
+    claude,
+    codex,
+    gemini,
+    grok,
+    cursor,
+    copilot,
+    copilotVSCode,
+    opencode,
+    hermes,
+    kiro,
+    antigravity,
+  ] = await Promise.all([
+    read('Claude', () => cache.claudeEntries(since)),
+    read('Codex', () => cache.codexEntries(since)),
+    read('Gemini', () => cache.geminiEntries(since)),
+    read('Grok', () => cache.grokEntries(since)),
+    read('Cursor', () => cache.cursorEntries(since)),
+    read('Copilot', () => cache.copilotEntries(since)),
+    read('Copilot (VS Code)', () => cache.copilotVSCodeEntries(since)),
+    read('OpenCode', () => cache.openCodeEntries(since)),
+    read('Hermes', () => cache.hermesEntries(since)),
+    read('Kiro', () => cache.kiroEntries(since)),
+    read('Antigravity', async () => {
+      // Its diagnostics ride along with the entries: an unreadable conversation store makes
+      // the total quietly low, which is exactly the kind of silence worth breaking.
+      const scan = await cache.antigravityScan(since)
+      errors.push(...scan.notes)
+      return scan.entries
+    }),
+  ])
 
   // Providers with nothing to report are dropped: a permanent row of zeros for a tool the
   // user does not have is noise, and the panel is read at a glance.
@@ -387,6 +410,7 @@ async function readCorpus(locale: string | undefined): Promise<ScanObservation> 
     { providerID: 'grok', displayName: 'Grok', entries: grok },
     { providerID: 'cursor', displayName: 'Cursor', entries: cursor },
     { providerID: 'copilot', displayName: 'Copilot', entries: copilot },
+    { providerID: 'copilot_vscode', displayName: 'Copilot (VS Code)', entries: copilotVSCode },
     { providerID: 'opencode', displayName: 'OpenCode', entries: opencode },
     { providerID: 'hermes', displayName: 'Hermes', entries: hermes },
     { providerID: 'kiro', displayName: 'Kiro', entries: kiro },
@@ -617,30 +641,6 @@ function companionView(
 }
 
 /**
- * The scene's result line, pre-localised — the webview must never compose localised text.
- * Present tense theatre, matching the games: "Gotcha!", "It broke free!", "It fled…".
- */
-function throwResultText(
-  lang: AppLanguage,
-  outcome: { kind: string; shakes?: number },
-  name: string,
-  isShiny: boolean,
-): string {
-  switch (outcome.kind) {
-    case 'caught':
-      return celebrationText(lang, { kind: 'wildCaught', name, isShiny })
-    case 'broke':
-      return D.brokeFreeText(lang, outcome.shakes ?? 0)
-    case 'fled':
-      return D.fledText(lang, name)
-    case 'noBall':
-      return D.wildNoBallsText(lang)
-    default:
-      return '' // unknownEncounter: the state push already removed the scene
-  }
-}
-
-/**
  * One state-changing action, as a single read-modify-write under the save's cross-window lock.
  *
  * Every site here used to read `companion.snapshot()`, transform it and write the result back
@@ -675,7 +675,7 @@ async function commit(
  * the dispatcher turns a throw into `{ ok: false, error }`, and `handlePanelRequest` shows
  * that string. The core emits the sentence; the host never composes one.
  */
-async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | undefined> {
+async function applyAction(payload: WorkerAction): Promise<PanelEncounterResult | undefined> {
   await companion.load()
   try {
     return await applyActionOn(payload)
@@ -687,33 +687,59 @@ async function applyAction(payload: WorkerAction): Promise<PanelThrowResult | un
   }
 }
 
-async function applyActionOn(payload: WorkerAction): Promise<PanelThrowResult | undefined> {
+async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResult | undefined> {
   switch (payload.action) {
     case 'buyItem':
       await commit((state) => buyItem(state, payload.item, payload.quantity ?? 1))
       return undefined
 
-    case 'throwBall': {
-      // The name is captured before the throw: a caught or fled encounter is gone afterwards.
+    case 'throwBall':
+    case 'feedBerry': {
+      // The name is captured before the turn: a caught or fled encounter is gone afterwards.
       // Read from this window's last-known queue rather than from inside the hold, because it
-      // only feeds the animation's caption — the throw itself resolves against the re-read
+      // only feeds the animation's caption — the turn itself resolves against the re-read
       // queue, so an encounter another window already caught answers `unknownEncounter`.
       const before = companion.snapshot()
       const target = before.wild.find((e) => e.id === payload.encounterID)
       const name = target?.names?.[before.language] ?? `#${target?.speciesID ?? '?'}`
-      const outcome = await companion.throwBallAt(payload.encounterID, payload.ball)
-      const shakes = 'shakes' in outcome ? outcome.shakes : 0
+      const item = payload.action === 'throwBall' ? payload.ball : payload.berry
+      const outcome =
+        payload.action === 'throwBall'
+          ? await companion.throwBallAt(payload.encounterID, payload.ball)
+          : await companion.feedBerryAt(payload.encounterID, payload.berry)
+      const spentSomething = outcome.kind !== 'noItem' && outcome.kind !== 'unknownEncounter'
       return {
         encounterID: payload.encounterID,
         kind: outcome.kind,
-        shakes,
-        resultText: throwResultText(
-          companion.snapshot().language,
-          outcome,
+        shakes: 'shakes' in outcome ? outcome.shakes : 0,
+        resultText: D.turnResultText(companion.snapshot().language, outcome, {
           name,
-          target?.isShiny ?? false,
-        ),
+          isShiny: target?.isShiny ?? false,
+          item,
+          trailHours: TrailBalance.windowMs / 3_600_000,
+        }),
+        animation: !spentSomething ? 'none' : payload.action === 'throwBall' ? 'throw' : 'feed',
+        attacked: 'attack' in outcome && outcome.attack !== undefined,
       }
+    }
+
+    case 'collectFind':
+      await companion.collectFind(payload.findID)
+      return undefined
+
+    case 'collectAllFinds':
+      await companion.collectAllFinds()
+      return undefined
+
+    case 'trackLegendary': {
+      const outcome = await companion.trackLegendary(payload.trailID)
+      const lang = companion.snapshot().language
+      // Refusals are said, not swallowed: the host showed a price and the player confirmed it, so
+      // silence would read as "paid and nothing happened".
+      if (outcome === 'noRoom') throw new Error(D.trackNoRoomText(lang))
+      if (outcome === 'cantAfford') throw new Error(D.trackCantAffordText(lang))
+      if (outcome === 'expired') throw new Error(D.trackExpiredText(lang))
+      return undefined
     }
 
     case 'runFrom':
@@ -823,6 +849,16 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelThrowResult | 
       await commit((state) => grantBalls(state, payload.count))
       return undefined
 
+    case 'devSpawnFind':
+      await commit((state) =>
+        spawnTestFind(state, () => Math.floor(Math.random() * 1_000_000), Date.now()),
+      )
+      return undefined
+
+    case 'devLoseLegendary':
+      await commit((state) => loseTestLegendary(state, Date.now()))
+      return undefined
+
     case 'devSnapshot':
       if (payload.slot === 'save') {
         // Read inside a hold so the copy is the file's state, not this window's: a snapshot
@@ -848,14 +884,26 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelThrowResult | 
  * Thin wrapper over the core's pure `buildPanelState`: this side only collects what is impure —
  * the store's live readings, the clock, the piggybacked settings and the dev tab.
  */
+/** The balance the last panel showed, and the serial of the last change to it. */
+let lastSpendable: number | undefined
+let walletSerial = 0
+
 function buildPanel(
   usage: ReturnType<typeof buildSnapshot>,
   locale: string | undefined,
   devMode = false,
 ): PanelState {
+  const state = companion.snapshot()
+  const spendable = spendableBalance(state)
+  const walletChange =
+    lastSpendable === undefined || lastSpendable === spendable
+      ? undefined
+      : { previous: lastSpendable, id: ++walletSerial }
+  lastSpendable = spendable
   return buildPanelState({
     usage,
-    state: companion.snapshot(),
+    state,
+    walletChange,
     line: companion.currentLine(),
     isCelebrating: companion.isCelebrating(),
     now: Date.now(),
@@ -900,7 +948,7 @@ const dispatch = createDispatcher<
   WorkerAction,
   ReturnType<typeof buildSnapshot>,
   PanelState,
-  PanelThrowResult
+  PanelEncounterResult
 >({
   scan,
   applyAction,

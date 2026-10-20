@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { APP_LANGUAGES, ITEM_KINDS, RARITIES } from '../src/core/companion/model.js'
+import {
+  APP_LANGUAGES,
+  BALL_KINDS,
+  BERRY_KINDS,
+  ITEM_KINDS,
+  RARITIES,
+} from '../src/core/companion/model.js'
 import { f, s } from '../src/core/i18n/strings.js'
 import * as d from '../src/core/i18n/dispatch.js'
 import { MilestoneBalance } from '../src/core/companion/encounters.js'
@@ -395,5 +401,49 @@ describe('a save the lock refused', () => {
   it('is written per language rather than falling back to one', () => {
     const said = APP_LANGUAGES.map((lang) => d.saveBusyText(lang))
     expect(new Set(said).size).toBe(APP_LANGUAGES.length)
+  })
+})
+
+describe('turn results', () => {
+  const context = (item: (typeof ITEM_KINDS)[number]) => ({
+    name: 'Mewtwo',
+    isShiny: false,
+    item,
+    trailHours: 72,
+  })
+
+  // Walks the kinds rather than naming them, so a ball added to BALL_KINDS cannot fall through to
+  // the berry sentence because some list of ball names was not updated.
+  it('says the bag is out of balls for every ball, and names the berry for every berry', () => {
+    for (const lang of APP_LANGUAGES) {
+      for (const ball of BALL_KINDS) {
+        expect(d.turnResultText(lang, { kind: 'noItem' }, context(ball))).toBe(d.wildNoBallsText(lang))
+      }
+      for (const berry of BERRY_KINDS) {
+        expect(d.turnResultText(lang, { kind: 'noItem' }, context(berry))).toContain(
+          d.itemName(lang, berry),
+        )
+      }
+    }
+  })
+})
+
+describe('save import strings', () => {
+  // The import dialog and the merge notice used to be composed in the host, in English only.
+  it('localises the import dialog and the merge summary', () => {
+    for (const lang of APP_LANGUAGES) {
+      expect(d.importSourceText(lang, 'device-abc123', Date.UTC(2026, 9, 20), 31)).toContain('31')
+      expect(d.importSourceText(lang, undefined, 0, 4)).toContain('4')
+      expect(d.importChoiceDetail(lang)).not.toBe('')
+      expect(d.importMergeLabel(lang)).not.toBe('')
+      expect(d.importReplaceLabel(lang)).not.toBe('')
+      expect(d.importedText(lang)).not.toBe('')
+      expect(d.mergedText(lang, 7, 'local')).toContain('7')
+      expect(d.mergedText(lang, 7, 'remote')).not.toBe(d.mergedText(lang, 7, 'local'))
+    }
+    // Four languages, four sentences: a copy left in English everywhere would pass the rest.
+    expect(new Set(APP_LANGUAGES.map((lang) => d.importChoiceDetail(lang))).size).toBe(
+      APP_LANGUAGES.length,
+    )
   })
 })

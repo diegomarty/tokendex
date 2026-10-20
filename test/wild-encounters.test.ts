@@ -2,16 +2,34 @@ import { describe, expect, it } from 'vitest'
 import {
   Capture,
   EncounterBalance,
+  LegendaryBalance,
+  MoodBalance,
+  StealBalance,
+  TrailBalance,
   addEncounterUsage,
+  attackPermille,
   catchChance,
   catchValue,
+  collectAllFinds,
+  collectFind,
+  encounterCatchChance,
   encounterThresholdFor,
   ENCOUNTER_EXPIRY_MS,
   RARE_ENCOUNTER_EXPIRY_MS,
   enqueueEncounter,
+  expireQueue,
+  fleePermille,
   grantLegendaryEncounter,
+  initialMood,
+  moodOf,
+  queueFullEdge,
+  rollFind,
+  spawnKind,
+  takeTurn,
+  temperamentFrom,
+  trackLegendary,
+  trailPrice,
   withoutWanderedOff,
-  fleeChance,
   owedEncounters,
   payForEncounter,
   resolveThrow,
@@ -19,10 +37,14 @@ import {
   shakeThreshold,
   throwBall,
   tokensToNextEncounter,
+  type BaseStats,
 } from '../src/core/companion/encounters.js'
 import {
+  type BallKind,
   type CompanionState,
+  type TrailEntry,
   type WildEncounter,
+  type WildFind,
   freshCompanionState,
 } from '../src/core/companion/model.js'
 
@@ -31,6 +53,16 @@ const fixedRNG = (...values: number[]) => {
   let i = 0
   return () => values[i++ % values.length] ?? 0
 }
+
+/** Like `fixedRNG`, but the last value repeats instead of the sequence wrapping around. */
+const sequence = (...values: number[]) => {
+  let i = 0
+  return () => values[Math.min(i++, values.length - 1)] ?? 0
+}
+
+/** A roll no wobble passes (the range is 0..65535) and no reaction threshold reaches. */
+const MISS = 65_535
+const STAY = 999
 
 const wild = (over: Partial<WildEncounter> = {}): WildEncounter => ({
   id: 'w1',
@@ -212,11 +244,14 @@ describe('grantLegendaryEncounter', () => {
     expect(grantLegendaryEncounter(grantLegendaryEncounter(state())).owedLegendaryEncounters).toBe(2)
   })
 
-  // An IOU the spawn path pays out for ever: a runaway trigger must not become a faucet.
-  it('never owes more than a queue could ever hold', () => {
+  // [trigger branch] An IOU the spawn path pays out for ever: a runaway trigger must not become a
+  // faucet. The ceiling is its own constant — it used to borrow `maxQueue`, so raising the queue
+  // to 30 would have silently raised how many legendaries could be banked.
+  it('never owes more than its own ceiling, whatever the queue holds', () => {
     let owing = state()
     for (let i = 0; i < 50; i++) owing = grantLegendaryEncounter(owing)
-    expect(owing.owedLegendaryEncounters).toBe(EncounterBalance.maxQueue)
+    expect(owing.owedLegendaryEncounters).toBe(LegendaryBalance.maxOwed)
+    expect(LegendaryBalance.maxOwed).toBeLessThan(EncounterBalance.maxQueue)
   })
 
   it('ignores a negative grant rather than cancelling a debt with it', () => {
@@ -231,11 +266,11 @@ describe('catchValue', () => {
     expect(catchValue(45, 'ultraBall')).toBe(77)
   })
 
-  // [trigger branch] Without the cap, a 235+ species was a guaranteed wobble-less catch with
+  // [trigger branch] Without the cap, a full-rate species was a guaranteed wobble-less catch with
   // the cheapest ball; the guaranteed catch is the Master Ball's job and nobody else's.
   it('caps every ball short of the Master below certainty', () => {
-    expect(catchValue(255, 'pokeBall')).toBe(Capture.maxCatchValue)
-    expect(catchValue(200, 'ultraBall')).toBe(Capture.maxCatchValue)
+    expect(catchValue(255, 'ultraBall')).toBe(Capture.maxCatchValue)
+    expect(Capture.maxCatchValue).toBeLessThan(255)
     expect(catchValue(3, 'masterBall')).toBe(255)
   })
 
@@ -246,6 +281,13 @@ describe('catchValue', () => {
   it('is monotonic in ball tier', () => {
     const values = (['pokeBall', 'greatBall', 'ultraBall'] as const).map((b) => catchValue(3, b))
     expect(values).toEqual([...values].sort((a, b) => a - b))
+  })
+
+  it('is lowered by anger, raised by trust and by a Razz Berry', () => {
+    const calm = catchValue(45, 'pokeBall')
+    expect(catchValue(45, 'pokeBall', { anger: 100, trust: 0 })).toBeLessThan(calm)
+    expect(catchValue(45, 'pokeBall', { anger: 0, trust: 50 })).toBeGreaterThan(calm)
+    expect(catchValue(45, 'pokeBall', { anger: 0, trust: 0 }, true)).toBeGreaterThan(calm)
   })
 })
 
@@ -262,8 +304,7 @@ describe('shakeThreshold', () => {
 
 describe('resolveThrow', () => {
   // A guaranteed catch must not consume a die — and with the difficulty cap, only the Master
-  // Ball can reach 255 at all. Asserting the *outcome* would prove nothing (`shakeThreshold`
-  // saturates at 255 anyway); what this pins is that no draw is spent.
+  // Ball can reach 255 at all. What this pins is that no draw is spent.
   it('the Master Ball catches without consuming a roll', () => {
     const exploding = () => {
       throw new Error('resolveThrow drew a die for a guaranteed catch')
@@ -274,10 +315,8 @@ describe('resolveThrow', () => {
     })
   })
 
-  // The cap's visible consequence: even a Caterpie can wobble out of a Poké Ball now.
-  it('a full-rate species is no longer an automatic catch with a Poké Ball', () => {
-    const b = shakeThreshold(catchValue(255, 'pokeBall'))
-    expect(b).toBeLessThan(65_536)
+  // The cap's visible consequence: even a Caterpie can wobble out of a Poké Ball.
+  it('a full-rate species is not an automatic catch with a Poké Ball', () => {
     const outcome = resolveThrow(wild({ captureRate: 255 }), 'pokeBall', fixedRNG(65_500))
     expect(outcome.caught).toBe(false)
   })
@@ -293,7 +332,7 @@ describe('resolveThrow', () => {
 
   it('counts shakes up to the first failed roll', () => {
     const encounter = wild({ captureRate: 45, rarity: 'rare' })
-    const b = shakeThreshold(catchValue(45, 'pokeBall'))
+    const b = shakeThreshold(catchValue(45, 'pokeBall', moodOf(encounter)))
     // Two passes, then a failure: the fourth value must never be read.
     const outcome = resolveThrow(encounter, 'pokeBall', fixedRNG(0, 0, b, 0))
     expect(outcome).toEqual({ caught: false, shakes: 2 })
@@ -308,18 +347,23 @@ describe('resolveThrow', () => {
 describe('catchChance', () => {
   it('is certain only for the Master Ball', () => {
     expect(catchChance(3, 'masterBall')).toBe(1)
-    expect(catchChance(255, 'pokeBall')).toBeLessThan(1)
+    expect(catchChance(255, 'ultraBall')).toBeLessThan(1)
   })
 
-  // The rack shows these numbers; they must be the same maths the throw rolls. The pinned
-  // values are the tuned difficulty curve — change `Capture` and these say what it did.
+  // The rack shows these numbers; they must be the same maths the throw rolls.
   it('matches the shake threshold raised to the four rolls', () => {
     const b = shakeThreshold(catchValue(45, 'pokeBall'))
     expect(catchChance(45, 'pokeBall')).toBeCloseTo(Math.pow(b / 65_536, 4), 10)
-    expect(catchChance(255, 'pokeBall')).toBeCloseTo(0.83, 2) // common ceiling
-    expect(catchChance(45, 'pokeBall')).toBeCloseTo(0.24, 2) // rare
-    expect(catchChance(45, 'ultraBall')).toBeCloseTo(0.41, 2)
-    expect(catchChance(3, 'pokeBall')).toBeCloseTo(0.036, 2) // legendary
+  })
+
+  it('reads the encounter’s mood, so the odds shown are the odds rolled', () => {
+    const encounter = wild({ captureRate: 45, mood: { anger: 80, nervousness: 10, trust: 0 } })
+    const a = catchValue(45, 'pokeBall', moodOf(encounter))
+    expect(encounterCatchChance(encounter, 'pokeBall')).toBeCloseTo(
+      Math.pow(shakeThreshold(a) / 65_536, 4),
+      10,
+    )
+    expect(encounterCatchChance(encounter, 'pokeBall')).toBeLessThan(catchChance(45, 'pokeBall'))
   })
 
   it('is monotonic in ball tier', () => {
@@ -330,18 +374,581 @@ describe('catchChance', () => {
   })
 })
 
-describe('fleeChance', () => {
-  it('escalates with every throw and caps', () => {
-    const first = fleeChance(wild({ throws: 0 }))
-    const later = fleeChance(wild({ throws: 3 }))
-    expect(later).toBeGreaterThan(first)
-    expect(fleeChance(wild({ throws: 99, rarity: 'legendary' }))).toBeLessThanOrEqual(0.55)
+/**
+ * Chance of catching it eventually, throwing `ball` until the encounter ends — computed exactly
+ * through the engine itself. Each reachable mood is a state; its transitions are read from
+ * `takeTurn` (the mood a miss leaves, and the one an attack leaves) and weighted by the same
+ * permille the roll is held to. Moods saturate at 100, so the graph has cycles (miss → attack →
+ * miss can return to where it started); it is solved by iterating to the fixed point.
+ */
+function eventualCatch(start: WildEncounter, ball: BallKind): number {
+  interface Node {
+    p: number
+    stay: string | undefined
+    attack: string | undefined
+    stayWeight: number
+    attackWeight: number
+  }
+  const nodes = new Map<string, Node>()
+  const keyOf = (e: WildEncounter) => JSON.stringify(moodOf(e))
+  const pending: WildEncounter[] = [start]
+  while (pending.length > 0) {
+    const encounter = pending.pop()!
+    const key = keyOf(encounter)
+    if (nodes.has(key)) continue
+    const base = state({ usedSinceInstall: 1e12, inventory: { [ball]: 99 }, wild: [encounter] })
+    const turn = (roll: number) =>
+      takeTurn(base, encounter.id, { kind: 'throw', ball }, sequence(MISS, roll), NOW).state.wild[0]
+    const missed = turn(STAY)!
+    const flee = fleePermille(missed)
+    const attack = attackPermille(missed)
+    const attacked = attack > 0 ? turn(flee) : undefined
+    nodes.set(key, {
+      p: encounterCatchChance(encounter, ball),
+      stay: keyOf(missed),
+      attack: attacked === undefined ? undefined : keyOf(attacked),
+      stayWeight: (1000 - flee - attack) / 1000,
+      attackWeight: attack / 1000,
+    })
+    pending.push(missed)
+    if (attacked !== undefined) pending.push(attacked)
+  }
+  let value = new Map([...nodes.keys()].map((k) => [k, 0]))
+  for (let i = 0; i < 500; i++) {
+    const next = new Map<string, number>()
+    for (const [k, n] of nodes) {
+      const stay = n.stay === undefined ? 0 : (value.get(n.stay) ?? 0)
+      const hit = n.attack === undefined ? 0 : (value.get(n.attack) ?? 0)
+      next.set(k, n.p + (1 - n.p) * (n.stayWeight * stay + n.attackWeight * hit))
+    }
+    value = next
+  }
+  return value.get(keyOf(start)) ?? 0
+}
+
+// The rebalance this design exists for, pinned. Before it, a legendary got away 89–92% of the
+// time with any ball short of a Master, a rare half the time, and the Great and Ultra Balls did
+// nothing at all on a common — every one of them sat at the same 83% under the old cap.
+describe('balance', () => {
+  const neutral = (captureRate: number, rarity: WildEncounter['rarity']) => wild({ captureRate, rarity })
+
+  it.each([
+    [3, 'legendary', [0.131, 0.182, 0.226]],
+    [45, 'rare', [0.587, 0.698, 0.772]],
+    [120, 'uncommon', [0.853, 0.929, 0.97]],
+    [255, 'common', [0.978, 0.998, 0.998]],
+  ] as const)(
+    'rate %i (%s) is caught eventually as often as the design says',
+    (rate, rarity, expected) => {
+      const odds = (['pokeBall', 'greatBall', 'ultraBall'] as const).map((b) =>
+        eventualCatch(neutral(rate, rarity), b),
+      )
+      odds.forEach((value, i) => expect(value).toBeCloseTo(expected[i]!, 2))
+    },
+  )
+
+  // [trigger branch] The old 200 cap flattened every ball onto the same number for a common.
+  it('makes a better ball worth buying on a common', () => {
+    const caterpie = neutral(255, 'common')
+    expect(encounterCatchChance(caterpie, 'greatBall')).toBeGreaterThan(
+      encounterCatchChance(caterpie, 'pokeBall') + 0.1,
+    )
+  })
+})
+
+describe('temperament', () => {
+  const mewtwo: BaseStats = {
+    hp: 106,
+    attack: 110,
+    defense: 90,
+    specialAttack: 154,
+    specialDefense: 90,
+    speed: 130,
+  }
+
+  it('reads aggression from attack against defence and nerves from speed', () => {
+    expect(temperamentFrom(mewtwo, 'hardy', 0)).toEqual({
+      aggression: 82,
+      skittishness: 75,
+      appetite: 20,
+    })
   })
 
-  it('makes rarer Pokémon skittish', () => {
-    expect(fleeChance(wild({ rarity: 'legendary' }))).toBeGreaterThan(
-      fleeChance(wild({ rarity: 'common' })),
+  it('applies the nature before reading the stats', () => {
+    // Modest raises special attack: an angrier Mewtwo.
+    expect(temperamentFrom(mewtwo, 'modest', 0).aggression).toBeGreaterThan(82)
+    // Timid raises speed: a jumpier one.
+    expect(temperamentFrom(mewtwo, 'timid', 0).skittishness).toBeGreaterThan(75)
+  })
+
+  // A missing `/pokemon` response must never block a spawn: the temperament falls back to
+  // middling stats rather than to nothing.
+  it('falls back to a neutral reading without stats or happiness', () => {
+    expect(temperamentFrom(undefined, 'hardy', undefined)).toEqual({
+      aggression: 50,
+      skittishness: 50,
+      appetite: 50,
+    })
+  })
+
+  it('starts rarer Pokémon on edge, and a tracked one more so', () => {
+    const t = { aggression: 50, skittishness: 50, appetite: 50 }
+    expect(initialMood(t, 'legendary').nervousness).toBeGreaterThan(initialMood(t, 'common').nervousness)
+    expect(initialMood(t, 'legendary', 2).nervousness).toBe(initialMood(t, 'legendary').nervousness + 20)
+  })
+})
+
+describe('reactions', () => {
+  const rare = () => wild({ captureRate: 45, rarity: 'rare' })
+  const withBall = (encounter: WildEncounter, extra: Partial<CompanionState> = {}) =>
+    state({ inventory: { pokeBall: 5 }, wild: [encounter], usedSinceInstall: 100_000_000, ...extra })
+  const afterMiss = (encounter: WildEncounter) =>
+    takeTurn(
+      withBall(encounter),
+      encounter.id,
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, STAY),
+      NOW,
+    ).state.wild[0]!
+
+  it('a miss makes it angrier and jumpier, and costs trust', () => {
+    const before = moodOf(rare())
+    const after = moodOf(afterMiss(rare()))
+    expect(after.anger).toBeGreaterThan(before.anger)
+    expect(after.nervousness).toBeGreaterThan(before.nervousness)
+    expect(after.trust).toBe(Math.max(0, before.trust + MoodBalance.missTrust))
+  })
+
+  // [trigger branch] The thresholds stack: flee below `flee`, attack below `flee + attack`, stay
+  // above. One roll either side of each edge pins the comparison, so `<` cannot become `<=`.
+  it('flees just under the flee threshold and attacks right at it', () => {
+    const missed = afterMiss(rare())
+    const flee = fleePermille(missed)
+    const fled = takeTurn(
+      withBall(rare()),
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, flee - 1),
+      NOW,
     )
+    expect(fled.outcome).toMatchObject({ kind: 'fled', via: 'throw' })
+    const attacked = takeTurn(
+      withBall(rare()),
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, flee),
+      NOW,
+    )
+    expect(attacked.outcome).toMatchObject({
+      kind: 'broke',
+      attack: { stolen: StealBalance.amount.rare },
+    })
+  })
+
+  it('stays, without attacking, once the roll clears both thresholds', () => {
+    const missed = afterMiss(rare())
+    const clear = fleePermille(missed) + attackPermille(missed)
+    const stayed = takeTurn(
+      withBall(rare()),
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, clear),
+      NOW,
+    )
+    expect(stayed.outcome).toEqual({ kind: 'broke', shakes: 0 })
+  })
+
+  // [trigger branch] The reaction reads the mood the miss left behind, not the mood before it — a
+  // roll between the two flee thresholds tells them apart.
+  it('rolls the reaction against the mood after the miss', () => {
+    const before = fleePermille(rare())
+    const after = fleePermille(afterMiss(rare()))
+    expect(after).toBeGreaterThan(before + 1)
+    const outcome = takeTurn(
+      withBall(rare()),
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, before + 1),
+      NOW,
+    )
+    expect(outcome.outcome.kind).toBe('fled')
+  })
+
+  // Even a frantic Pokémon stays more likely to stay than to run, and a legendary less so still.
+  it('tops out below even odds, and lower for a legendary', () => {
+    const frantic = { anger: 0, nervousness: 100, trust: 0 }
+    expect(fleePermille(wild({ mood: frantic }))).toBe(380)
+    expect(fleePermille(wild({ rarity: 'legendary', mood: frantic }))).toBe(
+      Math.round(380 * MoodBalance.legendaryFleeFactor),
+    )
+  })
+
+  it('is far less likely to bolt while eating', () => {
+    const e = wild({ mood: { anger: 0, nervousness: 20, trust: 0 } })
+    expect(fleePermille(e)).toBe(100)
+    expect(fleePermille(e, true)).toBe(25)
+  })
+})
+
+describe('berries', () => {
+  const offer = (
+    encounter: WildEncounter,
+    berry: 'oranBerry' | 'nanabBerry' | 'razzBerry',
+    rng = sequence(STAY),
+  ) =>
+    takeTurn(
+      state({ inventory: { [berry]: 2, pokeBall: 2 }, wild: [encounter] }),
+      encounter.id,
+      { kind: 'feed', berry },
+      rng,
+      NOW,
+    )
+
+  it('an Oran Berry calms its anger and earns trust, scaled by appetite', () => {
+    const angry = { anger: 60, nervousness: 10, trust: 0 }
+    const greedy = offer(
+      wild({ mood: angry, temperament: { aggression: 50, skittishness: 50, appetite: 100 } }),
+      'oranBerry',
+    )
+    const picky = offer(
+      wild({ mood: angry, temperament: { aggression: 50, skittishness: 50, appetite: 0 } }),
+      'oranBerry',
+    )
+    expect(greedy.outcome).toEqual({ kind: 'fed', berry: 'oranBerry' })
+    expect(moodOf(greedy.state.wild[0]!)).toEqual({ anger: 30, nervousness: 5, trust: 20 })
+    expect(moodOf(picky.state.wild[0]!)).toEqual({ anger: 45, nervousness: 5, trust: 10 })
+    expect(greedy.state.inventory['oranBerry']).toBe(1)
+  })
+
+  it('a Nanab Berry settles its nerves', () => {
+    const jumpy = wild({
+      mood: { anger: 0, nervousness: 60, trust: 0 },
+      temperament: { aggression: 50, skittishness: 50, appetite: 100 },
+    })
+    expect(moodOf(offer(jumpy, 'nanabBerry').state.wild[0]!).nervousness).toBe(30)
+  })
+
+  // [trigger branch] The Razz Berry's boost belongs to one throw. Kept past it, every later ball
+  // would ride a berry eaten long ago.
+  it('a Razz Berry boosts exactly one throw', () => {
+    const fed = offer(wild({ captureRate: 45 }), 'razzBerry').state
+    expect(fed.wild[0]!.primed).toBe(true)
+    const boosted = encounterCatchChance(fed.wild[0]!, 'pokeBall')
+    const thrown = takeTurn(
+      fed,
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, STAY),
+      NOW,
+    ).state
+    expect(thrown.wild[0]!.primed).toBeUndefined()
+    expect(encounterCatchChance(thrown.wild[0]!, 'pokeBall')).toBeLessThan(boosted)
+  })
+
+  it('a berry turn can still end in a flight', () => {
+    const outcome = offer(
+      wild({ mood: { anger: 0, nervousness: 100, trust: 0 } }),
+      'nanabBerry',
+      sequence(0),
+    ).outcome
+    expect(outcome).toEqual({ kind: 'fled', shakes: 0, via: 'feed', trailed: false })
+  })
+
+  it('spends nothing when the bag holds none of that berry', () => {
+    const before = state({ inventory: {}, wild: [wild()] })
+    const result = takeTurn(before, 'w1', { kind: 'feed', berry: 'razzBerry' }, sequence(STAY), NOW)
+    expect(result.outcome).toEqual({ kind: 'noItem' })
+    expect(result.state).toBe(before)
+  })
+})
+
+describe('attacks', () => {
+  const furious = (over: Partial<WildEncounter> = {}) =>
+    wild({ captureRate: 45, rarity: 'rare', mood: { anger: 100, nervousness: 0, trust: 0 }, ...over })
+  // The reaction reads the mood the miss leaves, so the attack band starts at *that* flee threshold.
+  const turn = (s: CompanionState) => {
+    const missed = takeTurn(s, 'w1', { kind: 'throw', ball: 'pokeBall' }, sequence(MISS, STAY), NOW).state
+      .wild[0]!
+    return takeTurn(
+      s,
+      'w1',
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, fleePermille(missed)),
+      NOW,
+    )
+  }
+
+  it('takes its amount from the wallet, never from growth, and gets angrier', () => {
+    const before = state({
+      inventory: { pokeBall: 1 },
+      wild: [furious({ mood: { anger: 50, nervousness: 0, trust: 0 } })],
+      usedSinceInstall: 50_000_000,
+    })
+    const flee = fleePermille(
+      takeTurn(before, 'w1', { kind: 'throw', ball: 'pokeBall' }, sequence(MISS, STAY), NOW).state
+        .wild[0]!,
+    )
+    const result = takeTurn(before, 'w1', { kind: 'throw', ball: 'pokeBall' }, sequence(MISS, flee), NOW)
+    expect(result.outcome).toMatchObject({ kind: 'broke', attack: { stolen: StealBalance.amount.rare } })
+    expect(result.state.spentTokens).toBe(StealBalance.amount.rare)
+    expect(result.state.usedSinceInstall).toBe(50_000_000)
+    expect(result.state.wild[0]!.stolen).toBe(StealBalance.amount.rare)
+  })
+
+  // [trigger branch] Bounded by what is spendable: an attack must never push the balance negative.
+  it('takes no more than the wallet holds, and nothing from an empty one', () => {
+    const thin = turn(state({ inventory: { pokeBall: 1 }, wild: [furious()], usedSinceInstall: 300_000 }))
+    expect(thin.outcome).toMatchObject({ attack: { stolen: 300_000 } })
+    const empty = turn(state({ inventory: { pokeBall: 1 }, wild: [furious()], usedSinceInstall: 0 }))
+    expect(empty.outcome).toMatchObject({ attack: { stolen: 0 } })
+    expect(empty.state.spentTokens).toBe(0)
+  })
+
+  it('takes no more than its per-encounter cap from one Pokémon', () => {
+    const cap = StealBalance.amount.rare * StealBalance.perEncounter
+    const result = turn(
+      state({ inventory: { pokeBall: 1 }, wild: [furious({ stolen: cap })], usedSinceInstall: 1e10 }),
+    )
+    expect(result.outcome).toMatchObject({ attack: { stolen: 0 } })
+  })
+
+  it('pays back what it took when you catch it', () => {
+    const thief = furious({ stolen: 3_000_000 })
+    const result = takeTurn(
+      state({
+        inventory: { masterBall: 1 },
+        wild: [thief],
+        usedSinceInstall: 1e10,
+        spentTokens: 5_000_000,
+      }),
+      'w1',
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 3_000_000 })
+    expect(result.state.spentTokens).toBe(2_000_000)
+  })
+})
+
+describe('the legendary trail', () => {
+  const legendary = (over: Partial<WildEncounter> = {}) =>
+    wild({
+      id: 'mew',
+      speciesID: 150,
+      captureRate: 3,
+      rarity: 'legendary',
+      isShiny: true,
+      nature: 'timid',
+      temperament: { aggression: 80, skittishness: 70, appetite: 30 },
+      types: ['psychic'],
+      ...over,
+    })
+  const flee = (encounter: WildEncounter) =>
+    takeTurn(
+      state({ inventory: { pokeBall: 1 }, wild: [encounter] }),
+      encounter.id,
+      { kind: 'throw', ball: 'pokeBall' },
+      sequence(MISS, 0),
+      NOW,
+    )
+
+  it('a legendary that flees leaves tracks; a common does not', () => {
+    const gone = flee(legendary())
+    expect(gone.outcome).toMatchObject({ kind: 'fled', trailed: true })
+    expect(gone.state.legendaryTrail.map((e) => e.id)).toEqual(['mew'])
+    // The terrain it is met on comes back with it, so the trail has to carry its types.
+    expect(gone.state.legendaryTrail[0]!.types).toEqual(['psychic'])
+    expect(flee(wild()).state.legendaryTrail).toEqual([])
+  })
+
+  // [trigger branch] Running away is a choice; a track after it would be a paid mood reset.
+  it('running away leaves no tracks', () => {
+    expect(runFromEncounter(state({ wild: [legendary()] }), 'mew').legendaryTrail).toEqual([])
+  })
+
+  it('one that wanders off leaves tracks too, and cold tracks are cleared', () => {
+    const expired = expireQueue(
+      state({ wild: [legendary({ appearedAt: NOW - RARE_ENCOUNTER_EXPIRY_MS })] }),
+      NOW,
+    )
+    expect(expired.wild).toEqual([])
+    expect(expired.legendaryTrail.map((e) => e.id)).toEqual(['mew'])
+    expect(expireQueue(expired, NOW + TrailBalance.windowMs).legendaryTrail).toEqual([])
+  })
+
+  it('a legendary tracked to the limit leaves no more tracks', () => {
+    expect(flee(legendary({ trackedCount: TrailBalance.maxTracks })).state.legendaryTrail).toEqual([])
+  })
+
+  const trail = (over: Partial<TrailEntry> = {}): TrailEntry => ({
+    id: 'mew',
+    speciesID: 150,
+    captureRate: 3,
+    isShiny: true,
+    nature: 'timid',
+    temperament: { aggression: 80, skittishness: 70, appetite: 30 },
+    types: ['psychic'],
+    trackedCount: 0,
+    lostAt: NOW,
+    ...over,
+  })
+
+  it('tracking brings the same Pokémon back, more nervous, for a doubling price', () => {
+    const before = state({ legendaryTrail: [trail({ trackedCount: 1 })], usedSinceInstall: 1e10 })
+    const result = trackLegendary(before, 'mew', NOW)
+    expect(result.outcome).toBe('tracked')
+    expect(result.state.spentTokens).toBe(TrailBalance.basePrice * 2)
+    expect(result.state.legendaryTrail).toEqual([])
+    const back = result.state.wild[0]!
+    expect(back).toMatchObject({
+      speciesID: 150,
+      isShiny: true,
+      nature: 'timid',
+      rarity: 'legendary',
+      trackedCount: 2,
+      types: ['psychic'],
+    })
+    expect(moodOf(back).nervousness).toBe(initialMood(back.temperament!, 'legendary').nervousness + 20)
+    expect(trailPrice({ trackedCount: 2 })).toBe(TrailBalance.basePrice * 4)
+  })
+
+  it.each([
+    ['unknown', state({ legendaryTrail: [trail()], usedSinceInstall: 1e10 }), 'nope', NOW],
+    [
+      'expired',
+      state({ legendaryTrail: [trail()], usedSinceInstall: 1e10 }),
+      'mew',
+      NOW + TrailBalance.windowMs,
+    ],
+    [
+      'cantAfford',
+      state({ legendaryTrail: [trail()], usedSinceInstall: TrailBalance.basePrice - 1 }),
+      'mew',
+      NOW,
+    ],
+    [
+      'noRoom',
+      state({
+        legendaryTrail: [trail()],
+        usedSinceInstall: 1e10,
+        wild: Array.from({ length: EncounterBalance.maxQueue }, (_, i) => wild({ id: `q${i}` })),
+      }),
+      'mew',
+      NOW,
+    ],
+  ] as const)('refuses %s and charges nothing', (outcome, before, id, now) => {
+    const result = trackLegendary(before, id, now)
+    expect(result.outcome).toBe(outcome)
+    expect(result.state).toBe(before)
+  })
+})
+
+describe('item finds', () => {
+  // [trigger branch] The cheap first threshold exists to put a wild Pokémon on screen early; a
+  // find there would spend the moment on a Poké Ball.
+  it('the very first arrival is always a Pokémon', () => {
+    expect(spawnKind(fixedRNG(999), true)).toBe('pokemon')
+    expect(spawnKind(fixedRNG(999), false)).toBe('find')
+  })
+
+  it('a low draw is a Pokémon, so "nothing special" stays the ordinary outcome', () => {
+    expect(spawnKind(fixedRNG(0), false)).toBe('pokemon')
+    expect(spawnKind(fixedRNG(1_000 - EncounterBalance.findShare - 1), false)).toBe('pokemon')
+    expect(spawnKind(fixedRNG(1_000 - EncounterBalance.findShare), false)).toBe('find')
+  })
+
+  it('rolls a rarity, then what is inside it — never a Master Ball', () => {
+    expect(rollFind(fixedRNG(0, 0), 'f', NOW)).toEqual({
+      id: 'f',
+      item: 'pokeBall',
+      count: 1,
+      rarity: 'common',
+      appearedAt: NOW,
+    })
+    expect(rollFind(fixedRNG(999, 0), 'f', NOW)).toMatchObject({
+      item: 'ultraBall',
+      count: 3,
+      rarity: 'legendary',
+    })
+    for (let r = 0; r < 1000; r += 7) {
+      for (let w = 0; w < 6; w++) expect(rollFind(fixedRNG(r, w), 'f', NOW).item).not.toBe('masterBall')
+    }
+  })
+
+  const find = (over: Partial<WildFind> = {}): WildFind => ({
+    id: 'f1',
+    item: 'greatBall',
+    count: 2,
+    rarity: 'uncommon',
+    appearedAt: NOW,
+    ...over,
+  })
+
+  it('picking one up puts it in the bag and takes it out of the queue', () => {
+    const after = collectFind(
+      state({ inventory: { greatBall: 1 }, finds: [find(), find({ id: 'f2' })] }),
+      'f1',
+    )!
+    expect(after.inventory['greatBall']).toBe(3)
+    expect(after.finds.map((f) => f.id)).toEqual(['f2'])
+  })
+
+  it('a stale id picks up nothing', () => {
+    expect(collectFind(state({ finds: [find()] }), 'nope')).toBeUndefined()
+  })
+
+  it('picks everything up at once', () => {
+    const after = collectAllFinds(
+      state({ inventory: {}, finds: [find(), find({ id: 'f2', item: 'razzBerry', count: 1 })] }),
+    )
+    expect(after.finds).toEqual([])
+    expect(after.inventory).toEqual({ greatBall: 2, razzBerry: 1 })
+  })
+
+  it('finds wander off on the same clock as Pokémon', () => {
+    const expired = expireQueue(
+      state({ finds: [find({ rarity: 'common', appearedAt: NOW - ENCOUNTER_EXPIRY_MS })] }),
+      NOW,
+    )
+    expect(expired.finds).toEqual([])
+  })
+})
+
+describe('the full-queue notice', () => {
+  const filled = (n: number, armed: boolean) =>
+    state({ queueFullArmed: armed, wild: Array.from({ length: n }, (_, i) => wild({ id: `q${i}` })) })
+
+  // [trigger branch] An edge, not a level: a queue that sits full announces itself once, not on
+  // every refresh while it stays full.
+  it('fires once when the queue fills, not again while it stays full', () => {
+    const first = queueFullEdge(filled(EncounterBalance.maxQueue, true))
+    expect(first.fire).toBe(true)
+    const again = queueFullEdge(first.state)
+    expect(again.fire).toBe(false)
+  })
+
+  it('re-arms once a slot frees, and fires again on the next fill', () => {
+    const drained = queueFullEdge(filled(EncounterBalance.maxQueue - 1, false))
+    expect(drained).toMatchObject({ fire: false, state: { queueFullArmed: true } })
+    expect(
+      queueFullEdge({ ...drained.state, wild: filled(EncounterBalance.maxQueue, true).wild }).fire,
+    ).toBe(true)
+  })
+
+  it('counts finds toward the queue', () => {
+    const half = Math.floor(EncounterBalance.maxQueue / 2)
+    const mixed = state({
+      wild: Array.from({ length: half }, (_, i) => wild({ id: `q${i}` })),
+      finds: Array.from({ length: EncounterBalance.maxQueue - half }, (_, i) => ({
+        id: `f${i}`,
+        item: 'pokeBall' as const,
+        count: 1,
+        rarity: 'common' as const,
+        appearedAt: NOW,
+      })),
+    })
+    expect(queueFullEdge(mixed).fire).toBe(true)
   })
 })
 
@@ -365,16 +972,18 @@ describe('throwBall', () => {
     const before = withBall('pokeBall', 0, [wild()])
     const result = throwBall(before, 'w1', 'pokeBall', fixedRNG(0), NOW)
 
-    expect(result.outcome).toEqual({ kind: 'noBall' })
+    expect(result.outcome).toEqual({ kind: 'noItem' })
     expect(result.state.inventory['pokeBall']).toBe(0)
     expect(result.state.wild).toHaveLength(1)
   })
 
   it('spends the ball, files a dex entry and clears the encounter on a catch', () => {
-    const before = withBall('pokeBall', 2, [wild({ speciesID: 25, names: { en: 'Pikachu' } })])
+    const before = withBall('pokeBall', 2, [
+      wild({ speciesID: 25, names: { en: 'Pikachu' }, nature: 'jolly' }),
+    ])
     const result = throwBall(before, 'w1', 'pokeBall', fixedRNG(0), NOW)
 
-    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4 })
+    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 0 })
     expect(result.state.inventory['pokeBall']).toBe(1)
     expect(result.state.wild).toHaveLength(0)
     expect(result.state.dex).toHaveLength(1)
@@ -385,6 +994,7 @@ describe('throwBall', () => {
     expect(entry.finalID).toBe(25)
     expect(entry.chainOrder).toEqual([25])
     expect(entry.caughtAt).toBe(NOW)
+    expect(entry.nature).toBe('jolly')
     expect(entry.names).toEqual({ 25: { en: 'Pikachu' } })
   })
 
@@ -401,13 +1011,13 @@ describe('throwBall', () => {
 
   it('records the throw and keeps the encounter when the ball breaks and it stays', () => {
     const encounter = wild({ captureRate: 45, rarity: 'rare' })
-    const b = shakeThreshold(catchValue(45, 'pokeBall'))
-    // Three shake rolls, a failure, then a flee roll that misses.
+    const b = shakeThreshold(catchValue(45, 'pokeBall', moodOf(encounter)))
+    // Three shake rolls, a failure, then a reaction roll that clears both thresholds.
     const result = throwBall(
       withBall('pokeBall', 1, [encounter]),
       'w1',
       'pokeBall',
-      fixedRNG(0, 0, 0, b, 999),
+      sequence(0, 0, 0, b, STAY),
       NOW,
     )
 
@@ -419,30 +1029,17 @@ describe('throwBall', () => {
 
   it('removes the encounter when it flees after a failed throw', () => {
     const encounter = wild({ captureRate: 45, rarity: 'rare' })
-    const b = shakeThreshold(catchValue(45, 'pokeBall'))
-    const result = throwBall(withBall('pokeBall', 1, [encounter]), 'w1', 'pokeBall', fixedRNG(b, 0), NOW)
-
-    expect(result.outcome).toEqual({ kind: 'fled', shakes: 0 })
-    expect(result.state.wild).toHaveLength(0)
-    expect(result.state.dex).toHaveLength(0)
-  })
-
-  // [trigger branch] The flee roll must use the throw that just failed. Rolling it against the
-  // pre-increment count makes the first miss safer than the design says, and the difference is
-  // invisible unless the roll lands between the two chances.
-  it('rolls the flee chance including the throw that just failed', () => {
-    const encounter = wild({ captureRate: 45, rarity: 'rare' })
-    const b = shakeThreshold(catchValue(45, 'pokeBall'))
-    // 0.22 before this throw is counted, 0.30 after: a roll of 250 separates the two.
     const result = throwBall(
       withBall('pokeBall', 1, [encounter]),
       'w1',
       'pokeBall',
-      fixedRNG(b, 250),
+      sequence(MISS, 0),
       NOW,
     )
 
-    expect(result.outcome).toEqual({ kind: 'fled', shakes: 0 })
+    expect(result.outcome).toEqual({ kind: 'fled', shakes: 0, via: 'throw', trailed: false })
+    expect(result.state.wild).toHaveLength(0)
+    expect(result.state.dex).toHaveLength(0)
   })
 
   it('leaves the other encounters in the queue alone', () => {

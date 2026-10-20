@@ -12,7 +12,13 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
-import { EncounterBalance, StreakBalance } from './encounters.js'
+import {
+  EncounterBalance,
+  LegendaryBalance,
+  StealBalance,
+  StreakBalance,
+  TrailBalance,
+} from './encounters.js'
 import { decodeCompanionState } from './persistence.js'
 import { isTrainerID } from './trainers.js'
 
@@ -262,6 +268,12 @@ export function sanitized(state: CompanionState): CompanionState {
     delete next.eggTier
   }
 
+  // Both feed the merge's arithmetic: a hand-edited `1e30` would credit itself as growth.
+  const clampAll = (record: Record<string, number> | undefined) =>
+    Object.fromEntries(Object.entries(record ?? {}).map(([k, v]) => [k, clamp(v)]))
+  next.usedByDevice = clampAll(state.usedByDevice)
+  next.revision = clampAll(state.revision)
+
   next.encounterUsage = clamp(state.encounterUsage ?? 0)
   next.encountersSeen = clamp(state.encountersSeen ?? 0)
   next.milestonesAwarded = clamp(state.milestonesAwarded ?? 0)
@@ -271,7 +283,7 @@ export function sanitized(state: CompanionState): CompanionState {
   // that could ever be waiting to be delivered at once, which makes it the honest ceiling.
   next.owedLegendaryEncounters = Math.min(
     Math.max(0, state.owedLegendaryEncounters ?? 0),
-    EncounterBalance.maxQueue,
+    LegendaryBalance.maxOwed,
   )
 
   // Deduplicated and capped for the same reason the decoder does it: a repeated day would
@@ -283,11 +295,50 @@ export function sanitized(state: CompanionState): CompanionState {
   // carrying ten thousand of them would otherwise be drawn as ten thousand rows. `throws` and
   // `captureRate` are clamped because both feed the catch and flee formulas directly — an
   // imported `throws: 1e9` would make every encounter flee on the first miss.
-  next.wild = (state.wild ?? []).slice(0, EncounterBalance.maxQueue).map((encounter) => ({
-    ...encounter,
-    captureRate: Math.min(Math.max(1, encounter.captureRate), 255),
-    throws: Math.min(Math.max(0, encounter.throws), 99),
+  //
+  // Mood and temperament feed the catch and reaction formulas the same way, so they are clamped
+  // to their 0–100 range; `stolen` is the most one encounter can have taken, because a catch pays
+  // it back — an imported `1e15` would be a refund faucet.
+  const pct = (v: number) => Math.min(100, Math.max(0, v))
+  next.wild = (state.wild ?? []).slice(0, EncounterBalance.maxQueue).map((encounter) => {
+    const clean = {
+      ...encounter,
+      captureRate: Math.min(Math.max(1, encounter.captureRate), 255),
+      throws: Math.min(Math.max(0, encounter.throws), 99),
+    }
+    if (encounter.mood !== undefined) {
+      clean.mood = {
+        anger: pct(encounter.mood.anger),
+        nervousness: pct(encounter.mood.nervousness),
+        trust: pct(encounter.mood.trust),
+      }
+    }
+    if (encounter.temperament !== undefined) {
+      clean.temperament = {
+        aggression: pct(encounter.temperament.aggression),
+        skittishness: pct(encounter.temperament.skittishness),
+        appetite: pct(encounter.temperament.appetite),
+      }
+    }
+    if (encounter.stolen !== undefined) {
+      const ceiling = StealBalance.amount[encounter.rarity] * StealBalance.perEncounter
+      clean.stolen = Math.min(Math.max(0, encounter.stolen), ceiling)
+    }
+    if (encounter.trackedCount !== undefined) {
+      clean.trackedCount = Math.min(Math.max(0, encounter.trackedCount), TrailBalance.maxTracks)
+    }
+    return clean
+  })
+  // Finds share the queue's room; whatever the Pokémon leave is all they get.
+  next.finds = (state.finds ?? [])
+    .slice(0, Math.max(0, EncounterBalance.maxQueue - next.wild.length))
+    .map((find) => ({ ...find, count: Math.min(Math.max(1, find.count), 10) }))
+  next.legendaryTrail = (state.legendaryTrail ?? []).slice(-TrailBalance.maxEntries).map((entry) => ({
+    ...entry,
+    captureRate: Math.min(Math.max(1, entry.captureRate), 255),
+    trackedCount: Math.min(Math.max(0, entry.trackedCount), TrailBalance.maxTracks),
   }))
+  next.queueFullArmed = state.queueFullArmed ?? true
 
   // An unknown slug would render as a broken image on every repaint. Falling back to absent
   // (the roster default) is invisible and correct.
@@ -362,16 +413,21 @@ export function rebasedForThisDevice(
   return state
 }
 
-/** Keeps the higher tier per window: granted on either machine counts as granted. */
-export function mergedGrantTier(
-  a: Record<string, number>,
-  b: Record<string, number>,
-): Record<string, number> {
+/** The larger value per key: the merge of two grow-only counter maps. */
+export function perKeyMax(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
   const merged = { ...a }
   for (const [key, value] of Object.entries(b)) {
     merged[key] = Math.max(merged[key] ?? 0, value)
   }
   return merged
+}
+
+/** Keeps the higher tier per window: granted on either machine counts as granted. */
+export function mergedGrantTier(
+  a: Record<string, number>,
+  b: Record<string, number>,
+): Record<string, number> {
+  return perKeyMax(a, b)
 }
 
 export { freshCompanionState }

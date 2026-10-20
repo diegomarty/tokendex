@@ -18,10 +18,22 @@ import {
   type PokemonNature,
   RARITIES,
   type Rarity,
+  type Mood,
+  type Temperament,
+  type TrailEntry,
   type WildEncounter,
+  type WildFind,
   freshCompanionState,
+  pokemonTypes,
 } from './model.js'
-import { EncounterBalance, MilestoneBalance, StreakBalance } from './encounters.js'
+import {
+  EncounterBalance,
+  LegendaryBalance,
+  MilestoneBalance,
+  StreakBalance,
+  TrailBalance,
+  isFindableItem,
+} from './encounters.js'
 
 type Json = Record<string, unknown>
 
@@ -168,11 +180,89 @@ export function decodeWildEncounter(value: unknown): WildEncounter | undefined {
   }
   const names = lenientOptional(value, 'names', isStringRecord)
   if (names !== undefined) encounter.names = names
+  // Everything below is optional and dropped rather than defaulted when malformed: an absent mood
+  // reads as the initial mood for its temperament, which is the player-favourable direction — a
+  // corrupt value must never arrive as "furious".
+  const nature = lenientOptional(value, 'nature', isNature)
+  if (nature !== undefined) encounter.nature = nature
+  const temperament = decodeTemperament(value['temperament'])
+  if (temperament !== undefined) encounter.temperament = temperament
+  const mood = decodeMood(value['mood'])
+  if (mood !== undefined) encounter.mood = mood
+  if (value['primed'] === true) encounter.primed = true
+  const stolen = lenientOptional(value, 'stolen', isInt)
+  if (stolen !== undefined && stolen > 0) encounter.stolen = stolen
+  const trackedCount = lenientOptional(value, 'trackedCount', isInt)
+  if (trackedCount !== undefined && trackedCount > 0) encounter.trackedCount = trackedCount
+  const types = pokemonTypes(value['types'])
+  if (types !== undefined) encounter.types = types
   return encounter
 }
 
+const isPercent = (v: unknown): v is number => isNumber(v) && v >= 0 && v <= 100
+
+/** A 0–100 triple, or nothing: one field out of range drops the whole reading. */
+function decodeTemperament(value: unknown): Temperament | undefined {
+  if (!isObject(value)) return undefined
+  const { aggression, skittishness, appetite } = value
+  if (!isPercent(aggression) || !isPercent(skittishness) || !isPercent(appetite)) return undefined
+  return { aggression, skittishness, appetite }
+}
+
+function decodeMood(value: unknown): Mood | undefined {
+  if (!isObject(value)) return undefined
+  const { anger, nervousness, trust } = value
+  if (!isPercent(anger) || !isPercent(nervousness) || !isPercent(trust)) return undefined
+  return { anger, nervousness, trust }
+}
+
+/**
+ * An item lying in the queue. Only items that can actually be found are accepted — a hand-edited
+ * `masterBall` find would otherwise be a free Master Ball one click away.
+ */
+export function decodeWildFind(value: unknown): WildFind | undefined {
+  if (!isObject(value)) return undefined
+  const id = lenientOptional(value, 'id', isString)
+  const item = lenientOptional(value, 'item', isString)
+  const count = lenientOptional(value, 'count', isInt)
+  const rarity = lenientOptional(value, 'rarity', isRarity)
+  if (id === undefined || item === undefined || !isFindableItem(item) || rarity === undefined)
+    return undefined
+  if (count === undefined || count < 1 || count > 10) return undefined
+  return { id, item, count, rarity, appearedAt: lenient(value, 'appearedAt', isNumber, 0) }
+}
+
+/** A legendary that got away. Needs what it takes to bring the same Pokémon back. */
+export function decodeTrailEntry(value: unknown): TrailEntry | undefined {
+  if (!isObject(value)) return undefined
+  const id = lenientOptional(value, 'id', isString)
+  const speciesID = lenientOptional(value, 'speciesID', isInt)
+  const captureRate = lenientOptional(value, 'captureRate', isInt)
+  const lostAt = lenientOptional(value, 'lostAt', isNumber)
+  if (id === undefined || speciesID === undefined || captureRate === undefined || lostAt === undefined) {
+    return undefined
+  }
+  const entry: TrailEntry = {
+    id,
+    speciesID,
+    captureRate,
+    isShiny: lenient(value, 'isShiny', isBool, false),
+    trackedCount: Math.min(TrailBalance.maxTracks, Math.max(0, lenient(value, 'trackedCount', isInt, 0))),
+    lostAt,
+  }
+  const names = lenientOptional(value, 'names', isStringRecord)
+  if (names !== undefined) entry.names = names
+  const nature = lenientOptional(value, 'nature', isNature)
+  if (nature !== undefined) entry.nature = nature
+  const temperament = decodeTemperament(value['temperament'])
+  if (temperament !== undefined) entry.temperament = temperament
+  const types = pokemonTypes(value['types'])
+  if (types !== undefined) entry.types = types
+  return entry
+}
+
 /** `yyyy-MM-dd`, the only shape the streak rules can read. */
-const isDayKey = (v: unknown): v is string => isString(v) && /^\d{4}-\d{2}-\d{2}$/.test(v)
+export const isDayKey = (v: unknown): v is string => isString(v) && /^\d{4}-\d{2}-\d{2}$/.test(v)
 
 /**
  * Accrual days: shape-filtered, de-duplicated and capped at the window's width.
@@ -230,8 +320,26 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     accrualDays: decodeAccrualDays(value['accrualDays']),
     // Seeded rather than defaulted — see below.
     milestonesAwarded: 0,
-    owedLegendaryEncounters: Math.max(0, lenient(value, 'owedLegendaryEncounters', isInt, 0)),
+    owedLegendaryEncounters: Math.min(
+      LegendaryBalance.maxOwed,
+      Math.max(0, lenient(value, 'owedLegendaryEncounters', isInt, 0)),
+    ),
+    // Absent in a save from before sync: no attributed usage and no history yet, which is
+    // exactly what a merge must assume about it.
+    usedByDevice: lenient(value, 'usedByDevice', isNumberRecord, {}),
+    revision: lenient(value, 'revision', isNumberRecord, {}),
+    // Per-item isolation, as with the queue. Finds share the queue's room with the Pokémon.
+    finds: (Array.isArray(value['finds']) ? value['finds'] : [])
+      .map(decodeWildFind)
+      .filter((f): f is WildFind => f !== undefined),
+    legendaryTrail: (Array.isArray(value['legendaryTrail']) ? value['legendaryTrail'] : [])
+      .map(decodeTrailEntry)
+      .filter((e): e is TrailEntry => e !== undefined)
+      .slice(-TrailBalance.maxEntries),
+    // Absent means armed: a save from before the notice existed may announce its next fill.
+    queueFullArmed: lenient(value, 'queueFullArmed', isBool, true),
   }
+  state.finds = state.finds.slice(0, Math.max(0, EncounterBalance.maxQueue - state.wild.length))
 
   /**
    * The milestone ratchet is the one field where "absent" must not mean zero.

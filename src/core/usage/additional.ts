@@ -1,10 +1,11 @@
 /**
- * The SQLite-backed providers: OpenCode, Hermes, Cursor, Copilot and Kiro.
+ * The SQLite-backed providers: OpenCode, Hermes, Cursor, Copilot (CLI and VS Code) and Kiro.
  *
  * Two shapes live here. OpenCode, Hermes and Kiro are re-read in full on every scan, because
  * their stores are rewritten in place and have no append-only id to resume from. Cursor and
- * Copilot are **append-only**, so they share one incremental scanner keyed on a per-database
- * high-water mark (#157 unified the two copies, so a watermark fix cannot land in only one).
+ * both Copilot stores grow by row id, so they share one incremental scanner keyed on a
+ * per-database high-water mark (#157 unified the copies, so a watermark fix cannot land in
+ * only one).
  */
 
 import { promises as fs } from 'node:fs'
@@ -315,7 +316,7 @@ export async function hermesEntries(modifiedSince: number, roots?: string[]): Pr
   return entries
 }
 
-// MARK: - Incremental append-only stores (Cursor, Copilot)
+// MARK: - Incremental row-id stores (Cursor, Copilot)
 
 export interface IncrementalResult {
   entries: Entry[]
@@ -571,6 +572,106 @@ export async function copilotEntries(
         // `reasoning_tokens` is a breakdown of `output_tokens`, not an extra charge.
         output: intValue(row['output_tokens']),
         cacheWrite,
+        cacheRead,
+      })
+    },
+  })
+}
+
+// MARK: - Copilot in VS Code
+
+/**
+ * The Copilot Chat extension's own store, one per editor build. Copilot runs where the
+ * workspace runs, so a Remote-SSH/WSL server's data directory is a root as well.
+ */
+export function defaultCopilotVSCodeRoots(
+  configHome: string = AppPaths.configHome(),
+  home: string = AppPaths.home(),
+): string[] {
+  const extension = join('User', 'globalStorage', 'github.copilot-chat')
+  return [
+    join(configHome, 'Code', extension),
+    join(configHome, 'Code - Insiders', extension),
+    join(configHome, 'VSCodium', extension),
+    join(home, '.vscode-server', 'data', extension),
+    join(home, '.vscode-server-insiders', 'data', extension),
+  ]
+}
+
+/**
+ * How long a span must have been finished before it is read. The extension writes each span
+ * in its own transaction, children before their parent, so for a moment a Copilot CLI turn's
+ * `chat` spans exist without the `invoke_agent copilotcli` span that marks them as CLI usage.
+ */
+export const COPILOT_VSCODE_SETTLE_MS = 60_000
+
+/**
+ * Rows from the first unsettled span on are left for the next scan.
+ *
+ * Filtering the unsettled spans alone is not enough: the watermark is the highest row id
+ * returned, so a settled row inserted after an unsettled one would carry it past, and the
+ * unsettled row would never be read. Capping the range keeps every row below the watermark
+ * final.
+ *
+ * Only `chat` spans are counted — one per model call, which is also all the extension sums
+ * itself. `invoke_agent` spans carry the same tokens again as a per-turn total.
+ *
+ * A trace rooted in `invoke_agent copilotcli` is a Copilot CLI session run from the editor. Its
+ * `chat` spans are synthesised from the CLI's own usage events, which the CLI also writes to
+ * `~/.copilot/session-store.db` — the Copilot provider already counts them there.
+ */
+export function copilotVSCodeRowQuery(effectiveAfter: number, since: number, now: number): RowQuery {
+  return {
+    // The CLI traces are collected once, up front: a correlated `NOT EXISTS` per row re-scanned
+    // the whole table for every candidate, quadratic on a cold read of a week of spans.
+    sql: `SELECT s.rowid, s.span_id, s.start_time_ms, s.request_model, s.response_model,
+                 s.input_tokens, s.output_tokens, s.cached_tokens
+          FROM spans s
+          WHERE s.rowid > ?
+            AND s.rowid < COALESCE(
+              (SELECT MIN(rowid) FROM spans WHERE rowid > ? AND end_time_ms > ?), 9e18)
+            AND s.operation_name = 'chat'
+            AND s.start_time_ms >= ?
+            AND s.trace_id NOT IN (SELECT trace_id FROM spans WHERE agent_name = 'copilotcli')`,
+    params: [effectiveAfter, effectiveAfter, now - COPILOT_VSCODE_SETTLE_MS, Math.floor(since)],
+  }
+}
+
+/**
+ * Copilot in the editor, read from the OpenTelemetry spans the Copilot Chat extension keeps in
+ * `agent-traces.db`.
+ *
+ * The extension writes that store **only** when `github.copilot.chat.otel.dbSpanExporter.enabled`
+ * is on; otherwise it records no token counts anywhere on disk, and there is nothing local to
+ * read. It also prunes spans older than seven days and all but the latest hundred
+ * conversations, so the cache's held entries — not the store — are what keep the month.
+ */
+export async function copilotVSCodeEntries(
+  modifiedSince: number,
+  options: { roots?: string[]; afterRowIDByPath?: Record<string, number>; now?: number } = {},
+): Promise<IncrementalResult> {
+  const now = options.now ?? Date.now()
+  return scanIncrementalStores({
+    roots: options.roots ?? defaultCopilotVSCodeRoots(),
+    modifiedSince,
+    afterRowIDByPath: options.afterRowIDByPath ?? {},
+    databaseFor: (root) => databasePath(root, 'agent-traces.db', ['.db']),
+    maxRowIDSQL: 'SELECT MAX(rowid) FROM spans',
+    rowQuery: (effectiveAfter, since) => copilotVSCodeRowQuery(effectiveAfter, since, now),
+    parse: (row) => {
+      const spanID = stringValue(row['span_id'])
+      const date = doubleValue(row['start_time_ms'])
+      if (spanID === undefined || date === undefined) return undefined
+      const cacheRead = intValue(row['cached_tokens'])
+      return makeEntry({
+        // Span ids are random and global, unlike a row id, so the id needs no database in it
+        // and stays valid across a store the extension deleted and recreated.
+        id: `copilot_vscode|${spanID}`,
+        date,
+        model: stringValue(row['response_model']) ?? stringValue(row['request_model']) ?? 'unknown',
+        // `input_tokens` is the API's `prompt_tokens`, which already includes the cached part.
+        input: Math.max(0, intValue(row['input_tokens']) - cacheRead),
+        output: intValue(row['output_tokens']),
         cacheRead,
       })
     },

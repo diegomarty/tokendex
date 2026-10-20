@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { chooseBaseFromIndex, chooseBaseViaREST, type BaseSpecies } from '../src/core/pokeapi.js'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  PokeAPIClient,
+  chooseBaseFromIndex,
+  chooseBaseViaREST,
+  type BaseSpecies,
+} from '../src/core/pokeapi.js'
 
 const index: BaseSpecies[] = [
   { id: 1, captureRate: 45 }, // rare
@@ -125,4 +133,104 @@ describe('chooseBaseViaREST', () => {
     const p = provider({})
     expect(await chooseBaseViaREST(p, undefined, rng(0), 3)).toBeUndefined()
   })
+})
+
+describe('PokeAPIClient.wildSpecies', () => {
+  const species = {
+    capture_rate: 3,
+    is_legendary: true,
+    is_mythical: false,
+    base_happiness: 0,
+    names: [{ name: 'Mewtwo', language: { name: 'en' } }],
+  }
+  const pokemon = {
+    stats: [
+      { base_stat: 106, stat: { name: 'hp' } },
+      { base_stat: 110, stat: { name: 'attack' } },
+      { base_stat: 90, stat: { name: 'defense' } },
+      { base_stat: 154, stat: { name: 'special-attack' } },
+      { base_stat: 90, stat: { name: 'special-defense' } },
+      { base_stat: 130, stat: { name: 'speed' } },
+    ],
+    // Out of order on purpose: the slot, not the array position, says which type is primary.
+    types: [
+      { slot: 2, type: { name: 'flying' } },
+      { slot: 1, type: { name: 'bug' } },
+    ],
+  }
+  const respond = (body: unknown, ok = true) =>
+    Promise.resolve({ ok, status: ok ? 200 : 500, json: async () => body } as Response)
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads base stats and happiness alongside the species', async () => {
+    vi.stubGlobal('fetch', (url: string) =>
+      respond(url.includes('/pokemon-species/') ? species : pokemon),
+    )
+    const wild = await new PokeAPIClient(
+      join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json'),
+    ).wildSpecies(150)
+    expect(wild).toMatchObject({ rarity: 'legendary', baseHappiness: 0, types: ['bug', 'flying'] })
+    expect(wild.stats).toEqual({
+      hp: 106,
+      attack: 110,
+      defense: 90,
+      specialAttack: 154,
+      specialDefense: 90,
+      speed: 130,
+    })
+  })
+
+  // A type a newer PokéAPI adds (or a typo) must not reach the stylesheet as a class name.
+  it('drops a type this build does not know', async () => {
+    vi.stubGlobal('fetch', (url: string) =>
+      respond(
+        url.includes('/pokemon-species/')
+          ? species
+          : {
+              ...pokemon,
+              types: [
+                { slot: 1, type: { name: 'stellar' } },
+                { slot: 2, type: { name: 'fire' } },
+              ],
+            },
+      ),
+    )
+    const wild = await new PokeAPIClient(
+      join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json'),
+    ).wildSpecies(150)
+    expect(wild.types).toEqual(['fire'])
+  })
+
+  // [trigger branch] The stats only shape the temperament, which has a neutral fallback. A failing
+  // `/pokemon` must not throw: that would defer the encounter and count against the backoff.
+  it('still returns the species when the stats request fails', async () => {
+    vi.stubGlobal('fetch', (url: string) =>
+      url.includes('/pokemon-species/') ? respond(species) : Promise.reject(new Error('offline')),
+    )
+    const wild = await new PokeAPIClient(
+      join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json'),
+    ).wildSpecies(150)
+    expect(wild.rarity).toBe('legendary')
+    expect(wild.stats).toBeUndefined()
+  })
+
+  // [trigger branch] The stats only shape a temperament with a neutral fallback, so a hanging
+  // `/pokemon` must not hold the spawn for the whole request timeout while the species is ready.
+  it('gives up on slow stats quickly instead of holding the spawn', async () => {
+    vi.stubGlobal('fetch', (url: string, init?: { signal?: AbortSignal }) =>
+      url.includes('/pokemon-species/')
+        ? respond(species)
+        : new Promise((_, reject) =>
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))),
+          ),
+    )
+    const client = new PokeAPIClient(join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json'), {
+      statsTimeoutMs: 50,
+    })
+    const started = Date.now()
+    const wild = await client.wildSpecies(150)
+    expect(wild.stats).toBeUndefined()
+    expect(Date.now() - started).toBeLessThan(1_000)
+  }, 2_000)
 })

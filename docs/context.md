@@ -194,6 +194,16 @@ capture_rate, so both roll paths find zero candidates, the guarantee is never co
 buying another egg is gated behind having an active Pokémon. `sanitized()` drops it on load,
 and `canBuyEgg` refuses to sell it.
 
+**`sql.js` cannot see a `-wal`.** It opens a byte array, so a store in WAL mode read as of its
+last checkpoint — and a writer that stays connected checkpoints only every ~1000 pages. On the
+development machine, Copilot Chat's `session-store.db` was 4 KB of empty schema beside a 152 KB
+WAL holding every row. This hit every SQLite provider, not just one: upstream links the native
+`sqlite3`, which reads the WAL for free, so the gap exists only in the port. `wal.ts` folds the
+log in (salt and checksum per frame, committed transactions only) and `withDatabase` reads the
+WAL on both sides of the main file, using the pair only if the log did not move in between.
+`test/usage-sqlite-wal.test.ts` builds a real uncheckpointed WAL with `node:sqlite` — `sql.js`
+cannot produce one — and each of its guards was confirmed by removing it.
+
 ---
 
 ## 7. How to work on it
@@ -248,6 +258,84 @@ the extension quietly becomes obsolete.
 
 If you regenerate `src/core/i18n/strings.ts` from the Swift source, note that brand mentions
 were rebranded to "Tokendex" after extraction — the extractor will reintroduce the old name.
+
+### Where this port goes further than upstream
+
+Upstream has no equivalent for these; a sync must not "restore" upstream behaviour over them.
+
+- **Copilot in VS Code** (`copilot_vscode`, issue #2). Upstream reads only the Copilot CLI's
+  `assistant_usage_events`. The Copilot Chat extension writes no token counts to disk unless
+  `github.copilot.chat.otel.dbSpanExporter.enabled` is on; then it keeps OpenTelemetry spans in
+  `<userDir>/globalStorage/github.copilot-chat/agent-traces.db`. What the reader relies on was
+  read out of the extension's bundle (copilot-chat 0.66.0, built into VS Code), not from a
+  published contract:
+  - only `operation_name = 'chat'` is one model call; `invoke_agent` repeats the turn's total;
+  - `input_tokens` is `prompt_tokens`, cached part included, so `cached_tokens` is subtracted;
+  - a trace with an `invoke_agent` span whose `agent_name = 'copilotcli'` is a Copilot CLI
+    session run from the editor; its `chat` spans are synthesised from the CLI's own usage
+    events, which also land in `~/.copilot/session-store.db`, so they are left to `copilot`;
+  - each span is its own transaction, children before parent, hence the 60 s settle window
+    and the cap that keeps the watermark below the first unsettled row;
+  - the store prunes spans older than 7 days and all but the latest 100 conversations at
+    startup, so the cache merges on reset (`globalIDs`) instead of discarding.
+- **WAL reading** (`wal.ts`), see §6.
+
+### Pending review
+
+Open items from the issue #2 work. Each is a question to answer with real data, not a known
+bug.
+
+- [ ] **Verify `copilot_vscode` against a real `agent-traces.db`.** Enable the setting, use
+      Chat and agent mode, and compare Tokendex's numbers with the extension's own summary
+      (`github.copilot.chat.otel.exportAgentTracesDB` exports the store). The test fixtures
+      were built from the schema in the bundle, not from a captured store.
+- [ ] **Confirm the Copilot CLI double count is real and is avoided.** Run a Copilot CLI
+      session from the editor and check that it appears once under Copilot, not also under
+      Copilot (VS Code). If the in-editor CLI does *not* write `~/.copilot/session-store.db`,
+      the `copilotcli` exclusion under-counts instead and must go.
+- [ ] **Inline completions.** Check whether ghost-text completions emit `chat` spans at all. The
+      README only claims Chat and agent mode.
+- [ ] **Re-check the bundle on Copilot Chat updates.** `agent_name = 'copilotcli'`, the column
+      names and the pruning constants are internal. A changed schema reads as zero rows, not as
+      an error — the failure would be silent.
+- [ ] **Say when the data is unavailable** (issue #2's last acceptance criterion). Today it is
+      the README only. A hint that fires when Copilot Chat was used in the window but no
+      `agent-traces.db` exists would be precise; it must not be the red error banner, which
+      would sit there permanently for everyone with Copilot installed and the setting off.
+- [ ] **Premium requests** (the reporter's other possible meaning). Not in any local store
+      Tokendex can read; it would need the GitHub API, which breaks the local-only rule.
+- [ ] **Upstream commits since `PORTED-THROUGH` in the same reader file:** #187 (per-provider
+      additional scan folders, Copilot included), #238 (Kiro 2.20 JSONL) and #289 (estimated vs
+      unavailable cost). None is needed for issue #2; all three are unported.
+
+### Wild encounter overhaul — open items
+
+Mood (anger, nerves, trust), temperaments from base stats and nature, berries, attacks that
+steal tokens, item finds, the legendary trail and a 30-slot queue with a "full" notice landed on
+`fix/improvements-and-fixes`. The balance is pinned in `test/wild-encounters.test.ts` (`balance`),
+solved exactly through the engine; change a constant and that table says what it did.
+
+- [ ] **Play it in a real Extension Development Host.** The redesigned panel (battle screen,
+      shop, bag pockets, Pokédex device, trainer card) was reviewed in the bench — the real webview
+      bundle against real `buildPanelState` fixtures, dark and light, 280–920 px — and the throw
+      was recorded frame by frame. Not yet looked at: the feed and attack animations in motion,
+      a high contrast theme, and any of it inside VS Code itself.
+- [ ] **Measure the queue on a real save.** The steady state for a heavy user was estimated at
+      ~21 of 30; if it sits at 30 the "full" notice will fire after every expiry wave, and a
+      minimum interval (`lastQueueFullToastAt` was considered) becomes worth adding.
+- [ ] **Attack animation with the real move.** Deferred: it needs the move's localised name from
+      `/move/{slug}` (one more cached, non-blocking request per species). The attack line falls
+      back to "attacked you" today.
+- [ ] **Disk cache for base stats.** In memory only; one extra request per new species per
+      session. The types ride on the same `/pokemon/{id}` response, so they would be cached with
+      them.
+- [ ] **Terrains on old saves.** The scenery follows the primary type, which is kept from the
+      spawn on. Encounters queued before types existed have none and keep their rarity scenery
+      until they leave the queue; nothing backfills them, by choice — a request per queued
+      Pokémon for decoration.
+- [ ] **The wallet change on a real scan.** The `+12M` chip compares the balance with the last
+      panel the worker built. Check that a cold start (first panel) shows nothing, and how often
+      a heavy session shows one — every refresh that brought tokens in plays it.
 
 ---
 

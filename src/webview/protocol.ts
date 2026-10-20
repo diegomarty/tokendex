@@ -102,7 +102,7 @@ export interface PanelShopItem {
   actions: PanelShopAction[]
   owned: boolean
   /** Section the row renders under; titles come from `PanelStrings`. */
-  group: 'balls' | 'items' | 'eggs'
+  group: 'balls' | 'berries' | 'items' | 'eggs'
 }
 
 export interface PanelBagItem {
@@ -115,6 +115,8 @@ export interface PanelBagItem {
   count: number
   usable: boolean
   hint?: string
+  /** The bag pocket it lives in, as in the games. Decided by the core from the item kind. */
+  pocket: 'balls' | 'berries' | 'items'
 }
 
 /** A species cell in the Pokédex grid. */
@@ -125,6 +127,8 @@ export interface PanelDexSpecies {
   /** Backed only by the Pokémon being raised, so not permanent yet. */
   isRaising: boolean
   rarityText: string
+  /** Style token (`common`…`legendary`), never shown as text — `rarityText` is the label. */
+  rarity: string
 }
 
 /** A row in the catch log. */
@@ -164,6 +168,11 @@ export interface PanelWildEncounter {
   rarityText: string
   /** Style token (`common`...`legendary`), never shown as text — `rarityText` is the label. */
   rarity: string
+  /**
+   * Style token for the scenery it is met in: its primary type (`fire`, `water`…), or its rarity
+   * when the type is unknown. Never shown as text.
+   */
+  terrain: string
   isShiny: boolean
   /** When it appeared, already formatted for the locale. */
   appearedText: string
@@ -172,6 +181,73 @@ export interface PanelWildEncounter {
    * is worth the friction (rare, legendary or shiny); absent = Run needs no confirmation.
    */
   runConfirmText?: string
+  /** Nature and standout traits: "Adamant · fierce · skittish". Absent when there is none. */
+  temperamentText?: string
+  /** Anger, nerves and trust, as bars. Already measured and labelled by the core. */
+  meters: PanelMoodMeter[]
+  /** What a miss risks: "If it breaks free: flee 16% · attack 5%". */
+  riskText: string
+  /** The same risk in parts: the heading, then one part per reaction, each with its glyph key. */
+  risk: { heading: string; items: { key: 'flee' | 'attack'; text: string }[] }
+  /** A Razz Berry is waiting to boost the next ball. */
+  primedText?: string
+  /** It has taken tokens, and catching it gets them back. */
+  stolenText?: string
+  /**
+   * The same two facts as short status chips on its plate, the way the games show a status
+   * condition: `text` is the chip, `title` the sentence behind it. `key` is a style token.
+   */
+  statuses: { key: 'primed' | 'stolen'; text: string; title: string }[]
+}
+
+/** One mood bar. `tone` is a style token, never text — `label` is what is read. */
+export interface PanelMoodMeter {
+  key: 'anger' | 'nervousness' | 'trust'
+  label: string
+  /** 0..100. */
+  percent: number
+  tone: 'low' | 'mid' | 'high'
+}
+
+/** One berry that can be offered to the encounter on stage. */
+export interface PanelBerryOption {
+  /** BerryKind slug echoed back with the feed. */
+  kind: string
+  name: string
+  count: number
+  sprite: string
+  /** What it does, for the button's tooltip and accessible name. */
+  effectText: string
+}
+
+/** An item lying in the wild area, picked up with a click. */
+export interface PanelFind {
+  id: string
+  name: string
+  count: number
+  sprite?: string
+  emoji: string
+  /** Style token, like the encounters'. */
+  rarity: string
+  rarityText: string
+  /** The button's accessible name: "Pick up Poké Ball". */
+  label: string
+}
+
+/** A legendary that got away and can still be tracked back. */
+export interface PanelTrail {
+  id: string
+  speciesID: number
+  name: string
+  isShiny: boolean
+  expiresText: string
+  /** The button: "Track · 100M". */
+  trackText: string
+  priceText: string
+  /** Native confirmation copy, like a purchase's. */
+  confirmTitle: string
+  confirmLabel: string
+  enabled: boolean
 }
 
 /** One ball in the scene's rack. */
@@ -219,6 +295,8 @@ export interface PanelWild {
   encounters: PanelWildEncounter[]
   /** Home's banner line: "3 wild Pokémon are waiting". */
   waitingText: string
+  /** How many wait behind the one on stage, short enough for a menu cell: "+2 waiting". */
+  moreText?: string
   /** Label on the progress bar toward the next encounter: "1.2M to the next encounter". */
   nextText: string
   /** 0..100 toward the next encounter, the bar that label sits on. */
@@ -228,19 +306,32 @@ export interface PanelWild {
   balls: PanelBallOption[]
   /** Shown under the ball rack when every count is zero. */
   noBallsText: string
+  /** The berry row beside the balls, with its heading. Only berries the bag holds. */
+  berries: PanelBerryOption[]
+  finds: PanelFind[]
+  /** Heading over the finds strip; absent when there are none. */
+  findsText?: string
+  collectAllText: string
+  trail: PanelTrail[]
+  trailTitle: string
 }
 
 /**
- * The outcome of one throw, delivered as its own message — never on `PanelState`, which is
- * replayed to any surface that opens later and would replay the animation with it.
+ * The outcome of one turn — a throw or a berry — delivered as its own message, never on
+ * `PanelState`, which is replayed to any surface that opens later and would replay the animation
+ * with it.
  */
-export interface PanelThrowResult {
+export interface PanelEncounterResult {
   encounterID: string
-  kind: 'caught' | 'broke' | 'fled' | 'noBall' | 'unknownEncounter'
+  kind: 'caught' | 'broke' | 'fled' | 'fed' | 'noItem' | 'unknownEncounter'
   /** Wobbles the animation plays, 0..4. Decided by the core's dice, never re-rolled here. */
   shakes: number
   /** Pre-localised result line: "Gotcha! Pikachu was caught!". */
   resultText: string
+  /** Which animation to play: a ball arc, a berry toss, or none (nothing was used). */
+  animation: 'throw' | 'feed' | 'none'
+  /** It struck back this turn — the scene flashes. */
+  attacked: boolean
 }
 
 /** Tab labels. `dev` is a literal: that surface is developer-only and never localised. */
@@ -287,6 +378,11 @@ export interface PanelStrings {
   refreshInterval: string
   /** Shop section titles. */
   shopBalls: string
+  shopBerries: string
+  /** The battle menu: its prompt, the two item commands and the way back from either. */
+  commandPrompt: string
+  commandBalls: string
+  commandBack: string
   shopItems: string
   shopEggs: string
   /** The one line all three eggs share, under the Eggs heading rather than on every card. */
@@ -325,11 +421,24 @@ export interface PanelDev {
   groups: { title: string; controls: PanelDevControl[] }[]
 }
 
+export interface PanelWalletChange {
+  id: number
+  /** Signed and formatted: `+12.3M`, `−4M`. */
+  text: string
+  kind: 'gain' | 'loss'
+}
+
 export interface PanelState {
   totals: PanelTotals
   providers: PanelProvider[]
   companion?: PanelCompanion
   spendableText: string
+  /**
+   * How the spendable balance moved since the previous panel this host built — tokens earned, a
+   * purchase, an attack. `id` is unique per change, so a panel re-sent with the same change (a
+   * view reopened, a language switch) never plays it twice.
+   */
+  walletChange?: PanelWalletChange
   shop: PanelShopItem[]
   bag: PanelBagItem[]
   /** Species grid. */
@@ -366,6 +475,11 @@ export type PanelMessage =
   | { type: 'importSave' }
   | { type: 'dev'; id: string; value?: string }
   | { type: 'throw'; encounterID: string; ball: string }
+  | { type: 'feed'; encounterID: string; berry: string }
+  | { type: 'collect'; findID: string }
+  | { type: 'collectAll' }
+  /** Spends tokens, so the host confirms natively with this display-only copy, like `buy`. */
+  | { type: 'track'; trailID: string; title: string; priceText: string; confirmLabel?: string }
   /** `confirmText`/`confirmLabel`: display-only modal copy, present when the core asked for it. */
   | { type: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { type: 'setRefreshInterval'; seconds: number }

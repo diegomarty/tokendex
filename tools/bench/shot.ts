@@ -9,7 +9,7 @@
 
 import { PANEL_BODY_HTML } from '../../src/webview/shell.js'
 import { catchChance } from '../../src/core/companion/encounters.js'
-import { wildBadgeTooltip } from '../../src/core/i18n/dispatch.js'
+import { moreWaitingText, wildBadgeTooltip } from '../../src/core/i18n/dispatch.js'
 import { percent } from '../../src/core/tokenFormatter.js'
 import type { PanelState } from '../../src/webview/protocol.js'
 import { FIXTURES } from './fixtures.js'
@@ -29,6 +29,8 @@ document.body.insertAdjacentHTML('afterbegin', PANEL_BODY_HTML)
 
 const params = new URLSearchParams(location.search)
 const fixture = FIXTURES.find((f) => f.id === params.get('fixture')) ?? FIXTURES[0]!
+// For drivers that push a variation of the fixture (a new encounter, a balance change).
+;(window as unknown as { benchState: PanelState }).benchState = fixture.state
 
 /**
  * `?throw=<ballKind>&at=<ms>`: auto-click that ball once the scene is up and play the FULL
@@ -51,6 +53,10 @@ if (autoThrow !== null) {
         const next = JSON.parse(JSON.stringify(fixture.state)) as PanelState
         next.wild.encounters = next.wild.encounters.slice(1)
         next.wild.waitingText = wildBadgeTooltip('en', next.wild.encounters.length)
+        // Recomputed the way the core does: the count behind the one now on stage.
+        if (next.wild.encounters.length > 1)
+          next.wild.moreText = moreWaitingText('en', next.wild.encounters.length - 1)
+        else delete next.wild.moreText
         const staged = next.wild.encounters[0]
         for (const ball of next.wild.balls) {
           if (ball.kind === m.ball) ball.count = Math.max(0, ball.count - 1)
@@ -70,6 +76,8 @@ if (autoThrow !== null) {
                 kind: 'caught',
                 shakes: 4,
                 resultText: `Gotcha! ${head?.name ?? ''} was caught!`,
+                animation: 'throw',
+                attacked: false,
               },
             },
             '*',
@@ -88,7 +96,7 @@ script.addEventListener('load', () => {
   if (autoThrow !== null) {
     const at = Number(params.get('at') ?? 1400)
     setTimeout(() => {
-      document.querySelector<HTMLElement>(`.ball-rack [data-ball="${autoThrow}"]`)?.click()
+      document.querySelector<HTMLElement>(`[data-throw][data-ball="${autoThrow}"]`)?.click()
     }, at)
   }
 })

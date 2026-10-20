@@ -57,19 +57,71 @@ function px(selector: string, property: string): number {
 const SHEET = 96
 
 describe('the encounter scene', () => {
-  // The trainer is the human reference and the only sprite with no wiggle room: 80px is the
-  // Showdown sheet at native size. Everyone else is placed against where its feet land.
-  const ground = px('.wild-scene .trainer', 'top') + px('.wild-scene .trainer', 'height')
+  // A battle layout has two floors, as the games do: your side stands on its platform at the
+  // bottom left, the wild Pokémon on its own up and to the right. Each sprite must land *on* its
+  // platform — a later hand nudging one number would otherwise leave a creature hovering over,
+  // or sunk into, the ellipse it is drawn standing on.
 
-  it('stands the wild Pokémon on the trainer’s ground line', () => {
-    expect(px('.wild-mon', 'top') + px('.wild-mon', 'height')).toBe(ground)
+  /** The vertical band a platform covers, from its top edge down. */
+  function band(selector: string, top: number): { from: number; to: number } {
+    return { from: top, to: top + px(selector, 'height') }
+  }
+
+  // The trainer is the human reference and the only sprite with no wiggle room: 80px is the
+  // Showdown sheet at native size. Your side is anchored to the bottom, so the line is a bottom.
+  it('stands the companion on the trainer’s ground line', () => {
+    expect(px('.companion-mon', 'bottom')).toBe(px('.wild-scene .trainer', 'bottom'))
   })
 
-  // [trigger branch] The companion is the sprite whose box does NOT end at its feet — the
-  // still sheet pads the art — so it is the one a later nudge is most likely to lift off the
-  // floor. Its container bottom is the line; the compensation lives on the image.
-  it('stands the companion on the trainer’s ground line', () => {
-    expect(px('.companion-mon', 'top') + px('.companion-mon', 'height')).toBe(ground)
+  // Measured from the scene's bottom edge: the platform's band is [bottom, bottom + height].
+  it('puts your side’s feet on your platform', () => {
+    const feet = px('.wild-scene .trainer', 'bottom')
+    const from = px('.pad-player', 'bottom')
+    expect(feet).toBeGreaterThanOrEqual(from)
+    expect(feet).toBeLessThanOrEqual(from + px('.pad-player', 'height'))
+  })
+
+  // [trigger branch] The wild side is top-anchored: its feet are where its box ends.
+  it('puts the wild Pokémon’s feet on its platform', () => {
+    const feet = px('.wild-mon', 'top') + px('.wild-mon', 'height')
+    const pad = band('.pad-wild', px('.pad-wild', 'top'))
+    expect(feet).toBeGreaterThanOrEqual(pad.from)
+    expect(feet).toBeLessThanOrEqual(pad.to)
+  })
+
+  // [trigger branch] Centred on its platform, not just above it. The box used to be anchored at
+  // `right: 7%` and sized by the sprite, so its centre moved with every frame width while the
+  // platform's stayed put: a slim Scyther stood off to the right edge of its ellipse. Same right
+  // edge and same width as the platform is the one arrangement whose centres agree for any
+  // sprite and any panel width.
+  it('centres the wild Pokémon on its platform', () => {
+    expect(rule('.wild-mon')['right']).toBe(rule('.pad-wild')['right'])
+    expect(px('.wild-mon', 'width')).toBe(px('.pad-wild', 'width'))
+    expect(rule('.wild-mon')['justify-content']).toBe('center')
+  })
+
+  // [trigger branch] The wild side's platform is ground, not sky. With the horizon at 62% it sat
+  // a fifth of the scene above the grass line — an ellipse of turf floating in the air. The
+  // horizon is a registered property (terrains interpolate it), so its default is the
+  // `initial-value` of that registration.
+  it('puts the horizon above the wild Pokémon’s platform', () => {
+    const declared = /@property --horizon\s*\{[^}]*initial-value:\s*(\d+)%/.exec(CSS)?.[1]
+    expect(declared, '@property --horizon { initial-value }').toBeDefined()
+    const horizon = Number(declared) / 100
+    expect(horizon * px('.wild-scene', 'height')).toBeLessThanOrEqual(px('.pad-wild', 'top'))
+    expect(horizon * px('.battle .wild-scene.has-wild', 'height')).toBeLessThanOrEqual(
+      px('.battle .wild-scene.has-wild .pad-wild', 'top'),
+    )
+  })
+
+  // The narrow layout moves the wild side down, below its plate. It has to move the platform
+  // with it, or the Pokémon steps off.
+  it('keeps the wild Pokémon on its platform in a narrow sidebar', () => {
+    const feet = px('.battle .wild-scene.has-wild .wild-mon', 'top') + px('.wild-mon', 'height')
+    const pad = band('.pad-wild', px('.battle .wild-scene.has-wild .pad-wild', 'top'))
+    expect(feet).toBeGreaterThanOrEqual(pad.from)
+    expect(feet).toBeLessThanOrEqual(pad.to)
+    expect(px('.battle .wild-scene.has-wild', 'height')).toBeGreaterThan(pad.to)
   })
 
   // [trigger branch] The follower is the sprite that was NOT native-sized — a 48px square,
@@ -92,16 +144,17 @@ describe('the encounter scene', () => {
 
   it('gives the companion the whole sheet to stand in', () => {
     // The box is the 96px sheet the frames are drawn on, so the widest of them (Wailord's
-    // 103px) is centred rather than cornered, and the ground line arithmetic above stays one
-    // subtraction rather than a per-species table.
+    // 103px) is centred rather than cornered.
     expect(px('.companion-mon', 'width')).toBe(SHEET)
     expect(px('.companion-mon', 'height')).toBe(SHEET)
   })
 
   it('leaves the quiet scene room for a full-size follower', () => {
-    // No rack, no title — just the team standing there — so this is the short scene and the
-    // one that would clip a tall companion. It has to clear the ground line, not just reach it.
-    expect(px('.wild-scene:not(.has-wild)', 'min-height')).toBeGreaterThan(ground)
+    // No wild side — just the team standing there — so this is the short scene and the one
+    // that would clip a tall companion: the sheet, standing on the line, has to fit.
+    expect(px('.wild-scene:not(.has-wild)', 'height')).toBeGreaterThan(
+      px('.companion-mon', 'bottom') + SHEET,
+    )
   })
 })
 
@@ -114,5 +167,21 @@ describe('the compact card’s companion', () => {
     expect(SHEET % size).toBe(0)
     expect(px('body.compact .stage img', 'height')).toBe(size)
     expect(px('body.compact .stage', 'width')).toBe(size)
+  })
+})
+
+describe('the battle menu', () => {
+  // Item sprites are drawn on a 30px canvas. Both menu levels show them at that native size —
+  // the only one `pixelated` is exact at — so stepping from the commands into Balls or Berries
+  // never changes the size of the icon under the cursor.
+  const ITEM_SHEET = 30
+
+  it('draws the commands’ icons at the size of the items behind them', () => {
+    expect(px('.command-icon', 'width')).toBe(px('.command.item img', 'width'))
+    expect(px('.command-icon', 'height')).toBe(px('.command.item img', 'height'))
+    expect(px('.command.item img', 'width')).toBe(ITEM_SHEET)
+    // The balls' row too: the same sprites, so the same size.
+    expect(px('.ball-sprite img', 'width')).toBe(ITEM_SHEET)
+    expect(px('.ball-sprite img', 'height')).toBe(ITEM_SHEET)
   })
 })
