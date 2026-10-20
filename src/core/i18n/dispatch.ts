@@ -5,8 +5,8 @@
  * flat four-way tables.
  */
 
-import type { AppLanguage, BallKind, ItemKind, Rarity } from '../companion/model.js'
-import { Pokeball, RareCandy } from '../companion/model.js'
+import type { AppLanguage, BallKind, BerryKind, ItemKind, Rarity } from '../companion/model.js'
+import { Pokeball, RareCandy, isBallKind } from '../companion/model.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
 
@@ -128,6 +128,12 @@ export function itemName(lang: AppLanguage, kind: ItemKind): string {
       return t(lang, '하이퍼볼', 'Ultra Ball', 'ハイパーボール', 'Ultra Ball')
     case 'masterBall':
       return t(lang, '마스터볼', 'Master Ball', 'マスターボール', 'Master Ball')
+    case 'oranBerry':
+      return t(lang, '오랭열매', 'Oran Berry', 'オレンのみ', 'Baya Aranja')
+    case 'nanabBerry':
+      return t(lang, '나나열매', 'Nanab Berry', 'ナナのみ', 'Baya Latano')
+    case 'razzBerry':
+      return t(lang, '라즈열매', 'Razz Berry', 'ズリのみ', 'Baya Frambu')
   }
 }
 
@@ -241,6 +247,32 @@ export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
         'Never fails. Save it for a legendary.',
         'かならずつかまえられます。伝説のために取っておきましょう。',
         'Nunca falla. Guárdala para un legendario.',
+      )
+    // Berries say what they do to the Pokémon, not by how much: the effect scales with each
+    // species' appetite, so any figure here would be wrong for most of them.
+    case 'oranBerry':
+      return t(
+        lang,
+        '야생 포켓몬에게 주면 화가 가라앉고 경계를 풀어요.',
+        'Give it to a wild Pokémon to calm its anger and earn its trust.',
+        '野生のポケモンにあげると、怒りがおさまり心を許します。',
+        'Dásela a un Pokémon salvaje para calmar su enfado y ganarte su confianza.',
+      )
+    case 'nanabBerry':
+      return t(
+        lang,
+        '야생 포켓몬에게 주면 긴장이 풀려서 잘 도망가지 않아요.',
+        'Give it to a wild Pokémon to settle its nerves, so it is less likely to flee.',
+        '野生のポケモンにあげると、落ち着いて逃げにくくなります。',
+        'Dásela a un Pokémon salvaje para calmar sus nervios: huirá con menos facilidad.',
+      )
+    case 'razzBerry':
+      return t(
+        lang,
+        '야생 포켓몬에게 주면 다음에 던지는 볼이 잘 잡혀요.',
+        'Give it to a wild Pokémon and your next ball catches more easily.',
+        '野生のポケモンにあげると、次に投げるボールでつかまえやすくなります。',
+        'Dásela a un Pokémon salvaje y tu siguiente ball capturará con más facilidad.',
       )
   }
 }
@@ -380,6 +412,17 @@ export const refreshIntervalLabel = (lang: AppLanguage): string =>
 
 export const shopGroupBalls = (lang: AppLanguage): string =>
   t(lang, '몬스터볼', 'Poké Balls', 'ボール', 'Poké Balls')
+
+/** The dialog box's prompt while the battle menu waits for a command, as the games ask it. */
+export const commandPrompt = (lang: AppLanguage): string =>
+  t(lang, '무엇을 할까?', 'What will you do?', 'どうする？', '¿Qué vas a hacer?')
+
+export const commandBalls = (lang: AppLanguage): string => t(lang, '볼', 'Balls', 'ボール', 'Balls')
+
+export const commandBack = (lang: AppLanguage): string => t(lang, '뒤로', 'Back', 'もどる', 'Atrás')
+
+export const shopGroupBerries = (lang: AppLanguage): string =>
+  t(lang, '열매', 'Berries', 'きのみ', 'Bayas')
 
 export const shopGroupItems = (lang: AppLanguage): string => t(lang, '도구', 'Items', 'どうぐ', 'Objetos')
 
@@ -620,6 +663,394 @@ export function fledText(lang: AppLanguage, name: string): string {
   )
 }
 
+/**
+ * The scene's result line for one turn, pre-localised — the webview never composes text. Present
+ * tense theatre, matching the games: "Gotcha!", "It broke free!", "It fled…", with whatever the
+ * Pokémon did in reply appended as its own sentence.
+ *
+ * The outcome is taken structurally, like `CelebrationEvent`, so this module stays free of the
+ * encounter engine.
+ */
+export function turnResultText(
+  lang: AppLanguage,
+  outcome:
+    | { kind: 'caught'; refunded: number }
+    | { kind: 'broke'; shakes: number; attack?: { stolen: number } }
+    | { kind: 'fed'; berry: BerryKind; attack?: { stolen: number } }
+    | { kind: 'fled'; trailed: boolean }
+    | { kind: 'noItem' }
+    | { kind: 'unknownEncounter' },
+  context: { name: string; isShiny: boolean; item: ItemKind; trailHours: number },
+): string {
+  const attack = (a: { stolen: number } | undefined) =>
+    a === undefined
+      ? ''
+      : ` ${attackedText(lang, context.name, a.stolen > 0 ? compact(a.stolen) : undefined)}`
+  switch (outcome.kind) {
+    case 'caught': {
+      const line = celebrationText(lang, {
+        kind: 'wildCaught',
+        name: context.name,
+        isShiny: context.isShiny,
+      })
+      return outcome.refunded > 0 ? `${line} ${refundedText(lang, compact(outcome.refunded))}` : line
+    }
+    case 'broke':
+      return `${brokeFreeText(lang, outcome.shakes)}${attack(outcome.attack)}`
+    case 'fed':
+      return `${fedText(lang, context.name, outcome.berry)}${attack(outcome.attack)}`
+    case 'fled': {
+      const line = fledText(lang, context.name)
+      return outcome.trailed ? `${line} ${trailLeftText(lang, context.trailHours)}` : line
+    }
+    case 'noItem':
+      return isBallKind(context.item)
+        ? wildNoBallsText(lang)
+        : noBerryText(lang, itemName(lang, context.item))
+    case 'unknownEncounter':
+      return '' // the state push already removed the scene
+  }
+}
+
+/** The trail line added to a legendary's flee: it can still be tracked, and for how long. */
+export function trailLeftText(lang: AppLanguage, hours: number): string {
+  const days = Math.round(hours / 24)
+  return t(
+    lang,
+    `발자국이 ${days}일 동안 남아 있어요.`,
+    `Its tracks will stay for ${days} days.`,
+    `足あとが${days}日のこっています。`,
+    `Su rastro seguirá ${days} días.`,
+  )
+}
+
+/** It struck back. `stolen` is already formatted; empty when the wallet had nothing to take. */
+export function attackedText(lang: AppLanguage, name: string, stolen: string | undefined): string {
+  if (stolen === undefined) {
+    return t(
+      lang,
+      `야생 ${name}의 공격! 하지만 가져갈 게 없었어요.`,
+      `The wild ${name} attacked! But it found nothing to take.`,
+      `やせいの${name}のこうげき！でも、とれるものはなかった。`,
+      `¡El ${name} salvaje te ha atacado! Pero no encontró nada que llevarse.`,
+    )
+  }
+  return t(
+    lang,
+    `야생 ${name}의 공격! 토큰 ${stolen}을(를) 빼앗겼어요.`,
+    `The wild ${name} attacked! It took ${stolen} tokens.`,
+    `やせいの${name}のこうげき！トークンを${stolen}とられた。`,
+    `¡El ${name} salvaje te ha atacado! Se ha llevado ${stolen} tokens.`,
+  )
+}
+
+/** What a berry did, as the scene's result line. */
+export function fedText(lang: AppLanguage, name: string, berry: BerryKind): string {
+  switch (berry) {
+    case 'oranBerry':
+      return t(
+        lang,
+        `${name}은(는) 오랭열매를 먹고 진정했어요.`,
+        `${name} ate the Oran Berry and calmed down.`,
+        `${name}はオレンのみを食べて落ち着いた。`,
+        `${name} se ha comido la Baya Aranja y se ha calmado.`,
+      )
+    case 'nanabBerry':
+      return t(
+        lang,
+        `${name}은(는) 나나열매를 먹고 긴장이 풀렸어요.`,
+        `${name} ate the Nanab Berry and settled down.`,
+        `${name}はナナのみを食べてリラックスした。`,
+        `${name} se ha comido la Baya Latano y está más tranquilo.`,
+      )
+    case 'razzBerry':
+      return t(
+        lang,
+        `${name}은(는) 라즈열매를 먹었어요. 다음 볼이 잘 잡혀요!`,
+        `${name} ate the Razz Berry. Your next ball will catch more easily!`,
+        `${name}はズリのみを食べた。次のボールでつかまえやすい！`,
+        `${name} se ha comido la Baya Frambu. ¡Tu próxima ball capturará mejor!`,
+      )
+  }
+}
+
+/** The bag held none of the berry that was offered. */
+export function noBerryText(lang: AppLanguage, berryName: string): string {
+  return t(
+    lang,
+    `${berryName}이(가) 없어요.`,
+    `You have no ${berryName} left.`,
+    `${berryName}がありません。`,
+    `No te queda ninguna ${berryName}.`,
+  )
+}
+
+/** Tokens a catch paid back, appended to the catch line. */
+export function refundedText(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `빼앗긴 토큰 ${amount}을(를) 되찾았어요.`,
+    `You got your ${amount} tokens back.`,
+    `とられたトークン${amount}をとりかえした。`,
+    `Has recuperado tus ${amount} tokens.`,
+  )
+}
+
+/**
+ * The encounter's character in a few words: its nature and whichever traits stand out. The
+ * thresholds are the same ones the meters' tones use, so the words and the bars agree.
+ */
+export function temperamentText(
+  lang: AppLanguage,
+  natureLabel: string | undefined,
+  traits: { aggressive: boolean; gentle: boolean; skittish: boolean; steady: boolean; hungry: boolean },
+): string {
+  const words: string[] = []
+  if (natureLabel !== undefined) words.push(natureLabel)
+  if (traits.aggressive) words.push(t(lang, '사나움', 'fierce', 'あらっぽい', 'fiero'))
+  if (traits.gentle) words.push(t(lang, '온화함', 'mild-tempered', 'おだやか', 'apacible'))
+  if (traits.skittish) words.push(t(lang, '겁이 많음', 'skittish', 'びくびく', 'asustadizo'))
+  if (traits.steady) words.push(t(lang, '침착함', 'unflappable', 'どっしり', 'impasible'))
+  if (traits.hungry) words.push(t(lang, '먹보', 'hungry', 'くいしんぼう', 'glotón'))
+  return words.join(' · ')
+}
+
+export function moodMeterLabel(lang: AppLanguage, meter: 'anger' | 'nervousness' | 'trust'): string {
+  switch (meter) {
+    case 'anger':
+      return t(lang, '분노', 'Anger', 'いかり', 'Enfado')
+    case 'nervousness':
+      return t(lang, '긴장', 'Nerves', 'きんちょう', 'Nervios')
+    case 'trust':
+      return t(lang, '신뢰', 'Trust', 'しんらい', 'Confianza')
+  }
+}
+
+/** What a miss risks, from the same permille the reaction roll is held to. */
+export function riskText(lang: AppLanguage, flee: string, attack: string): string {
+  return `${riskHeading(lang)}${t(lang, ': ', ': ', '：', ': ')}${riskFlee(lang, flee)} · ${riskAttack(lang, attack)}`
+}
+
+/** The parts of `riskText`, for the dialog that leads each reaction with its own glyph. */
+export const riskHeading = (lang: AppLanguage): string =>
+  t(lang, '볼에서 나오면', 'If it breaks free', 'ボールから出たら', 'Si se libera')
+
+export const riskFlee = (lang: AppLanguage, flee: string): string =>
+  t(lang, `도망 ${flee}`, `flee ${flee}`, `にげる ${flee}`, `huida ${flee}`)
+
+export const riskAttack = (lang: AppLanguage, attack: string): string =>
+  t(lang, `공격 ${attack}`, `attack ${attack}`, `こうげき ${attack}`, `ataque ${attack}`)
+
+/** The Razz Berry's status chip on the wild plate. */
+export function primedBadge(lang: AppLanguage): string {
+  return t(lang, '라즈열매', 'Razz', 'ズリのみ', 'Frambu')
+}
+
+/** The stolen-tokens status chip: the amount, as a loss. */
+export function stolenBadge(lang: AppLanguage, amount: string): string {
+  return t(lang, `−${amount}`, `−${amount}`, `−${amount}`, `−${amount}`)
+}
+
+/** Behind the one on stage: a count, short enough for a menu cell. */
+export function moreWaitingText(lang: AppLanguage, count: number): string {
+  return t(lang, `+${count} 대기 중`, `+${count} waiting`, `+${count}匹 まち`, `+${count} esperando`)
+}
+
+export function primedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '라즈열매: 다음 볼이 잘 잡혀요',
+    'Razz Berry: your next ball catches more easily',
+    'ズリのみ：次のボールでつかまえやすい',
+    'Baya Frambu: tu próxima ball captura mejor',
+  )
+}
+
+export function stolenText(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `토큰 ${amount}을(를) 가져갔어요 — 잡으면 돌려받아요`,
+    `Has taken ${amount} tokens — catch it to get them back`,
+    `トークンを${amount}とった — つかまえれば取り返せる`,
+    `Se ha llevado ${amount} tokens — captúralo para recuperarlos`,
+  )
+}
+
+/** Shown in the bag: berries are not used from there. */
+export function berryBagHint(lang: AppLanguage): string {
+  return t(
+    lang,
+    '야생 포켓몬을 만났을 때 사용해요.',
+    'Use it during a wild encounter.',
+    '野生のポケモンに出会ったときに使います。',
+    'Úsala durante un encuentro salvaje.',
+  )
+}
+
+/** The finds strip's heading: items lying in the wild area. */
+export function findsText(lang: AppLanguage, count: number): string {
+  return t(
+    lang,
+    `아이템 ${count}개를 발견했어요`,
+    count === 1 ? 'An item turned up' : `${count} items turned up`,
+    `アイテムを${count}個見つけた`,
+    count === 1 ? 'Has encontrado un objeto' : `Has encontrado ${count} objetos`,
+  )
+}
+
+export function collectLabel(lang: AppLanguage, itemName: string): string {
+  return t(lang, `${itemName} 줍기`, `Pick up ${itemName}`, `${itemName}をひろう`, `Recoger ${itemName}`)
+}
+
+export function collectAllLabel(lang: AppLanguage): string {
+  return t(lang, '모두 줍기', 'Pick up all', 'ぜんぶひろう', 'Recoger todo')
+}
+
+export function trailTitle(lang: AppLanguage): string {
+  return t(
+    lang,
+    '놓친 전설의 발자국',
+    'Tracks of legendaries that got away',
+    'にげた伝説の足あと',
+    'Rastro de legendarios que se escaparon',
+  )
+}
+
+/** How long a trail stays warm. `hours` is rounded up so "0 h" never shows while it is still there. */
+export function trailExpiresText(lang: AppLanguage, hours: number): string {
+  const h = Math.max(1, Math.ceil(hours))
+  return t(lang, `${h}시간 남음`, `${h} h left`, `のこり${h}時間`, `Quedan ${h} h`)
+}
+
+export function trackLabel(lang: AppLanguage, price: string): string {
+  return t(lang, `추적 · ${price}`, `Track · ${price}`, `追跡 · ${price}`, `Rastrear · ${price}`)
+}
+
+export function trackConfirmLabel(lang: AppLanguage): string {
+  return t(lang, '추적하기', 'Track it', '追跡する', 'Rastrear')
+}
+
+export function trackConfirmTitle(lang: AppLanguage, name: string): string {
+  return t(
+    lang,
+    `${name}을(를) 다시 찾아갈까요?`,
+    `Track down ${name} again?`,
+    `${name}をもう一度さがしますか？`,
+    `¿Rastrear de nuevo a ${name}?`,
+  )
+}
+
+export function trackNoRoomText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '야생 구역이 가득 찼어요 — 먼저 자리를 만들어 주세요.',
+    'Your wild area is full — make some room first.',
+    '野生エリアがいっぱいです — 先に空きを作りましょう。',
+    'Tu zona salvaje está llena — haz hueco primero.',
+  )
+}
+
+export function trackCantAffordText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '토큰이 부족해요.',
+    'Not enough tokens.',
+    'トークンが足りません。',
+    'No tienes suficientes tokens.',
+  )
+}
+
+export function trackExpiredText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '발자국이 사라져 버렸어요.',
+    'The tracks have gone cold.',
+    '足あとが消えてしまった。',
+    'El rastro se ha enfriado.',
+  )
+}
+
+// MARK: - Save import
+
+/** The import dialog's headline: where the save comes from, when, and how much it holds. */
+export function importSourceText(
+  lang: AppLanguage,
+  device: string | undefined,
+  exportedAt: number,
+  dexCount: number,
+): string {
+  // A calendar date, written the same way in every language: the export stamp is a fact to
+  // compare against, not prose.
+  const date = exportedAt > 0 ? new Date(exportedAt).toISOString().slice(0, 10) : undefined
+  const from = device === undefined || device === '' ? undefined : `"${device}"`
+  if (from === undefined) {
+    return t(
+      lang,
+      `다른 기기의 세이브예요${date === undefined ? '' : ` (${date})`}. 도감 ${dexCount}마리.`,
+      `This save comes from another device${date === undefined ? '' : `, exported ${date}`}, with ${dexCount} in the Pokédex.`,
+      `ほかの端末のセーブです${date === undefined ? '' : `（${date}）`}。図鑑は${dexCount}匹。`,
+      `Esta partida viene de otro dispositivo${date === undefined ? '' : `, exportada el ${date}`}, con ${dexCount} en la Pokédex.`,
+    )
+  }
+  return t(
+    lang,
+    `${from}의 세이브예요${date === undefined ? '' : ` (${date})`}. 도감 ${dexCount}마리.`,
+    `This save comes from ${from}${date === undefined ? '' : `, exported ${date}`}, with ${dexCount} in the Pokédex.`,
+    `${from}のセーブです${date === undefined ? '' : `（${date}）`}。図鑑は${dexCount}匹。`,
+    `Esta partida viene de ${from}${date === undefined ? '' : `, exportada el ${date}`}, con ${dexCount} en la Pokédex.`,
+  )
+}
+
+/** What Merge and Replace each do, and what stays on this device either way. */
+export function importChoiceDetail(lang: AppLanguage): string {
+  return t(
+    lang,
+    '합치기: 두 도감과 두 기기의 사용량을 모두 지켜요. 동료, 가방, 잔액은 더 진행된 세이브를 따라가요. ' +
+      '바꾸기: 이 기기의 진행을 세이브의 것으로 바꿔요.\n\n어느 쪽이든 오늘의 사용량과 표시 언어는 이 기기의 것을 그대로 두고, 먼저 백업을 저장해요.',
+    "Merge keeps both Pokédexes and all the usage either device counted; the companion, bag and balance continue from whichever save has progressed more. Replace discards this device's progress for the save's.\n\nEither way, today's usage counter and the display language stay as they are on this device, and a backup of your current state is saved first.",
+    '合わせる：両方の図鑑と、両方の端末で数えた使用量をすべて残します。相棒・バッグ・残高は、より進んだセーブから続きます。' +
+      '置きかえる：この端末の進行をセーブのものに置きかえます。\n\nどちらでも、今日の使用量と表示言語はこの端末のままで、先にバックアップを保存します。',
+    'Combinar conserva las dos Pokédex y todo el uso que contó cada dispositivo; el compañero, la bolsa y el saldo siguen desde la partida que haya avanzado más. Reemplazar descarta el progreso de este dispositivo por el de la partida.\n\nEn ambos casos, el uso de hoy y el idioma se quedan como están en este dispositivo, y antes se guarda una copia de seguridad.',
+  )
+}
+
+export function importMergeLabel(lang: AppLanguage): string {
+  return t(lang, '합치기', 'Merge', '合わせる', 'Combinar')
+}
+
+export function importReplaceLabel(lang: AppLanguage): string {
+  return t(lang, '바꾸기', 'Replace', '置きかえる', 'Reemplazar')
+}
+
+export function importedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '세이브를 불러왔어요.',
+    'Save imported.',
+    'セーブを読みこみました。',
+    'Partida importada.',
+  )
+}
+
+/** After a merge: what was gained, and whose companion carries on. */
+export function mergedText(lang: AppLanguage, dexAdded: number, narrative: 'local' | 'remote'): string {
+  return narrative === 'local'
+    ? t(
+        lang,
+        `세이브를 합쳤어요: 도감 ${dexAdded}마리 추가. 이 기기의 동료가 계속해요.`,
+        `Saves merged: ${dexAdded} new in the Pokédex. Your companion here continues.`,
+        `セーブを合わせました：図鑑に${dexAdded}匹追加。この端末の相棒が続けます。`,
+        `Partidas combinadas: ${dexAdded} nuevos en la Pokédex. Tu compañero de aquí continúa.`,
+      )
+    : t(
+        lang,
+        `세이브를 합쳤어요: 도감 ${dexAdded}마리 추가. 불러온 세이브의 동료가 여기서 계속해요.`,
+        `Saves merged: ${dexAdded} new in the Pokédex. The companion from the imported save continues here.`,
+        `セーブを合わせました：図鑑に${dexAdded}匹追加。読みこんだセーブの相棒がここで続けます。`,
+        `Partidas combinadas: ${dexAdded} nuevos en la Pokédex. El compañero de la partida importada continúa aquí.`,
+      )
+}
+
 // MARK: - Celebrations
 
 /**
@@ -648,6 +1079,7 @@ export type CelebrationEvent =
   | { kind: 'legendaryEarned'; via: 'streak'; days: number }
   | { kind: 'legendaryEarned'; via: 'milestone'; tokens: number }
   | { kind: 'legendaryEarned'; via: 'both'; days: number; tokens: number }
+  | { kind: 'wildQueueFull'; count: number }
 
 /**
  * Toast copy for the game's peak moments — the events `drainEvents` accumulates.
@@ -754,6 +1186,15 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
             `${event.days} días de trabajo y ${compact(event.tokens)} tokens en total: dos legendarios están en camino.`,
           )
       }
+    // Says what stopped and what restarts it: the user did nothing wrong, the area just filled.
+    case 'wildQueueFull':
+      return t(
+        lang,
+        `야생 구역이 가득 찼어요 (${event.count}). 자리가 생길 때까지 새로운 만남이 멈춰요.`,
+        `Your wild area is full (${event.count}). New encounters are paused until you make room.`,
+        `野生エリアがいっぱいです（${event.count}）。空きができるまで新しい出会いは止まります。`,
+        `Tu zona salvaje está llena (${event.count}). Los nuevos encuentros se pausan hasta que hagas hueco.`,
+      )
   }
 }
 

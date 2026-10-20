@@ -23,7 +23,7 @@
 
 <img src="media/readme/hero.gif" width="340" alt="A full capture: a wild Dratini appears, an Ultra Ball flies, wobbles, catches — and a shiny Magikarp steps up next">
 
-<em>A wild Dratini appeared. 24% with a Poké Ball, 41% with an Ultra — or the Master Ball never fails.</em>
+<em>A wild Dratini appeared. 23% with a Poké Ball, 39% with an Ultra — or the Master Ball never fails.</em>
 
 </div>
 
@@ -42,22 +42,28 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
 
 - 🥚 **Hatch** — your egg incubates on real token spend (5M to hatch), then evolves through
   its species' real evolution line, stage by stage, until it graduates into your Pokédex.
-- 🎯 **Catch** — wild Pokémon appear as you work (the first after just 500k tokens). They
-  wait in a quiet queue: a badge counts them, and only a shiny or a legendary ever toasts —
-  at most once per hour. Never an interruption.
-- ⚖️ **Decide** — every ball shows its real catch odds for the Pokémon on stage, computed
-  with the Gen-IV catch formula on the species' true capture rate. A miss can make it flee,
-  and the pressure rises with every failed throw. Running from a rare asks first.
+- 🎯 **Catch** — wild Pokémon appear as you work (the first after just 500k tokens), with
+  item finds — balls and berries — turning up between them. Up to 30 wait in a quiet queue: a
+  badge counts them, and only a shiny, a legendary or a full queue ever toasts. Never an
+  interruption.
+- 🧠 **Read the Pokémon** — every wild Pokémon has a nature and a temperament drawn from its
+  real base stats. Miss and it gets angry (harder to catch, and it may attack and steal some
+  tokens) or nervous (more likely to flee). Calm it with an Oran Berry, settle it with a Nanab
+  Berry, or set up the next throw with a Razz Berry.
+- ⚖️ **Decide** — every ball shows its real catch odds for the Pokémon on stage, mood included,
+  computed with the Gen-IV catch formula on the species' true capture rate, and the scene says
+  what a miss risks. A legendary that gets away leaves tracks you can follow for a few days —
+  for a price.
 - ✨ **Get lucky** — shinies (1/64, better with the Shiny Charm), natures, a Ditto that
   reveals itself mid-evolution, and guaranteed-tier eggs.
 - 🛍️ **Spend what you earned** — the tokens you burn are also your wallet: Poké, Great,
-  Ultra and Master Balls (ten-packs at 10% off), Rare Candy, Mints, the Shiny Charm.
+  Ultra and Master Balls and berries (ten-packs at 10% off), Rare Candy, Mints, the Shiny Charm.
 
 <div align="center">
 
-|                                                                          Raise                                                                           |                                                                                     Shop                                                                                     |                                                                      Your trainer                                                                       |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <img src="media/readme/home.png" width="260" alt="Home: your trainer with an Eevee companion, evolution progress, usage totals and official limit bars"> | <img src="media/readme/shop.png" width="260" alt="The shop: Poké, Great, Ultra and Master Balls, singly or in ten-packs at 10% off, priced in the tokens you already spent"> | <img src="media/readme/settings.png" width="260" alt="Settings: language, how often usage is re-read, and your trainer picked from 28 classic sprites"> |
+|                                                                                                      Raise                                                                                                      |                                                                                           Shop                                                                                           |                                                                      Your trainer                                                                       |
+| :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <img src="media/readme/home.png" width="260" alt="Home: your trainer and an Eevee companion on the battle field, its evolution progress, the road to the next encounter, usage totals and official limit bars"> | <img src="media/readme/shop.png" width="260" alt="The shop: Poké, Great, Ultra and Master Balls and berries, singly or in ten-packs at 10% off, priced in the tokens you already spent"> | <img src="media/readme/settings.png" width="260" alt="Settings: language, how often usage is re-read, and your trainer picked from 28 classic sprites"> |
 
 </div>
 
@@ -76,7 +82,10 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
   path so a refresh never waits on the network. Exhausting a window grants Rare Candy.
 - **Per-CLI breakdown** with today, this month and live burn (`/min`) while a session runs.
 - **Four languages** — English, 한국어, 日本語, Español — down to the toasts.
-- **Save export/import** with a validated envelope and automatic pre-import backup.
+- **Save export/import** with a validated envelope and automatic pre-import backup. Importing
+  from another computer can **merge**: both Pokédexes and all the usage either machine counted
+  are kept, and the companion continues from whichever save has progressed more. Today's usage
+  counter and the display language always stay with the machine.
 
 ## Works with what you already use
 
@@ -129,11 +138,11 @@ blocked. An idle refresh writes nothing; an open panel re-renders instead of re-
 
 ## Settings
 
-| Setting                           | Default    | What it does                                                          |
-| --------------------------------- | ---------- | --------------------------------------------------------------------- |
-| `tokendex.refreshInterval`        | `120` s    | How often local usage is re-read (also in the panel's Settings tab)   |
-| `tokendex.companionLocation`      | `explorer` | Where the compact companion card lives                                |
-| `tokendex.encounterNotifications` | `rare`     | Encounter toasts: `rare` (shiny/legendary, max one per hour) or `off` |
+| Setting                           | Default    | What it does                                                                            |
+| --------------------------------- | ---------- | --------------------------------------------------------------------------------------- |
+| `tokendex.refreshInterval`        | `120` s    | How often local usage is re-read (also in the panel's Settings tab)                     |
+| `tokendex.companionLocation`      | `explorer` | Where the compact companion card lives                                                  |
+| `tokendex.encounterNotifications` | `rare`     | Encounter toasts: `rare` (shiny/legendary, max one per hour, and a full queue) or `off` |
 
 ### Working in WSL
 

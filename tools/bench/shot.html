@@ -30,6 +30,11 @@
       // under `body.compact` - the surface most users see. The class has to land before the
       // webview bundle evaluates: it renders on load and reads the class then, once.
       if (query.get('compact') !== null) document.body.classList.add('compact')
+      // `?theme=light`: the stock Light Modern tokens and the class VS Code puts on the body.
+      if (query.get('theme') === 'light') {
+        document.documentElement.dataset.vscodeTheme = 'light'
+        document.body.classList.replace('vscode-dark', 'vscode-light')
+      }
       const wantedTab = query.get('tab') ?? 'home'
       const wantedDex = Number(query.get('dex'))
       let persisted = {

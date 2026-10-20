@@ -12,6 +12,7 @@ import {
   itemCount,
   ownedItems,
   ownsShinyCharm,
+  purchaseNeedsConfirmation,
   shopEntries,
   useMint,
 } from '../src/core/companion/shop.js'
@@ -34,6 +35,7 @@ import {
   RareCandy,
   ShinyCharm,
   freshCompanionState,
+  isBerryKind,
   itemShopPrice,
   shopEntryPrice,
   type MonState,
@@ -70,15 +72,17 @@ describe('shop listing', () => {
     expect(prices).toEqual([...prices].sort((a, b) => a - b))
 
     const first = entries[0]
-    expect(first?.kind === 'item' && first.item === 'pokeBall').toBe(true) // cheapest at 5M
+    expect(first?.kind === 'item' && isBerryKind(first.item)).toBe(true) // cheapest at 3M
   })
 
-  it('offers a ten-pack of every ball except the Master Ball', () => {
+  it('offers a ten-pack of every ball and berry except the Master Ball', () => {
     const bundles = shopEntries(state())
       .filter((e) => e.kind === 'item' && (e.quantity ?? 1) > 1)
       .map((e) => (e.kind === 'item' ? e.item : undefined))
 
-    expect(bundles).toEqual(['pokeBall', 'greatBall', 'ultraBall'])
+    expect(bundles.sort()).toEqual(
+      ['greatBall', 'nanabBerry', 'oranBerry', 'pokeBall', 'razzBerry', 'ultraBall'].sort(),
+    )
   })
 
   // `shopEntryPrice` falls back to 0 when a kind has no price, so an item added without one is
@@ -94,6 +98,40 @@ describe('shop listing', () => {
     const entries = shopEntries(owned)
     const last = entries[entries.length - 1]
     expect(last?.kind === 'item' && last.item === 'shinyCharm').toBe(true)
+  })
+})
+
+// A native modal per purchase is the right friction for what is hard to take back — a pack, an
+// egg that sends your Pokémon off, a Master Ball — and pure noise for a single 3M berry bought
+// mid-encounter. The host asks this before raising the modal; the webview never decides it.
+describe('purchaseNeedsConfirmation', () => {
+  it('lets a single ball or berry go straight through', () => {
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'pokeBall' })).toBe(false)
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'ultraBall', quantity: 1 })).toBe(false)
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'oranBerry' })).toBe(false)
+  })
+
+  // [trigger branch] The one ×1 that still asks: the Master Ball's single price is the shop's
+  // largest outside the eggs, and it is the one ball a legendary is saved for.
+  it('still confirms a single Master Ball', () => {
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'masterBall' })).toBe(true)
+  })
+
+  it('confirms every pack', () => {
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'pokeBall', quantity: 10 })).toBe(true)
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'razzBerry', quantity: 10 })).toBe(true)
+  })
+
+  // [trigger branch] Quantity one, but not something sold in packs: a passive or a Rare Candy is
+  // a single expensive purchase, not the small change the rule exists for.
+  it('confirms a single item that is not sold in packs', () => {
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'rareCandy' })).toBe(true)
+    expect(purchaseNeedsConfirmation({ kind: 'item', item: 'shinyCharm' })).toBe(true)
+  })
+
+  it('always confirms an egg, which sends the current Pokémon off', () => {
+    expect(purchaseNeedsConfirmation({ kind: 'egg', tier: undefined })).toBe(true)
+    expect(purchaseNeedsConfirmation({ kind: 'egg', tier: 'rare' })).toBe(true)
   })
 })
 

@@ -32,7 +32,7 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
 import { atomicWriteFile } from '../coordination/atomicWrite.js'
 import { FileLock, lockPathFor, type LockResult } from '../coordination/fileLock.js'
@@ -41,13 +41,24 @@ import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
 import {
   EncounterBalance,
   addEncounterUsage,
+  collectAllFinds,
+  collectFind,
   enqueueEncounter,
+  expireQueue,
+  initialMood,
   owedEncounters,
   payForEncounter,
+  queueFullEdge,
+  queuedCount,
+  rollFind,
   runFromEncounter,
-  throwBall,
-  withoutWanderedOff,
-  type ThrowOutcome,
+  spawnKind,
+  takeTurn,
+  temperamentFrom,
+  trackLegendary,
+  type EncounterAction,
+  type TrackOutcome,
+  type TurnOutcome,
 } from './encounters.js'
 import { trainerIDOrDefault } from './trainers.js'
 import {
@@ -69,6 +80,7 @@ import {
 } from './ledger.js'
 import {
   type BallKind,
+  type BerryKind,
   type CompanionState,
   type CompanionStateKind,
   type DexEntry,
@@ -77,6 +89,7 @@ import {
   NATURES,
   type Rarity,
   type WildEncounter,
+  type WildFind,
   PokemonBalance,
   PokemonOdds,
   RareCandy,
@@ -88,6 +101,8 @@ import {
 } from './model.js'
 import { decodeCompanionState, encodeCompanionState } from './persistence.js'
 import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
+import { deviceIdentity } from './device.js'
+import { withRevision } from './merge.js'
 
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
@@ -134,6 +149,14 @@ export type CompanionEvent =
   | { kind: 'legendaryEarned'; via: 'streak'; days: number }
   | { kind: 'legendaryEarned'; via: 'milestone'; tokens: number }
   | { kind: 'legendaryEarned'; via: 'both'; days: number; tokens: number }
+  /**
+   * The wild area just filled up, so new encounters are paused until the player makes room. Once
+   * per fill (`queueFullEdge`), and under the same setting as `wildAppeared`.
+   */
+  | { kind: 'wildQueueFull'; count: number }
+
+/** One arrival rolled outside the lock, filed inside it by `commitSpawns`. */
+type Spawn = { kind: 'pokemon'; encounter: WildEncounter } | { kind: 'find'; find: WildFind }
 
 /**
  * A user action that could not take the save's lock inside its deadline.
@@ -187,6 +210,11 @@ export interface StoreOptions {
   /** Disabled in tests so the Ditto disguise roll is deterministic. */
   dittoEnabled?: boolean
   /**
+   * This machine's id for `usedByDevice` and `revision`. Absent means the one minted in
+   * `device.json` beside the save — what every real store uses.
+   */
+  deviceID?: string
+  /**
    * Read at each spawn (a callback, because the setting can change while the store lives).
    * `false` silences even the shiny/legendary encounter toast; the badge and the panel still
    * update. Absent means on.
@@ -239,6 +267,8 @@ export class CompanionStore {
    * webview addresses encounters by id, so the second throw would resolve the first one.
    */
   private spawnSerial = 0
+  /** Set by `load()`. Every accrual and every changed write is attributed to it. */
+  private device = ''
 
   constructor(private readonly options: StoreOptions) {
     this.state = freshCompanionState(options.hostLanguage)
@@ -288,6 +318,7 @@ export class CompanionStore {
   }
 
   private async readSave(): Promise<void> {
+    this.device = this.options.deviceID ?? (await deviceIdentity(dirname(this.filePath))).id
     let raw: string
     try {
       raw = await fs.readFile(this.filePath, 'utf8')
@@ -365,7 +396,12 @@ export class CompanionStore {
   private async transact<T>(body: () => T | Promise<T>): Promise<LockResult<T>> {
     return this.lock.withLock(async () => {
       await this.reread()
+      const before = encodeCompanionState(this.state)
       const value = await body()
+      // Only a write that changed something is a revision. Counting idle holds would make a
+      // machine that merely stayed open look busier than one that played, and the busier side
+      // is the one a fork is resolved in favour of.
+      if (encodeCompanionState(this.state) !== before) this.state = withRevision(this.state, this.device)
       await this.write()
       return value
     }, this.options.lockTimeoutMs ?? LOCK_TIMEOUT_MS)
@@ -551,14 +587,22 @@ export class CompanionStore {
     // Before anything reads the queue's length. A full queue freezes accrual, so an encounter
     // that has wandered off has to free its slot *this* pass — otherwise the tokens earned in
     // the same refresh are held back against room that is no longer occupied.
-    const waiting = withoutWanderedOff(this.state.wild, this.now)
-    if (waiting.length !== this.state.wild.length) this.state = { ...this.state, wild: waiting }
+    this.state = expireQueue(this.state, this.now)
 
     if (delta > 0) {
       // Before crediting, so the day is recorded from the same fact the growth meter moves on:
       // real accrual. A refresh that contributes nothing is not a day of work.
       this.state = noteAccrualDay(this.state, observation.todayDate)
       this.state = creditDelta(this.state, delta)
+      // Attributed here and not inside `creditDelta`, because a merge credits through that same
+      // function tokens that another device accrued.
+      this.state = {
+        ...this.state,
+        usedByDevice: {
+          ...this.state.usedByDevice,
+          [this.device]: (this.state.usedByDevice[this.device] ?? 0) + delta,
+        },
+      }
       // creditDelta already moved usedAtStage, so growth is evaluated with a zero delta.
       if (this.state.active !== undefined) this.grow(0)
       // Accrued beside `creditDelta`, not inside it: that function routes a delta to exactly one
@@ -568,7 +612,7 @@ export class CompanionStore {
       // never instantly replaced out of a bank.
       this.state = {
         ...this.state,
-        encounterUsage: addEncounterUsage(this.state.encounterUsage, delta, this.state.wild.length),
+        encounterUsage: addEncounterUsage(this.state.encounterUsage, delta, queuedCount(this.state)),
       }
 
       // Evaluated after crediting, so the milestone rule reads the total this fold produced,
@@ -580,6 +624,20 @@ export class CompanionStore {
       const earned = legendaryEarnedEvent(triggered.awards)
       if (earned !== undefined) this.pendingEvents.push(earned)
     }
+
+    // Re-arms the "full" notice once expiry or the player has made room.
+    this.noteQueueEdge()
+  }
+
+  /**
+   * Moves the "wild area is full" edge and, when it fires, queues the notice. The flag moves even
+   * with notifications off, so re-enabling them never replays a fill nobody was told about.
+   */
+  private noteQueueEdge(): void {
+    const edge = queueFullEdge(this.state)
+    this.state = edge.state
+    if (!edge.fire || this.options.encounterToastsEnabled?.() === false) return
+    this.pendingEvents.push({ kind: 'wildQueueFull', count: queuedCount(this.state) })
   }
 
   // MARK: - Wild encounters
@@ -600,60 +658,61 @@ export class CompanionStore {
   private async spawnEncountersIfNeeded(): Promise<void> {
     const owed = owedEncounters(this.state.encounterUsage, this.state.encountersSeen)
     const owedLegendaries = this.state.owedLegendaryEncounters
-    // Never mint into a full queue: paying the threshold and letting `enqueueEncounter` drop
-    // something would waste tokens on encounters nobody sees — and could announce a Pokémon
-    // that was itself the one dropped. Accrual is already capped by the queue's room, but owed
-    // usage can still exceed it (an imported save, or a spawn deferred by a network failure
-    // while the queue filled), so the guard stays.
-    const room = EncounterBalance.maxQueue - this.state.wild.length
-    // A full queue holds a granted legendary too, rather than letting `enqueueEncounter` make
-    // room for it: with twelve legendaries waiting, the one dropped would be a legendary.
-    // Deferring costs nothing — the entitlement is persisted, so it arrives when a slot frees.
+    // Never mint into a full queue: paying the threshold for an arrival nobody can see would waste
+    // tokens. Accrual is already capped by the queue's room, but owed usage can still exceed it (an
+    // imported save, or a spawn deferred by a network failure while the queue filled), so the
+    // guard stays. A granted legendary waits too — the entitlement is persisted, so it arrives
+    // when a slot frees.
+    const room = EncounterBalance.maxQueue - queuedCount(this.state)
     if ((owed === 0 && owedLegendaries === 0) || room <= 0) return
 
     this.spawning = true
     try {
-      // No REST fallback here, unlike hatching. A hatch is the whole game and worth up to
-      // sixteen probing requests; an encounter is one of many, and burning that on a Caterpie
-      // would slow every scan for a decoration. It waits for the index instead.
-      const index = await this.baseIndex()
-      if (index === undefined) {
-        this.noteNetworkFailure()
-        return
-      }
+      // Decided before any network call, so a find never waits on PokéAPI.
+      const slotsForPaid = Math.min(owed, room - (owedLegendaries > 0 ? 1 : 0))
+      const kinds = Array.from({ length: Math.max(0, slotsForPaid) }, (_, i) =>
+        spawnKind(this.rng, this.state.encountersSeen + i === 0),
+      )
 
-      // At most one granted legendary per refresh. Two triggers firing in the same fold owe
-      // two, and delivering both at once would dump a pair of legendaries into the queue in the
-      // same second; the second is carried, not dropped.
-      let slots = room
+      // Only a Pokémon needs the index. No REST fallback here, unlike hatching: an encounter is one
+      // of many, and burning sixteen probing requests on a Caterpie would slow every scan.
+      const needsIndex = owedLegendaries > 0 || kinds.includes('pokemon')
+      const index = needsIndex ? await this.baseIndex() : undefined
+      let networkFailed = needsIndex && index === undefined
+
+      // At most one granted legendary per refresh. Two triggers firing in the same fold owe two,
+      // and delivering both at once would dump a pair of legendaries into the queue in the same
+      // second; the second is carried, not dropped.
       let reward: WildEncounter | undefined
-      if (owedLegendaries > 0) {
+      if (owedLegendaries > 0 && index !== undefined) {
         reward = await this.rollEncounter(index, 'legendary')
-        if (reward === undefined) {
-          // Either the network is down or the cached index predates the legendary flags. Both
-          // resolve themselves; the entitlement stays owed until one of them does.
-          this.noteNetworkFailure()
-          return
-        }
-        slots -= 1
+        // Either the network is down or the cached index predates the legendary flags. Both
+        // resolve themselves; the entitlement stays owed until one of them does.
+        if (reward === undefined) networkFailed = true
       }
 
-      const rolled: WildEncounter[] = []
-      let rollFailed = false
-      for (let i = 0; i < Math.min(owed, slots); i++) {
-        const encounter = await this.rollEncounter(index)
+      // In order, stopping at the first Pokémon that cannot be rolled: payment follows the queue
+      // order, so a later find must not be paid for ahead of a Pokémon that is still owed.
+      const spawns: Spawn[] = []
+      for (const kind of kinds) {
+        if (kind === 'find') {
+          const id = `f${this.now}-${this.state.encountersSeen}-${this.spawnSerial++}`
+          spawns.push({ kind: 'find', find: rollFind(this.rng, id, this.now) })
+          continue
+        }
+        const encounter = index === undefined ? undefined : await this.rollEncounter(index)
         if (encounter === undefined) {
-          rollFailed = true
+          networkFailed = true
           break // usage stays banked: this encounter is deferred, not lost
         }
-        rolled.push(encounter)
+        spawns.push({ kind: 'pokemon', encounter })
       }
-      if (rollFailed) this.noteNetworkFailure()
-      else this.noteNetworkSuccess()
+      if (networkFailed) this.noteNetworkFailure()
+      else if (needsIndex) this.noteNetworkSuccess()
 
       // Every network call is behind us; the hold below is arithmetic and one write.
-      if (reward !== undefined || rolled.length > 0) {
-        await this.transact(() => this.commitSpawns(reward, rolled))
+      if (reward !== undefined || spawns.length > 0) {
+        await this.transact(() => this.commitSpawns(reward, spawns))
       }
     } finally {
       this.spawning = false
@@ -661,15 +720,15 @@ export class CompanionStore {
   }
 
   /**
-   * Files the rolled encounters against the state as it is on disk **now**.
+   * Files the rolled arrivals against the state as it is on disk **now**.
    *
    * Both counters are re-derived here rather than carried in from the rolling phase: another
-   * window that has already minted these encounters advanced `encountersSeen` and drained
+   * window that has already minted these arrivals advanced `encountersSeen` and drained
    * `encounterUsage`, so `owedEncounters` answers zero and this window's rolls are dropped.
    * Same for the granted legendary, which is only delivered while the file still owes one.
    */
-  private commitSpawns(reward: WildEncounter | undefined, rolled: readonly WildEncounter[]): void {
-    let room = EncounterBalance.maxQueue - this.state.wild.length
+  private commitSpawns(reward: WildEncounter | undefined, spawns: readonly Spawn[]): void {
+    let room = EncounterBalance.maxQueue - queuedCount(this.state)
     if (room <= 0) return
 
     if (reward !== undefined && this.state.owedLegendaryEncounters > 0) {
@@ -682,22 +741,26 @@ export class CompanionStore {
       room -= 1
     }
 
-    for (const encounter of rolled) {
+    for (const spawn of spawns) {
       if (room <= 0) break
       if (owedEncounters(this.state.encounterUsage, this.state.encountersSeen) === 0) break
       const paid = payForEncounter(this.state.encounterUsage, this.state.encountersSeen)
-      this.state = {
-        ...this.state,
-        ...paid,
-        wild: enqueueEncounter(this.state.wild, encounter),
+      if (spawn.kind === 'find') {
+        // Finds never toast: an item is the small reward, and the queue exists so nothing small
+        // interrupts work.
+        this.state = { ...this.state, ...paid, finds: [...this.state.finds, spawn.find] }
+      } else {
+        this.state = { ...this.state, ...paid, wild: enqueueEncounter(this.state.wild, spawn.encounter) }
+        this.noteEncounterAppeared(spawn.encounter)
       }
-      this.noteEncounterAppeared(encounter)
       room -= 1
     }
+
+    this.noteQueueEdge()
   }
 
   /**
-   * Encounters are frequent by design — one per 2.5M tokens — so `wildAppeared` reaching
+   * Encounters are frequent by design — one arrival per 2M tokens — so `wildAppeared` reaching
    * `pendingEvents` means a native toast, and that is reserved: only a shiny or a legendary
    * qualifies, and even those at most once an hour (`lastEncounterToastAt` is persisted so a
    * restart does not reopen the window). Everything else surfaces through the panel and the
@@ -750,6 +813,9 @@ export class CompanionStore {
       // The Shiny Charm applies to wilds too — it is described as raising shiny odds, and
       // exempting half the game from it would be the surprising reading.
       const isShiny = rollShiny(this.state, this.rng)
+      // After the shiny roll, so every draw that existed before temperaments keeps its place.
+      const nature = NATURES[this.rng() % NATURES.length]!
+      const temperament = temperamentFrom(species.stats, nature, species.baseHappiness)
       const encounter: WildEncounter = {
         id: `w${this.now}-${speciesID}-${this.state.encountersSeen}-${this.spawnSerial++}`,
         speciesID,
@@ -758,8 +824,12 @@ export class CompanionStore {
         isShiny,
         appearedAt: this.now,
         throws: 0,
+        nature,
+        temperament,
+        mood: initialMood(temperament, species.rarity),
       }
       if (Object.keys(species.names).length > 0) encounter.names = species.names
+      if (species.types !== undefined) encounter.types = species.types
       return encounter
     } catch {
       return undefined
@@ -774,19 +844,65 @@ export class CompanionStore {
    * A user action, so a busy lock throws `SaveBusyError` rather than reporting a miss: a ball
    * that was never thrown must not come back as "it broke free".
    */
-  async throwBallAt(encounterID: string, ball: BallKind): Promise<ThrowOutcome> {
+  async throwBallAt(encounterID: string, ball: BallKind): Promise<TurnOutcome> {
+    return this.turn(encounterID, { kind: 'throw', ball })
+  }
+
+  /** Offers a berry. A turn like a throw: the Pokémon reacts afterwards, so it can still run. */
+  async feedBerryAt(encounterID: string, berry: BerryKind): Promise<TurnOutcome> {
+    return this.turn(encounterID, { kind: 'feed', berry })
+  }
+
+  private async turn(encounterID: string, action: EncounterAction): Promise<TurnOutcome> {
     await this.load()
     // Under the lock and against the re-read queue: a Pokémon another window already caught
-    // is simply not there, so the throw answers `unknownEncounter` instead of resurrecting it.
+    // is simply not there, so the turn answers `unknownEncounter` instead of resurrecting it.
     const result = await this.transact(() => {
-      const thrown = throwBall(this.state, encounterID, ball, this.rng, this.now)
-      this.state = thrown.state
+      const taken = takeTurn(this.state, encounterID, action, this.rng, this.now)
+      this.state = taken.state
 
-      // No pendingEvent on a catch: the player is looking at the panel — they just clicked the
-      // throw — so a native toast would only repeat what the animation is showing. The event
-      // window still runs so the status bar celebrates alongside.
-      if (thrown.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
-      return thrown.outcome
+      // No pendingEvent on a catch: the player is looking at the panel — they just clicked —
+      // so a native toast would only repeat what the animation is showing. The event window
+      // still runs so the status bar celebrates alongside.
+      if (taken.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
+      this.noteQueueEdge()
+      return taken.outcome
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /** Picks up one item find. `false` when the id is stale (another window already took it). */
+  async collectFind(findID: string): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = collectFind(this.state, findID)
+      if (next === undefined) return false
+      this.state = next
+      this.noteQueueEdge()
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  async collectAllFinds(): Promise<void> {
+    await this.load()
+    const result = await this.transact(() => {
+      this.state = collectAllFinds(this.state)
+      this.noteQueueEdge()
+    })
+    if (!result.acquired) throw new SaveBusyError()
+  }
+
+  /** Pays to bring a legendary that got away back into the queue. */
+  async trackLegendary(trailID: string): Promise<TrackOutcome> {
+    await this.load()
+    const result = await this.transact(() => {
+      const tracked = trackLegendary(this.state, trailID, this.now)
+      this.state = tracked.state
+      this.noteQueueEdge()
+      return tracked.outcome
     })
     if (!result.acquired) throw new SaveBusyError()
     return result.value
@@ -797,6 +913,7 @@ export class CompanionStore {
     await this.load()
     const result = await this.transact(() => {
       this.state = runFromEncounter(this.state, encounterID)
+      this.noteQueueEdge()
     })
     if (!result.acquired) throw new SaveBusyError()
   }

@@ -28,6 +28,7 @@ import {
   type MonState,
   Pokeball,
   type Rarity,
+  type PokemonType,
   type WildEncounter,
   currentSpeciesID,
   freshCompanionState,
@@ -171,9 +172,20 @@ function caught(chain: number[], days: number, over: Partial<DexEntry> = {}): De
   }
 }
 
+/** Real types for the species the fixtures stage, so each scene stands on its own terrain. */
+const TYPES: Record<number, PokemonType[]> = {
+  10: ['bug'],
+  129: ['water'],
+  133: ['normal'],
+  147: ['dragon'],
+  150: ['psychic'],
+}
+
 /** One queued encounter. The head of the queue is the one on stage, and it prices the rack. */
 function wild(speciesID: number, over: Partial<WildEncounter> = {}): WildEncounter {
+  const types = TYPES[speciesID]
   return {
+    ...(types === undefined ? {} : { types }),
     id: `w-${speciesID}`,
     speciesID,
     captureRate: 45,
@@ -257,6 +269,8 @@ interface SceneOptions extends UsageOptions {
   companion?: Partial<CompanionView>
   dex?: DexEntry[]
   wild?: WildEncounter[]
+  finds?: CompanionState['finds']
+  legendaryTrail?: CompanionState['legendaryTrail']
   limits?: LimitRow[]
   errors?: string[]
   dev?: PanelDev
@@ -283,6 +297,8 @@ function scene(options: SceneOptions = {}): PanelState {
     inventory: { ...(options.inventory ?? DEFAULT_INVENTORY) },
     dex: options.dex ?? [],
     wild: options.wild ?? [],
+    finds: options.finds ?? [],
+    legendaryTrail: options.legendaryTrail ?? [],
     // Pinned so the "next encounter" line always reads 1.2M and its bar 52%.
     encounterUsage: 1_300_000,
     encountersSeen: 3,
@@ -400,6 +416,48 @@ export const FIXTURES: Fixture[] = [
         toNextText: '21.7M to next evolution',
       },
       dex: [caught([129], 0, { id: 'dex-wild-129', source: 'wild' }), caught([1, 2, 3], 12)],
+    }),
+  },
+  {
+    id: 'wild-mood',
+    label: 'Home scene: an angry legendary with a temperament, berries, finds and a trail',
+    state: scene({
+      inventory: { pokeBall: 7, greatBall: 2, ultraBall: 3, oranBerry: 4, nanabBerry: 2, razzBerry: 1 },
+      wild: [
+        wild(150, {
+          captureRate: 3,
+          nature: 'adamant',
+          temperament: { aggression: 86, skittishness: 75, appetite: 20 },
+          mood: { anger: 72, nervousness: 48, trust: 10 },
+          stolen: 4_000_000,
+          primed: true,
+        }),
+        wild(10),
+        wild(129),
+      ],
+      finds: [
+        { id: 'f1', item: 'pokeBall', count: 2, rarity: 'uncommon', appearedAt: EPOCH - 60_000 },
+        { id: 'f2', item: 'razzBerry', count: 1, rarity: 'common', appearedAt: EPOCH - 60_000 },
+        { id: 'f3', item: 'ultraBall', count: 3, rarity: 'legendary', appearedAt: EPOCH - 60_000 },
+      ],
+      legendaryTrail: [
+        {
+          id: 'lost-249',
+          speciesID: 249,
+          captureRate: 3,
+          isShiny: false,
+          names: names(249),
+          trackedCount: 1,
+          lostAt: EPOCH - 5 * 3_600_000,
+        },
+      ],
+      mon: mon([172, 25, 26], 1),
+      line: evoLine([172, 25, 26]),
+      companion: {
+        progress: 0.71,
+        stageText: D.stage('en', 2, 3),
+        toNextText: '21.7M to next evolution',
+      },
     }),
   },
   {

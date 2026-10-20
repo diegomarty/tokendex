@@ -13,7 +13,12 @@ import {
 } from '../src/core/companion/model.js'
 import type { BaseSpecies, PokeProviding } from '../src/core/pokeapi.js'
 import { BACKUP_FILE_PREFIX } from '../src/core/companion/saveTransfer.js'
-import { EncounterBalance, MilestoneBalance } from '../src/core/companion/encounters.js'
+import {
+  EncounterBalance,
+  MilestoneBalance,
+  initialMood,
+  temperamentFrom,
+} from '../src/core/companion/encounters.js'
 import { Pokeball } from '../src/core/companion/model.js'
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
 import { sourceRoot } from './repoRoot.js'
@@ -514,7 +519,7 @@ describe('wild encounters', () => {
     const s = store({ now: () => clock })
     await s.update(obs(0))
 
-    let spent = EncounterBalance.firstThreshold + EncounterBalance.threshold * 20
+    let spent = EncounterBalance.firstThreshold + EncounterBalance.threshold * EncounterBalance.maxQueue
     await s.update(obs(spent))
     expect(s.snapshot().wild).toHaveLength(EncounterBalance.maxQueue)
     const original = s.snapshot().wild.map((e) => e.id)
@@ -637,7 +642,7 @@ describe('wild encounters', () => {
     await s.mutate((tx) => tx.commit({ ...tx.state, inventory: {} }))
 
     const outcome = await s.throwBallAt(s.snapshot().wild[0]!.id, 'pokeBall')
-    expect(outcome).toEqual({ kind: 'noBall' })
+    expect(outcome).toEqual({ kind: 'noItem' })
     expect(s.snapshot().wild).toHaveLength(1)
   })
 
@@ -1241,5 +1246,190 @@ describe('the save has exactly one writer', () => {
     )
     expect(transactBody).toContain('await this.reread()')
     expect(transactBody).toContain('await this.write()')
+  })
+})
+
+describe('device attribution', () => {
+  const DEVICE = 'd'.repeat(32)
+
+  // [trigger branch] The per-device line is what a merge diffs against. If accrual is not
+  // attributed, another machine sees none of this one's growth and it is lost on every fork.
+  it('attributes accrued usage to this device', async () => {
+    const s = store({ deviceID: DEVICE })
+    await s.update(obs(1_000))
+    await s.update(obs(1_000 + 7_000))
+    expect(s.snapshot().usedByDevice).toEqual({ [DEVICE]: 7_000 })
+  })
+
+  // A machine left open must not out-vote one that was played on: forks go to the side with
+  // more revisions, so an idle hold that still writes must not count as one.
+  it('counts a revision only for a write that changed something', async () => {
+    const s = store({ deviceID: DEVICE })
+    await s.update(obs(1_000)) // baseline: a change
+    const afterBaseline = s.snapshot().revision[DEVICE] ?? 0
+    expect(afterBaseline).toBeGreaterThan(0)
+    await s.update(obs(1_000)) // nothing new
+    await s.update(obs(1_000))
+    expect(s.snapshot().revision[DEVICE]).toBe(afterBaseline)
+    await s.update(obs(2_000)) // accrual
+    expect(s.snapshot().revision[DEVICE]).toBe(afterBaseline + 1)
+  })
+
+  it('mints this device once, beside the save, and keeps it', async () => {
+    const filePath = tempFile()
+    const first = store({ filePath })
+    await first.update(obs(1_000))
+    await first.update(obs(3_000))
+    const second = store({ filePath })
+    await second.update(obs(5_000))
+    const devices = Object.keys(second.snapshot().usedByDevice)
+    expect(devices).toHaveLength(1)
+    expect(second.snapshot().usedByDevice[devices[0]!]).toBe(4_000)
+  })
+})
+
+describe('wild area: finds, temperament and the full notice', () => {
+  // [trigger branch] A find needs no species index. The early return that used to guard the
+  // whole spawn on the index would hold an item hostage to PokéAPI being down — here a find and a
+  // Pokémon are both owed, the index is unreachable, and only the Pokémon has to wait.
+  it('files an item find even when the species index is unavailable', async () => {
+    let indexAsked = 0
+    const offline = stubProvider({
+      baseSpeciesIndex: async () => {
+        indexAsked += 1
+        throw new Error('offline')
+      },
+    })
+    // Draws: the first arrival is a find (high), the second a Pokémon (low); the rest roll the find.
+    const draws = [999, 0]
+    const s = store({ provider: offline, rng: () => draws.shift() ?? 0 })
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        installBaselineSet: true,
+        lastDate: '2026-08-19',
+        claimedTodayTokensByProvider: { claude_code: 0 },
+        encountersSeen: 1,
+        encounterUsage: EncounterBalance.threshold * 2,
+      }),
+    )
+    await s.update(obs(0))
+    expect(indexAsked).toBeGreaterThan(0) // the Pokémon really did need the index
+    expect(s.snapshot().finds).toHaveLength(1)
+    expect(s.snapshot().wild).toHaveLength(0)
+    expect(s.snapshot().encountersSeen).toBe(2)
+    expect(s.snapshot().encounterUsage).toBe(EncounterBalance.threshold) // the Pokémon is still owed
+  })
+
+  it('gives every wild Pokémon a nature and a temperament from its stats', async () => {
+    const stats = {
+      hp: 106,
+      attack: 110,
+      defense: 90,
+      specialAttack: 154,
+      specialDefense: 90,
+      speed: 130,
+    }
+    const s = store({
+      provider: stubProvider({
+        wildSpecies: async (id: number) => ({
+          id,
+          captureRate: 3,
+          rarity: 'legendary' as const,
+          names: { en: 'Mewtwo' },
+          stats,
+          baseHappiness: 0,
+          types: ['psychic' as const],
+        }),
+      }),
+    })
+    await s.update(obs(0))
+    await s.update(obs(EncounterBalance.firstThreshold))
+    const encounter = s.snapshot().wild[0]!
+    expect(encounter.types).toEqual(['psychic'])
+    expect(encounter.nature).toBeDefined()
+    expect(encounter.temperament).toEqual(temperamentFrom(stats, encounter.nature, 0))
+    expect(encounter.mood).toEqual(initialMood(encounter.temperament!, 'legendary'))
+  })
+
+  const fullQueue = () =>
+    Array.from({ length: EncounterBalance.maxQueue }, (_, i) => ({
+      id: `q${i}`,
+      speciesID: 10,
+      captureRate: 255,
+      rarity: 'common' as const,
+      isShiny: false,
+      appearedAt: 1_700_000_000_000,
+      throws: 0,
+    }))
+
+  // [trigger branch] Once per fill: the second refresh with the queue still full must stay quiet.
+  it('announces a full wild area once, then re-arms when a slot frees', async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.mutate((tx) => tx.commit({ ...tx.state, wild: fullQueue() }))
+    await s.update(obs(0))
+    expect(s.drainEvents().filter((e) => e.kind === 'wildQueueFull')).toHaveLength(1)
+    await s.update(obs(0))
+    expect(s.drainEvents().filter((e) => e.kind === 'wildQueueFull')).toHaveLength(0)
+
+    await s.runFrom('q0')
+    expect(s.snapshot().queueFullArmed).toBe(true)
+  })
+
+  // With notifications off the flag still moves, so turning them on later never replays a fill
+  // that happened while they were silenced.
+  it('stays silent with notifications off, but still disarms', async () => {
+    const s = store({ encounterToastsEnabled: () => false })
+    await s.update(obs(0))
+    await s.mutate((tx) => tx.commit({ ...tx.state, wild: fullQueue() }))
+    await s.update(obs(0))
+    expect(s.drainEvents().filter((e) => e.kind === 'wildQueueFull')).toHaveLength(0)
+    expect(s.snapshot().queueFullArmed).toBe(false)
+  })
+
+  it('offers a berry under the lock and keeps the mood it leaves', async () => {
+    const s = store({ rng: () => 999 })
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        inventory: { oranBerry: 1 },
+        wild: [{ ...fullQueue()[0]!, mood: { anger: 50, nervousness: 0, trust: 0 } }],
+      }),
+    )
+    const outcome = await s.feedBerryAt('q0', 'oranBerry')
+    expect(outcome.kind).toBe('fed')
+    expect(s.snapshot().wild[0]!.mood!.anger).toBeLessThan(50)
+    expect(s.snapshot().inventory['oranBerry']).toBe(0)
+  })
+
+  it('picks up finds and tracks a legendary back through the lock', async () => {
+    const s = store()
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        usedSinceInstall: 1_000_000_000,
+        finds: [
+          { id: 'f1', item: 'greatBall', count: 2, rarity: 'uncommon', appearedAt: 1_700_000_000_000 },
+        ],
+        legendaryTrail: [
+          {
+            id: 'mew',
+            speciesID: 150,
+            captureRate: 3,
+            isShiny: false,
+            trackedCount: 0,
+            lostAt: 1_700_000_000_000,
+          },
+        ],
+      }),
+    )
+    expect(await s.collectFind('f1')).toBe(true)
+    expect(await s.collectFind('f1')).toBe(false) // already taken
+    expect(s.snapshot().inventory['greatBall']).toBe(2)
+
+    expect(await s.trackLegendary('mew')).toBe('tracked')
+    expect(s.snapshot().wild.map((e) => e.speciesID)).toEqual([150])
+    expect(s.snapshot().spentTokens).toBe(100_000_000)
   })
 })

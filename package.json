@@ -94,8 +94,8 @@
             "off"
           ],
           "enumDescriptions": [
-            "Toast only when a shiny or legendary wild Pokémon appears, at most once per hour.",
-            "Never toast for encounters. The activity bar badge and the Wild tab still update."
+            "Toast when a shiny or legendary wild Pokémon appears (at most once per hour), and once when your wild area fills up.",
+            "Never toast for encounters or a full wild area. The activity bar badge and the Wild tab still update."
           ],
           "description": "When a wild Pokémon encounter may show a notification."
         },

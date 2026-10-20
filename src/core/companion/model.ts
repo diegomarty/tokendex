@@ -185,6 +185,9 @@ export const ITEM_KINDS = [
   'greatBall',
   'ultraBall',
   'masterBall',
+  'oranBerry',
+  'nanabBerry',
+  'razzBerry',
 ] as const
 export type ItemKind = (typeof ITEM_KINDS)[number]
 
@@ -197,6 +200,43 @@ export type BallKind = (typeof BALL_KINDS)[number]
 
 export function isBallKind(kind: ItemKind): kind is BallKind {
   return (BALL_KINDS as readonly string[]).includes(kind)
+}
+
+/**
+ * Items offered to a wild Pokémon instead of thrown at it. Their own union for the same reason
+ * as `BALL_KINDS`: the feeding rule cannot be handed a Master Ball, and the host validates a slug
+ * from the webview against this list before it reaches the store.
+ */
+export const BERRY_KINDS = ['oranBerry', 'nanabBerry', 'razzBerry'] as const
+export type BerryKind = (typeof BERRY_KINDS)[number]
+
+export function isBerryKind(kind: string): kind is BerryKind {
+  return (BERRY_KINDS as readonly string[]).includes(kind)
+}
+
+/**
+ * Berry balance — the skill path for hard targets.
+ *
+ * Priced like a Poké Ball's little sibling: a berry is a turn spent *not* throwing, so it must be
+ * cheaper than the ball it saves, and calming a legendary takes several. Berries change mood only
+ * — the numbers they move live in `encounters.ts`, next to the rules that read them.
+ */
+export const Berry = {
+  price: {
+    oranBerry: 3_000_000,
+    nanabBerry: 3_000_000,
+    razzBerry: 8_000_000,
+  } as Record<BerryKind, number>,
+} as const
+
+/**
+ * Whether the shop also sells this item as a ten-pack. Balls and berries are bought by the
+ * handful; the Master Ball is sold singly on purpose (see `Pokeball.bundleSize`). The **only**
+ * answer to that question — the shop rows and the host's purchase check both read it, so the two
+ * cannot disagree about which packs exist.
+ */
+export function itemIsBundled(kind: ItemKind): boolean {
+  return kind === 'pokeBall' || kind === 'greatBall' || kind === 'ultraBall' || isBerryKind(kind)
 }
 
 /** Rare Candy balance. */
@@ -242,11 +282,11 @@ export const ShinyCharm = {
  * Pokéball balance — the only items bought to be *thrown*, at a wild encounter.
  *
  * Priced against the encounter rate rather than against the other items: one encounter costs
- * `EncounterBalance.threshold` (2.5M) of spend, so a Poké Ball at 5M means roughly two
+ * `EncounterBalance.threshold` (2M) of spend, so a Poké Ball at 5M means roughly two
  * encounters' worth of work per throw. That is a real cost without ever gating the feature —
  * whereas pricing balls next to a Mint (100M) would make the whole tab unreachable.
  *
- * The Master Ball is deliberately half a Shiny Charm: a legendary is ~3.6% per Poké Ball, so
+ * The Master Ball is deliberately half a Shiny Charm: a legendary is ~3% per Poké Ball (13% over a whole encounter), so
  * the guaranteed catch has to be a decision, not a purchase.
  */
 export const Pokeball = {
@@ -338,6 +378,12 @@ export function itemSpriteName(kind: ItemKind): string | undefined {
       return 'ultra-ball'
     case 'masterBall':
       return 'master-ball'
+    case 'oranBerry':
+      return 'oran-berry'
+    case 'nanabBerry':
+      return 'nanab-berry'
+    case 'razzBerry':
+      return 'razz-berry'
   }
 }
 
@@ -355,6 +401,10 @@ export function itemEmoji(kind: ItemKind): string {
     case 'ultraBall':
     case 'masterBall':
       return '⚪'
+    case 'oranBerry':
+    case 'nanabBerry':
+    case 'razzBerry':
+      return '🫐'
   }
 }
 
@@ -376,6 +426,10 @@ export function itemShopPrice(kind: ItemKind): number | undefined {
     case 'ultraBall':
     case 'masterBall':
       return Pokeball.price[kind]
+    case 'oranBerry':
+    case 'nanabBerry':
+    case 'razzBerry':
+      return Berry.price[kind]
   }
 }
 
@@ -552,6 +606,41 @@ export const NATURES = [
 ] as const
 export type PokemonNature = (typeof NATURES)[number]
 
+// MARK: - Type
+
+/** The eighteen elemental types, as PokéAPI spells them. A wild encounter's terrain follows them. */
+export const POKEMON_TYPES = [
+  'normal',
+  'fire',
+  'water',
+  'electric',
+  'grass',
+  'ice',
+  'fighting',
+  'poison',
+  'ground',
+  'flying',
+  'psychic',
+  'bug',
+  'rock',
+  'ghost',
+  'dragon',
+  'dark',
+  'steel',
+  'fairy',
+] as const
+export type PokemonType = (typeof POKEMON_TYPES)[number]
+
+export const isPokemonType = (v: unknown): v is PokemonType =>
+  typeof v === 'string' && (POKEMON_TYPES as readonly string[]).includes(v)
+
+/** A Pokémon has one type or two; anything else in a save is read as no types at all. */
+export function pokemonTypes(value: unknown): PokemonType[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const types = [...new Set(value.filter(isPokemonType))].slice(0, 2)
+  return types.length > 0 ? types : undefined
+}
+
 /** Official mainline translations, in AppLanguage order: ko, en, ja, es. */
 const NATURE_NAMES: Record<PokemonNature, [string, string, string, string]> = {
   hardy: ['노력', 'Hardy', 'がんばりや', 'Fuerte'],
@@ -584,6 +673,41 @@ const NATURE_NAMES: Record<PokemonNature, [string, string, string, string]> = {
 export function natureName(nature: PokemonNature, lang: AppLanguage): string {
   const names = NATURE_NAMES[nature]
   return names[APP_LANGUAGES.indexOf(lang)] ?? names[1]
+}
+
+export type BattleStat = 'attack' | 'defense' | 'specialAttack' | 'specialDefense' | 'speed'
+
+/**
+ * The mainline nature effect: one stat ×1.1, another ×0.9, or neither for the five neutral ones.
+ * A `Record` over every nature, so a nature added without an effect fails to compile rather than
+ * quietly behaving as neutral.
+ */
+export const NATURE_STAT_EFFECT: Record<PokemonNature, { up?: BattleStat; down?: BattleStat }> = {
+  hardy: {},
+  lonely: { up: 'attack', down: 'defense' },
+  brave: { up: 'attack', down: 'speed' },
+  adamant: { up: 'attack', down: 'specialAttack' },
+  naughty: { up: 'attack', down: 'specialDefense' },
+  bold: { up: 'defense', down: 'attack' },
+  docile: {},
+  relaxed: { up: 'defense', down: 'speed' },
+  impish: { up: 'defense', down: 'specialAttack' },
+  lax: { up: 'defense', down: 'specialDefense' },
+  timid: { up: 'speed', down: 'attack' },
+  hasty: { up: 'speed', down: 'defense' },
+  serious: {},
+  jolly: { up: 'speed', down: 'specialAttack' },
+  naive: { up: 'speed', down: 'specialDefense' },
+  modest: { up: 'specialAttack', down: 'attack' },
+  mild: { up: 'specialAttack', down: 'defense' },
+  quiet: { up: 'specialAttack', down: 'speed' },
+  bashful: {},
+  rash: { up: 'specialAttack', down: 'specialDefense' },
+  calm: { up: 'specialDefense', down: 'attack' },
+  gentle: { up: 'specialDefense', down: 'defense' },
+  sassy: { up: 'specialDefense', down: 'speed' },
+  careful: { up: 'specialDefense', down: 'specialAttack' },
+  quirky: {},
 }
 
 // MARK: - Odds
@@ -674,6 +798,87 @@ export interface WildEncounter {
   throws: number
   /** langCode -> name, so the tab renders and follows a language switch offline. */
   names?: Record<string, string>
+  /** Rolled at spawn. Shapes the temperament and is shown beside the name. */
+  nature?: PokemonNature
+  /**
+   * Fixed at spawn from the species' base stats and the nature. Absent on an encounter from
+   * before temperaments existed, which reads as neutral (`temperamentOf`).
+   */
+  temperament?: Temperament
+  /**
+   * How it feels about *you*, right now. Persisted for the same reason `throws` is: closing the
+   * window must not be a free way to calm an angry Pokémon down. Absent reads as the initial mood
+   * for its temperament (`moodOf`) — an old encounter is never replayed into a worse mood.
+   */
+  mood?: Mood
+  /** A Razz Berry was eaten and the next ball is easier. Consumed by exactly one throw. */
+  primed?: boolean
+  /** Tokens this encounter has taken in attacks. Paid back if it is caught. */
+  stolen?: number
+  /** How many times the player paid to track this Pokémon back after it got away. */
+  trackedCount?: number
+  /**
+   * Its types, primary first, from `/pokemon/{id}`. Only the scenery reads them — the terrain it
+   * is met on. Absent when that request failed or on an encounter from before types were kept,
+   * which is met on the terrain of its rarity instead.
+   */
+  types?: PokemonType[]
+}
+
+/**
+ * A wild Pokémon's character, 0–100 each. Derived once, at spawn, from data that is fetched
+ * then — so every rule that reads it resolves with no network, under the save's lock.
+ */
+export interface Temperament {
+  /** From attack against defence: how easily it gets angry, and how hard it hits back. */
+  aggression: number
+  /** From speed: how easily it gets nervous. */
+  skittishness: number
+  /** From base happiness: how much a berry does for it. */
+  appetite: number
+}
+
+/** The live state of one encounter, 0–100 each. */
+export interface Mood {
+  /** Lowers the catch value; drives attacks. */
+  anger: number
+  /** Drives fleeing. */
+  nervousness: number
+  /** Built by feeding; raises the catch value. */
+  trust: number
+}
+
+/**
+ * An item lying in the wild queue. Picked up with a click, no roll: the intermediate reward
+ * between two Pokémon, so a long session with nothing rare still pays something out.
+ */
+export interface WildFind {
+  id: string
+  item: ItemKind
+  count: number
+  rarity: Rarity
+  /** Epoch milliseconds. Finds wander off on the same clock as Pokémon. */
+  appearedAt: number
+}
+
+/**
+ * A legendary that got away, kept long enough to be tracked back for a price. Carries everything
+ * needed to put the *same* Pokémon back in the queue without the network.
+ */
+export interface TrailEntry {
+  /** The encounter it was. */
+  id: string
+  speciesID: number
+  captureRate: number
+  isShiny: boolean
+  names?: Record<string, string>
+  nature?: PokemonNature
+  temperament?: Temperament
+  types?: PokemonType[]
+  /** Times already tracked; prices the next track and ends the trail at the limit. */
+  trackedCount: number
+  /** Epoch milliseconds: when it fled or wandered off. The trail goes cold from here. */
+  lostAt: number
 }
 
 /**
@@ -683,6 +888,10 @@ export interface WildEncounter {
  * meaning" — the day a migration is needed, this number is what it branches on, and adding it
  * then would be too late: every save in the wild would already be indistinguishable. History:
  * 1 = pre-versioning saves (the field is absent), 2 = the field exists.
+ *
+ * Not bumped for sync (`usedByDevice`, `revision`) nor for the encounter overhaul (mood,
+ * temperament, finds, the legendary trail): every one of those is additive, decodes to a default
+ * when absent, and changes the meaning of nothing already on disk.
  */
 export const COMPANION_STATE_SCHEMA = 2
 
@@ -745,7 +954,7 @@ export interface CompanionState {
    * applies exactly once.
    *
    * A granted legendary does not count: it spends no `encounterUsage`, so counting it would
-   * quietly consume a new player's cheap first encounter and charge them the full 2.5M for a
+   * quietly consume a new player's cheap first encounter and charge them the full threshold for a
    * gift they were given.
    */
   encountersSeen: number
@@ -785,6 +994,35 @@ export interface CompanionState {
    * lost, and never forces a legendary out of the queue to make room for itself.
    */
   owedLegendaryEncounters: number
+  /**
+   * Lifetime tokens accrued **on each device**, keyed by `DeviceIdentity.id`.
+   *
+   * What lets two machines merge without losing or doubling growth: the tokens one side has
+   * not seen are exactly `other[d] − this[d]` for every device `d`, and each line only ever
+   * grows, so the merge is a per-key max (a grow-only counter, `docs/sync.md` §3.1). Starts
+   * empty — usage from before this field existed stays in `usedSinceInstall` and never travels,
+   * because nothing can tell whose it was.
+   */
+  usedByDevice: Record<string, number>
+  /**
+   * Committed changes per device, keyed by `DeviceIdentity.id`: a version vector.
+   *
+   * Merging two saves needs to know whether one already contains the other (adopt it, nothing
+   * lost) or whether both moved since they last met (a fork). That is decided from these
+   * counters, **never from a wall clock**: a skewed clock would hand every fork to the wrong
+   * machine, permanently (`docs/sync.md` §7.5).
+   */
+  revision: Record<string, number>
+  /** Items waiting in the wild area. They share the queue's room with the Pokémon. */
+  finds: WildFind[]
+  /** Legendaries that got away and can still be tracked back. */
+  legendaryTrail: TrailEntry[]
+  /**
+   * Whether the next time the queue fills it is worth a notification. Cleared when the "full"
+   * notice fires and set again once a slot frees, so a queue that stays full announces itself
+   * once, not on every refresh. This machine's own, like `lastEncounterToastAt`.
+   */
+  queueFullArmed: boolean
 }
 
 export function freshCompanionState(hostLanguage?: string): CompanionState {
@@ -809,5 +1047,10 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     accrualDays: [],
     milestonesAwarded: 0,
     owedLegendaryEncounters: 0,
+    usedByDevice: {},
+    revision: {},
+    finds: [],
+    legendaryTrail: [],
+    queueFullArmed: true,
   }
 }

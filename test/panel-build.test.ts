@@ -10,7 +10,12 @@ import {
   type WildEncounter,
 } from '../src/core/companion/model.js'
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
-import { StreakBalance } from '../src/core/companion/encounters.js'
+import {
+  StreakBalance,
+  attackPermille,
+  encounterCatchChance,
+  fleePermille,
+} from '../src/core/companion/encounters.js'
 import { todayKey } from '../src/core/usage/entry.js'
 
 // The panel builder was the single largest piece of UI-shaping code outside the suite until it
@@ -105,6 +110,42 @@ describe('the ball rack', () => {
     expect(easy.wild.balls.find((b) => b.kind === 'pokeBall')?.oddsText).not.toBe('100%')
   })
 
+  // [trigger branch] The odds shown are the odds rolled — an angry Pokémon's mood is in the number.
+  it('prices the balls with the mood the encounter is in, exactly as the throw rolls', () => {
+    const angry = wild({ captureRate: 45, mood: { anger: 90, nervousness: 30, trust: 0 } })
+    const panel = build({ state: state({ wild: [angry] }) })
+    const poke = panel.wild.balls.find((b) => b.kind === 'pokeBall')!
+    const expected = encounterCatchChance(angry, 'pokeBall') * 100
+    expect(poke.oddsText).toBe(
+      `${expected >= 10 ? Math.round(expected) : Math.round(expected * 10) / 10}%`,
+    )
+    const calm = build({ state: state({ wild: [wild({ captureRate: 45 })] }) })
+    expect(calm.wild.balls.find((b) => b.kind === 'pokeBall')!.oddsText).not.toBe(poke.oddsText)
+  })
+
+  it('states the reaction risk from the same permille the roll is held to', () => {
+    const e = wild({ captureRate: 45, mood: { anger: 40, nervousness: 50, trust: 0 } })
+    const row = build({ state: state({ wild: [e] }) }).wild.encounters[0]!
+    expect(row.riskText).toContain(`${Math.round(fleePermille(e) / 10)}%`)
+    expect(row.riskText).toContain(`${Math.round(attackPermille(e) / 10)}%`)
+    expect(row.meters.map((m) => m.percent)).toEqual([40, 50, 0])
+  })
+
+  // The same two figures as riskText, one part each, so the dialog can lead each with its glyph
+  // without splitting a localised sentence.
+  it('splits the reaction risk into a heading and one part per reaction, in order', () => {
+    const e = wild({ captureRate: 45, mood: { anger: 40, nervousness: 50, trust: 0 } })
+    const row = build({ state: state({ wild: [e], language: 'es' }) }).wild.encounters[0]!
+    const flee = `${Math.round(fleePermille(e) / 10)}%`
+    const attack = `${Math.round(attackPermille(e) / 10)}%`
+    expect(row.risk.heading).toBe('Si se libera')
+    expect(row.risk.items).toEqual([
+      { key: 'flee', text: `huida ${flee}` },
+      { key: 'attack', text: `ataque ${attack}` },
+    ])
+    expect(row.riskText).toBe(`Si se libera: huida ${flee} · ataque ${attack}`)
+  })
+
   it('shows no odds with an empty stage', () => {
     const panel = build()
     for (const ball of panel.wild.balls) expect(ball.oddsText).toBeUndefined()
@@ -113,6 +154,77 @@ describe('the ball rack', () => {
   it('counts the starter balls a fresh save carries', () => {
     const panel = build()
     expect(panel.wild.balls.find((b) => b.kind === 'pokeBall')?.count).toBe(Pokeball.starterCount)
+  })
+})
+
+describe('wild statuses', () => {
+  // A primed berry and stolen tokens are statuses on the plate; the dialog keeps to the question.
+  it('turns a primed berry and stolen tokens into plate chips, with the sentence behind each', () => {
+    const row = build({ state: state({ wild: [wild({ primed: true, stolen: 4_000_000 })] }) }).wild
+      .encounters[0]!
+    expect(row.statuses.map((s) => s.key)).toEqual(['primed', 'stolen'])
+    expect(row.statuses[1]!.text).toContain('4M')
+    expect(row.statuses[1]!.title).toBe(row.stolenText)
+    expect(build({ state: state({ wild: [wild()] }) }).wild.encounters[0]!.statuses).toEqual([])
+  })
+
+  it('counts who waits behind the one on stage, and says nothing when it is alone', () => {
+    expect(
+      build({ state: state({ wild: [wild({ id: 'a' }), wild({ id: 'b' }), wild({ id: 'c' })] }) }).wild
+        .moreText,
+    ).toContain('2')
+    expect(build({ state: state({ wild: [wild()] }) }).wild.moreText).toBeUndefined()
+  })
+})
+
+describe('the terrain', () => {
+  // The scenery follows the primary type; an encounter whose type never arrived (an old save, a
+  // failed `/pokemon` request) keeps the rarity scenery it always had.
+  it('meets a Pokémon on the terrain of its primary type', () => {
+    const row = (over: Partial<WildEncounter>) =>
+      build({ state: state({ wild: [wild(over)] }) }).wild.encounters[0]!
+    expect(row({ types: ['bug', 'flying'] }).terrain).toBe('bug')
+    expect(row({ types: undefined, rarity: 'rare' }).terrain).toBe('rare')
+  })
+})
+
+describe('the wallet', () => {
+  const rich = state({ usedSinceInstall: 50_000_000, spentTokens: 0 })
+
+  it('signs and formats a change in the balance', () => {
+    expect(build({ state: rich, walletChange: { previous: 40_000_000, id: 7 } }).walletChange).toEqual({
+      id: 7,
+      text: '+10M',
+      kind: 'gain',
+    })
+    expect(build({ state: rich, walletChange: { previous: 54_000_000, id: 8 } }).walletChange).toEqual({
+      id: 8,
+      text: '\u22124M',
+      kind: 'loss',
+    })
+  })
+
+  // [trigger branch] A change that nets to zero is no change: nothing to animate.
+  it('says nothing when the balance did not move', () => {
+    expect(
+      build({ state: rich, walletChange: { previous: 50_000_000, id: 9 } }).walletChange,
+    ).toBeUndefined()
+    expect(build({ state: rich }).walletChange).toBeUndefined()
+  })
+})
+
+describe('the bag', () => {
+  // The pocket is decided in the core from the item kind, so the webview only draws tabs.
+  it('files every owned item into the pocket its kind belongs to', () => {
+    const panel = build({
+      state: state({ inventory: { pokeBall: 2, masterBall: 1, razzBerry: 3, rareCandy: 1, mint: 1 } }),
+    })
+    const pocketOf = (id: string) => panel.bag.find((item) => item.id === id)?.pocket
+    expect(pocketOf('item:pokeBall')).toBe('balls')
+    expect(pocketOf('item:masterBall')).toBe('balls')
+    expect(pocketOf('item:razzBerry')).toBe('berries')
+    expect(pocketOf('item:rareCandy')).toBe('items')
+    expect(pocketOf('item:mint')).toBe('items')
   })
 })
 
@@ -247,13 +359,26 @@ describe('the shop', () => {
     expect(lines.some((l) => l.includes('Uncommon or better'))).toBe(true)
   })
 
+  // The eggs were the one row drawn as an emoji beside a shelf of sprites. The emoji stays as
+  // the fallback for a sprite that fails to load.
+  it('gives every egg row the egg sprite, with the emoji behind it', () => {
+    const eggs = build({ state: state({ active: activeMon }) }).shop.filter(
+      (item) => item.group === 'eggs',
+    )
+    expect(eggs).toHaveLength(3)
+    for (const egg of eggs) {
+      expect(egg.sprite).toBe('egg')
+      expect(egg.emoji).toBe('🥚')
+    }
+  })
+
   it('sells eggs only while there is a Pokémon to discard', () => {
     expect(build().shop.some((item) => item.group === 'eggs')).toBe(false)
   })
 
   it('assigns every row to a rendered group and prices every action', () => {
     for (const item of build().shop) {
-      expect(['balls', 'items', 'eggs']).toContain(item.group)
+      expect(['balls', 'berries', 'items', 'eggs']).toContain(item.group)
       expect(item.actions.length).toBeGreaterThan(0)
       for (const action of item.actions) expect(action.priceText).not.toBe('')
     }

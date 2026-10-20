@@ -185,7 +185,17 @@ body.paused .companion-mon img.bob {
     animation: none;
   }
 }
-.egg {
+/* The egg: PokéAPI's sprite, which sits in the middle 28×30 of a 96px sheet. `object-view-box`
+   crops to exactly that and the box draws it at ×2 — a whole multiple, so `pixelated` is exact.
+   The emoji the img falls back to (the class travels with it) keeps the old glyph sizes. */
+img.egg,
+.companion-mon img.egg-small {
+  width: 56px;
+  height: 60px;
+  object-view-box: inset(34px 34px 32px 34px);
+  image-rendering: pixelated;
+}
+span.egg {
   font-size: 54px;
   line-height: 1;
 }
@@ -238,6 +248,17 @@ body.paused .companion-mon img.bob {
   background: var(--vscode-charts-blue);
   border-radius: 2px;
 }
+/* Forced colours replace every background colour with the canvas, so each fill — progress,
+   limits, mood, EXP — vanished into its own track and every bar read as empty. A system colour
+   survives the forcing, and the important beats each bar's own, more specific fill. */
+@media (forced-colors: active) {
+  .bar {
+    border: 1px solid CanvasText;
+  }
+  .bar i {
+    background: CanvasText !important;
+  }
+}
 
 /* ---- usage rows ----
    Label, value and cost on one line. The previous three stacked cards spent 9 lines on 3 numbers
@@ -256,10 +277,8 @@ body.paused .companion-mon img.bob {
   border-bottom: 1px solid color-mix(in srgb, var(--vscode-panel-border) 70%, transparent);
 }
 .row-stat .label {
-  opacity: 0.7;
-  font-size: 0.85em;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  opacity: 0.75;
+  font-size: 0.92em;
 }
 .row-stat .value {
   font-weight: 600;
@@ -772,11 +791,9 @@ td.dim {
    One bar per window. `.bar` is shared with the companion's progress, so both read as the same
    kind of object; only the fill colour differs, and it comes from the severity the core decided. */
 h2.section {
-  font-size: 0.85em;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  opacity: 0.7;
+  font-size: 0.95em;
+  font-weight: 700;
+  opacity: 0.85;
   margin: 16px 0 8px;
 }
 .limits {
@@ -852,36 +869,28 @@ h2.section {
 
 .wild-scene {
   position: relative;
-  min-height: 180px;
-  transition: min-height 200ms ease;
-  padding: 12px 12px 8px;
-  margin-bottom: 12px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  height: 236px;
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  border-radius: 10px 10px 0 0;
+  isolation: isolate;
 }
 
 /* Sprites at native size only: the trainer is 80px, the ball 30px — `pixelated` is exact
    at whole multiples and mush everywhere else, the same rule the hero follows. */
 .wild-scene .trainer {
   position: absolute;
-  left: 10%;
-  top: 38px;
+  left: 4%;
+  bottom: 26px;
   width: 80px;
   height: 80px;
   image-rendering: pixelated;
+  z-index: 2;
 }
 /* Idle days need no room for a rack or a title — just the team standing there. The extra 10px
    over the old 132 is headroom, not clearance: a full-size follower reaches the top of its
    96px box, and at 132 the tallest ones stood with their ears in the border. */
 .wild-scene:not(.has-wild) {
-  min-height: 142px;
-  margin-bottom: 10px;
+  height: 168px;
 }
 
 /* The companion at the trainer's side, standing on the same ground line as everyone else:
@@ -898,32 +907,23 @@ h2.section {
    a glyph, not a sprite — sits on the box's bottom edge, which is the ground line. */
 .companion-mon {
   position: absolute;
-  /* +54 keeps the sprite's centre exactly where the 48px box put it (54 + 48 == 78 + 24): the
-     follower grew in place instead of walking away from the trainer. */
-  left: calc(10% + 54px);
-  top: 22px;
+  left: calc(4% + 52px);
+  bottom: 26px;
   width: 96px;
   height: 96px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  z-index: 2;
 }
 .companion-mon img {
   image-rendering: pixelated;
 }
-.companion-mon .egg-small {
+.companion-mon span.egg-small {
   font-size: 44px;
   line-height: 1;
 }
 
-/* The companion block under a quiet scene: the old hero's content without its box —
-   the scene above already frames the subject. */
-.scene-info {
-  display: grid;
-  justify-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
 /* Shares `.progress` with the companion; only the spacing is its own. */
 .next-encounter {
   width: 100%;
@@ -1006,15 +1006,18 @@ h2.section {
    mon's container bottom sits at 22+96=118px with the image flex-aligned to it. The image
    itself renders at native ×1 — Gen-V sprites carry their own relative scale (Aron 32px,
    Wailord 103px), and an 80px Showdown trainer is drawn at exactly that human scale. */
+/* Horizontally the box *is* the platform — same right edge, same width — so the frame is centred
+   on its ellipse whatever its width. Sized by the sprite instead, a slim one stood at the edge. */
 .wild-mon {
   position: absolute;
-  right: 12%;
-  top: 22px;
+  right: 3%;
+  top: 34px;
+  width: 136px;
   height: 96px;
-  min-width: 64px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  z-index: 2;
 }
 .wild-mon img {
   image-rendering: pixelated;
@@ -1024,10 +1027,11 @@ h2.section {
    image — three axes, three elements, because one transform cannot ease each independently. */
 .throw-ball {
   position: absolute;
-  left: 18%;
-  top: 78px;
+  left: calc(4% + 44px);
+  bottom: 70px;
   opacity: 0;
   pointer-events: none;
+  z-index: 3;
 }
 .throw-ball img {
   width: 30px;
@@ -1066,12 +1070,25 @@ h2.section {
   0% {
     transform: translateY(0);
   }
-  45% {
-    transform: translateY(-64px);
+  50% {
+    transform: translateY(calc(var(--throw-rise, 0px) - 48px));
   }
   100% {
-    transform: translateY(0);
+    transform: translateY(var(--throw-rise, 0px));
   }
+}
+/* The arc ends in the air, by the wild Pokémon; once it is inside, the ball drops onto the
+   platform to wobble there, as it does in the games. */
+.wild-scene.absorbing .throw-ball-y,
+.wild-scene.landed .throw-ball-y,
+.wild-scene.caught .throw-ball-y {
+  display: block;
+  transform: translateY(var(--throw-rise, 0px));
+  transition: transform 220ms cubic-bezier(0.5, 0, 0.9, 0.6);
+}
+.wild-scene.landed .throw-ball-y,
+.wild-scene.caught .throw-ball-y {
+  transform: translateY(calc(var(--throw-rise, 0px) + 32px));
 }
 @keyframes ball-spin {
   to {
@@ -1181,152 +1198,1311 @@ body.paused .wild-scene *::after {
   }
 }
 
-.wild-title {
-  margin-top: 108px;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* ---- the battle screen ----
+   The one loud thing in the panel. The scene is an illustration, so it carries its own palette
+   instead of the editor theme's: the sky says how rare the Pokémon on stage is before its name
+   does. Everything around it — the plates, the dialog box, the menu — borrows the games' own
+   vernacular, and the rest of the panel stays quiet. */
+/* The game's own palette: paper and ink for plates and menus, the dialog box's blue, the
+   Pokédex's red. Illustration colours, shared by every tab that draws a piece of the game. */
+:root {
+  --ink: #1d2433;
+  --paper: #f4f6ef;
+  --paper-edge: #c9d1c0;
+  --anger: #e5484d;
+  --nerves: #f2a531;
+  --trust: #3fae5f;
+  --exp: #3d8bfd;
+  --dialog: #22304d;
+  --dialog-text: #f5f7fb;
+  --dialog-rule: #8ea6d6;
+  --dex-red: #d4433b;
+  --dex-red-deep: #a72f29;
+  --rarity-common: #8a94a3;
+  --rarity-uncommon: #2f8f4e;
+  --rarity-rare: #4b55c4;
+  --rarity-legendary: #9a43d8;
+  /* A link drawn on paper, which is not the editor's background. */
+  --paper-link: #2a5bd7;
+  /* A field to type or choose in, a shade off the paper it sits on. */
+  --paper-field: #fff;
 }
-.wild-title .desc {
-  opacity: 0.7;
-  font-size: 0.85em;
+/* A dark editor gets dark paper: the menu, the plates, the shop counter and the bag stop being
+   the one white block in a dark window. Every piece drawn in paper and ink follows from these
+   three, so nothing else needs a dark variant. */
+body.vscode-dark,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) {
+  --ink: #e6eaf2;
+  --paper: #262c38;
+  --paper-edge: #0e1117;
+  --paper-link: #8fb4ff;
+  --paper-field: #1a1f29;
+  color-scheme: dark;
 }
-/* An empty rack is the moment of highest purchase intent: a real button, not a footnote. */
-.no-balls {
-  display: grid;
-  justify-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-.no-balls .desc {
-  margin: 0;
-  opacity: 0.7;
-  font-size: 0.85em;
-  text-align: center;
-}
-/* Rarity tints the name, quietly, using the editor's own chart palette. */
-.wild-scene.rarity-uncommon .wild-title .title {
-  color: var(--vscode-charts-green);
-}
-.wild-scene.rarity-rare .wild-title .title {
-  color: var(--vscode-charts-blue);
-}
-.wild-scene.rarity-legendary .wild-title .title {
-  color: var(--vscode-charts-purple);
-}
-.wild-result {
-  min-height: 1.2em;
-  margin: 0;
-  font-weight: 600;
-  text-align: center;
+.battle {
+  container-type: inline-size;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
 }
 
-/* Wraps rather than overflowing: a VS Code sidebar narrows well past the four balls plus
-   Run, and without this the Run button was simply clipped off the right edge — the one
-   control that costs nothing to use, unreachable. */
-.ball-rack {
+/* Terrains. The wild Pokémon is met on ground that suits its primary type — a beach for a water
+   type, a volcano for a fire one — and one it has no type for (an old save, a failed request) on
+   the scenery of its rarity. With nobody on stage, the home meadow.
+
+   Drawn, not bundled: game battle backgrounds are Nintendo's artwork, and the licence obligation
+   that keeps the sprites a runtime fetch from PokéAPI has no such source for scenery. So every
+   terrain is the same drawing — sky, horizon, ground, platform, a weather layer — and only its
+   colours change. That is also what lets one terrain *become* the next: each colour is a
+   registered property, and a registered property interpolates where a gradient cannot. main.ts
+   repaints the scene with the previous terrain first, then sets the new one, so the change runs
+   as a transition rather than a cut. */
+@property --sky-top {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #8fd3f4;
+}
+@property --sky-bottom {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #c9ecf7;
+}
+@property --ground-top {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #8fcf6b;
+}
+@property --ground-bottom {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #6fb653;
+}
+@property --pad {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #b5e08e;
+}
+@property --pad-rim {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #6fa64f;
+}
+/* High enough that the wild side's platform stands on the ground, as both sides do in the
+   games — at 62% it floated in the sky. test/scene-geometry.test.ts holds it there. */
+@property --horizon {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 42%;
+}
+/* The weather: how strongly each layer of `::before` shows, 0 to 1. Numbers, so they fade too. */
+@property --clouds {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+@property --stars {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --aurora {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --bubbles {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --embers {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --snow {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+@property --sparkles {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+.wild-scene[data-terrain] {
+  background:
+    linear-gradient(
+      180deg,
+      transparent var(--horizon),
+      var(--ground-top) var(--horizon),
+      var(--ground-bottom) 100%
+    ),
+    linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) var(--horizon));
+  transition-property:
+    --sky-top, --sky-bottom, --ground-top, --ground-bottom, --pad, --pad-rim, --horizon, --clouds,
+    --stars, --aurora, --bubbles, --embers, --snow, --sparkles;
+  transition-duration: 900ms;
+  transition-timing-function: ease-in-out;
+}
+.wild-scene[data-terrain]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    /* clouds */
+    radial-gradient(38px 12px at 18% 16%, rgb(255 255 255 / calc(0.9 * var(--clouds))), transparent 70%),
+    radial-gradient(26px 9px at 24% 12%, rgb(255 255 255 / calc(0.85 * var(--clouds))), transparent 70%),
+    radial-gradient(46px 13px at 74% 9%, rgb(255 255 255 / calc(0.75 * var(--clouds))), transparent 70%),
+    /* aurora */
+    radial-gradient(120% 40% at 70% 6%, rgb(98 230 196 / calc(0.45 * var(--aurora))), transparent 60%),
+    radial-gradient(80% 32% at 20% 14%, rgb(179 136 255 / calc(0.35 * var(--aurora))), transparent 70%),
+    /* stars */ radial-gradient(1px 1px at 12% 18%, rgb(255 255 255 / var(--stars)), transparent),
+    radial-gradient(1px 1px at 34% 8%, rgb(255 255 255 / var(--stars)), transparent),
+    radial-gradient(1px 1px at 58% 26%, rgb(255 255 255 / var(--stars)), transparent),
+    radial-gradient(1px 1px at 82% 12%, rgb(255 255 255 / var(--stars)), transparent),
+    radial-gradient(1px 1px at 92% 34%, rgb(255 255 255 / var(--stars)), transparent),
+    radial-gradient(1px 1px at 22% 40%, rgb(255 255 255 / var(--stars)), transparent),
+    /* bubbles rising off the water */
+    radial-gradient(
+        circle 4px at 30% 52%,
+        transparent 55%,
+        rgb(255 255 255 / calc(0.7 * var(--bubbles))) 65%,
+        transparent 80%
+      ),
+    radial-gradient(
+      circle 3px at 52% 40%,
+      transparent 55%,
+      rgb(255 255 255 / calc(0.6 * var(--bubbles))) 65%,
+      transparent 80%
+    ),
+    radial-gradient(
+      circle 5px at 88% 30%,
+      transparent 55%,
+      rgb(255 255 255 / calc(0.6 * var(--bubbles))) 65%,
+      transparent 80%
+    ),
+    radial-gradient(
+      circle 3px at 64% 20%,
+      transparent 55%,
+      rgb(255 255 255 / calc(0.5 * var(--bubbles))) 65%,
+      transparent 80%
+    ),
+    /* embers */ radial-gradient(circle 2px at 26% 30%, rgb(255 196 92 / var(--embers)), transparent),
+    radial-gradient(circle 1.5px at 48% 18%, rgb(255 140 60 / var(--embers)), transparent),
+    radial-gradient(circle 2px at 70% 40%, rgb(255 210 120 / var(--embers)), transparent),
+    radial-gradient(circle 1.5px at 90% 22%, rgb(255 150 70 / var(--embers)), transparent),
+    /* snow */ radial-gradient(circle 2px at 14% 24%, rgb(255 255 255 / var(--snow)), transparent),
+    radial-gradient(circle 1.5px at 36% 44%, rgb(255 255 255 / var(--snow)), transparent),
+    radial-gradient(circle 2px at 56% 14%, rgb(255 255 255 / var(--snow)), transparent),
+    radial-gradient(circle 1.5px at 76% 36%, rgb(255 255 255 / var(--snow)), transparent),
+    radial-gradient(circle 2px at 94% 10%, rgb(255 255 255 / var(--snow)), transparent),
+    /* sparkles */ radial-gradient(circle 2px at 20% 22%, rgb(255 236 250 / var(--sparkles)), transparent),
+    radial-gradient(circle 1.5px at 44% 36%, rgb(255 210 236 / var(--sparkles)), transparent),
+    radial-gradient(circle 2px at 66% 12%, rgb(255 236 250 / var(--sparkles)), transparent),
+    radial-gradient(circle 1.5px at 86% 42%, rgb(255 210 236 / var(--sparkles)), transparent);
+}
+/* Motion is the transition's only content: without it the terrain simply is what it is. */
+@media (prefers-reduced-motion: reduce) {
+  .wild-scene[data-terrain] {
+    transition: none;
+  }
+}
+body.paused .wild-scene[data-terrain] {
+  transition: none;
+}
+
+/* With nobody on stage: the home meadow, its horizon lower to leave the team more sky. */
+.wild-scene[data-terrain='home'] {
+  --horizon: 48%;
+}
+/* The rarity sceneries, for an encounter whose type is unknown. `common` is the default above. */
+.wild-scene[data-terrain='uncommon'] {
+  --sky-top: #5aa79a;
+  --sky-bottom: #b9dfb5;
+  --ground-top: #4e9a5b;
+  --ground-bottom: #3a7f49;
+  --pad: #7fbf74;
+  --pad-rim: #3d7a45;
+}
+.wild-scene[data-terrain='rare'] {
+  --sky-top: #2e3266;
+  --sky-bottom: #8d7cc9;
+  --ground-top: #4a4f8c;
+  --ground-bottom: #383c6e;
+  --pad: #7d79c4;
+  --pad-rim: #45428a;
+  --clouds: 0;
+}
+.wild-scene[data-terrain='legendary'] {
+  --sky-top: #0b0d2b;
+  --sky-bottom: #34266b;
+  --ground-top: #2a2457;
+  --ground-bottom: #1c1840;
+  --pad: #5b4c9e;
+  --pad-rim: #2c2363;
+  --clouds: 0;
+  --stars: 0.8;
+  --aurora: 1;
+}
+
+/* The eighteen types. */
+.wild-scene[data-terrain='normal'] {
+  --sky-top: #8fd3f4;
+  --sky-bottom: #d6eef5;
+  --ground-top: #b4cf84;
+  --ground-bottom: #94b468;
+  --pad: #cfe2a4;
+  --pad-rim: #8aa95c;
+}
+.wild-scene[data-terrain='grass'] {
+  --sky-top: #7cc7e8;
+  --sky-bottom: #cdeed2;
+  --ground-top: #5fb04f;
+  --ground-bottom: #3f8f3a;
+  --pad: #8fd16f;
+  --pad-rim: #4f9a43;
+}
+.wild-scene[data-terrain='bug'] {
+  --sky-top: #a6d36a;
+  --sky-bottom: #e6f2bd;
+  --ground-top: #7a9e36;
+  --ground-bottom: #5f7f28;
+  --pad: #b5d36a;
+  --pad-rim: #6f8f2f;
+}
+.wild-scene[data-terrain='fire'] {
+  --sky-top: #e9663a;
+  --sky-bottom: #fbcf86;
+  --ground-top: #9c4a2c;
+  --ground-bottom: #6e2f1c;
+  --pad: #d47b4f;
+  --pad-rim: #8a3e22;
+  --clouds: 0;
+  --embers: 1;
+}
+.wild-scene[data-terrain='water'] {
+  --sky-top: #59b2e6;
+  --sky-bottom: #c4e8f8;
+  --ground-top: #3b86c9;
+  --ground-bottom: #2a5f9e;
+  --pad: #8cc9ee;
+  --pad-rim: #3a78b5;
+  --clouds: 0.6;
+  --bubbles: 1;
+}
+.wild-scene[data-terrain='electric'] {
+  --sky-top: #f2c934;
+  --sky-bottom: #fcefb0;
+  --ground-top: #c9a83a;
+  --ground-bottom: #a3822a;
+  --pad: #ecd77a;
+  --pad-rim: #a9902f;
+  --clouds: 0.5;
+  --sparkles: 0.6;
+}
+.wild-scene[data-terrain='ice'] {
+  --sky-top: #9fd6ee;
+  --sky-bottom: #eaf7fc;
+  --ground-top: #d6eef8;
+  --ground-bottom: #a9d3e6;
+  --pad: #f2fafd;
+  --pad-rim: #8fc0d6;
+  --clouds: 0.3;
+  --snow: 1;
+}
+.wild-scene[data-terrain='fighting'] {
+  --sky-top: #d98a5f;
+  --sky-bottom: #f4d6b8;
+  --ground-top: #a86a45;
+  --ground-bottom: #85502f;
+  --pad: #c89470;
+  --pad-rim: #8a5a38;
+  --clouds: 0.5;
+}
+.wild-scene[data-terrain='poison'] {
+  --sky-top: #7d4f9c;
+  --sky-bottom: #cdb0de;
+  --ground-top: #6d4a86;
+  --ground-bottom: #523568;
+  --pad: #a77fc0;
+  --pad-rim: #5f3f7a;
+  --clouds: 0;
+  --bubbles: 0.7;
+}
+.wild-scene[data-terrain='ground'] {
+  --sky-top: #e3b46e;
+  --sky-bottom: #f6e4bc;
+  --ground-top: #c09050;
+  --ground-bottom: #9c7038;
+  --pad: #d8b273;
+  --pad-rim: #9a7440;
+  --clouds: 0.4;
+}
+.wild-scene[data-terrain='rock'] {
+  --sky-top: #a9a08a;
+  --sky-bottom: #e3ddcc;
+  --ground-top: #8d7a55;
+  --ground-bottom: #6e5e40;
+  --pad: #bfae86;
+  --pad-rim: #7d6b47;
+  --clouds: 0.4;
+}
+.wild-scene[data-terrain='flying'] {
+  --sky-top: #6fbcef;
+  --sky-bottom: #e6f5fd;
+  --ground-top: #c2e1f4;
+  --ground-bottom: #93c4e6;
+  --pad: #f6fbff;
+  --pad-rim: #9cc8e4;
+}
+.wild-scene[data-terrain='psychic'] {
+  --sky-top: #c75b9b;
+  --sky-bottom: #f6c8df;
+  --ground-top: #b0598f;
+  --ground-bottom: #874271;
+  --pad: #e39cc4;
+  --pad-rim: #a35387;
+  --clouds: 0;
+  --sparkles: 0.8;
+}
+.wild-scene[data-terrain='fairy'] {
+  --sky-top: #f2a1c6;
+  --sky-bottom: #fde4ef;
+  --ground-top: #e6b3cf;
+  --ground-bottom: #cf94b6;
+  --pad: #f6cfe0;
+  --pad-rim: #c98aab;
+  --clouds: 0.6;
+  --sparkles: 1;
+}
+.wild-scene[data-terrain='ghost'] {
+  --sky-top: #231f45;
+  --sky-bottom: #6a5a98;
+  --ground-top: #4a3f6e;
+  --ground-bottom: #352c52;
+  --pad: #6e5f9a;
+  --pad-rim: #3a2f5e;
+  --clouds: 0;
+  --stars: 0.7;
+}
+.wild-scene[data-terrain='dark'] {
+  --sky-top: #17161f;
+  --sky-bottom: #4d4559;
+  --ground-top: #3a3440;
+  --ground-bottom: #28232c;
+  --pad: #5b5163;
+  --pad-rim: #2f2933;
+  --clouds: 0;
+  --stars: 0.9;
+}
+.wild-scene[data-terrain='dragon'] {
+  --sky-top: #3a3d9c;
+  --sky-bottom: #9aa0e8;
+  --ground-top: #3d3f8a;
+  --ground-bottom: #2c2d68;
+  --pad: #7479cf;
+  --pad-rim: #3a3c8a;
+  --clouds: 0;
+  --stars: 0.5;
+  --aurora: 0.5;
+}
+.wild-scene[data-terrain='steel'] {
+  --sky-top: #8fa2b4;
+  --sky-bottom: #e0e6ec;
+  --ground-top: #8a96a3;
+  --ground-bottom: #6d7884;
+  --pad: #c3ccd5;
+  --pad-rim: #7b8794;
+  --clouds: 0.4;
+}
+/* A legendary keeps its night sky's aurora over whatever ground it is met on. */
+.wild-scene.rarity-legendary {
+  --aurora: 0.8;
+}
+
+.battle + .line {
+  margin-top: 4px;
+}
+
+/* The platforms the two sides stand on, as in every battle since Ruby. */
+.pad {
+  position: absolute;
+  border-radius: 50%;
+  z-index: 1;
+  /* A patch of the biome's own ground with a darker rim, which is how the games draw it. */
+  background: radial-gradient(closest-side, var(--pad) 62%, var(--pad-rim) 92%, transparent);
+}
+.pad-wild {
+  right: 3%;
+  top: 116px;
+  width: 136px;
+  height: 28px;
+}
+.pad-player {
+  left: 1%;
+  bottom: 14px;
+  width: 172px;
+  height: 30px;
+}
+
+/* The plates: paper and ink, one corner cut, as the games draw them. */
+.plate {
+  position: absolute;
+  z-index: 4;
+  padding: 5px 8px 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 10px 4px 10px 4px;
+  box-shadow: 0 2px 0 var(--paper-edge);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.plate-wild {
+  left: 8px;
+  top: 8px;
+  width: min(58%, 210px);
+}
+.plate-player {
+  right: 8px;
+  bottom: 10px;
+  width: min(50%, 190px);
+}
+.plate-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+.plate-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plate-pct {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.plate-sub {
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rarity-badge {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #6b7686;
+}
+.rarity-badge.uncommon {
+  background: #2f8f4e;
+}
+.rarity-badge.rare {
+  background: #4b55c4;
+}
+.rarity-badge.legendary {
+  background: linear-gradient(90deg, #7b3fe4, #d0479b);
+}
+
+/* Where the games put HP: anger, nerves and trust — as gauges of ten cells, each led by its
+   glyph. An empty gauge still shows its cells, so "none yet" reads as a measure at zero, not as
+   a bar that failed to draw. */
+/* One column grid shared by the three rows (subgrid), so the bars start together after the
+   longest label in the language at hand rather than after a guessed width. */
+.meters {
+  display: grid;
+  grid-template-columns: 14px max-content minmax(0, 1fr);
+  column-gap: 5px;
+  row-gap: 3px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.meter {
+  --tone: var(--ink);
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+.meter.anger {
+  --tone: var(--anger);
+}
+.meter.nervousness {
+  --tone: var(--nerves);
+}
+.meter.trust {
+  --tone: var(--trust);
+}
+.codicon.meter-icon {
+  font-size: 12px;
+  color: var(--tone);
+  opacity: 0.45;
+  transition: opacity 300ms ease;
+}
+.meter:not([data-tone='low']) .meter-icon {
+  opacity: 1;
+}
+.meter-label {
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+/* Calm: the three gauges share one line, each led only by its glyph; the label stays in the
+   DOM for the screen reader and in the row's title for the pointer. */
+.meters.calm {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 8px;
+}
+.meters.calm .meter {
+  grid-column: auto;
+  grid-template-columns: 12px minmax(0, 1fr);
+  column-gap: 3px;
+}
+/* Five cells in the short gauge, so a cell stays a cell and not a 2px hairline. */
+.meters.calm .bar.gauge {
+  -webkit-mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 calc(20% - 2px),
+    transparent calc(20% - 2px) 20%
+  );
+  mask-image: repeating-linear-gradient(90deg, #000 0 calc(20% - 2px), transparent calc(20% - 2px) 20%);
+}
+.meters.calm .meter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.plate .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  overflow: hidden;
+}
+.plate .bar i {
+  display: block;
+  height: 100%;
+  border-radius: 0;
+  transition: width 500ms ease;
+}
+/* The cells are cut by a mask, so the fill keeps its one width from paintBars() and still lands
+   on cell edges only as far as the core's percent says. */
+.plate .bar.gauge {
+  height: 7px;
+  border: none;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  -webkit-mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 calc(10% - 2px),
+    transparent calc(10% - 2px) 10%
+  );
+  mask-image: repeating-linear-gradient(90deg, #000 0 calc(10% - 2px), transparent calc(10% - 2px) 10%);
+}
+.plate .bar.gauge i {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tone) 70%, #fff) 0 35%,
+    var(--tone) 35% 100%
+  );
+}
+/* Loud when it matters: a high anger flickers, high nerves tremble, a high trust beats. */
+.meter.anger[data-tone='high'] .meter-icon {
+  animation: mood-flicker 900ms ease-in-out infinite;
+}
+.meter.nervousness[data-tone='high'] .meter-icon {
+  animation: mood-tremble 260ms linear infinite;
+}
+.meter.trust[data-tone='high'] .meter-icon {
+  animation: mood-beat 1100ms ease-in-out infinite;
+}
+@keyframes mood-flicker {
+  50% {
+    transform: scale(1.18) translateY(-1px);
+    filter: brightness(1.3);
+  }
+}
+@keyframes mood-tremble {
+  25% {
+    transform: translateX(-1px);
+  }
+  75% {
+    transform: translateX(1px);
+  }
+}
+@keyframes mood-beat {
+  15%,
+  45% {
+    transform: scale(1.22);
+  }
+  30% {
+    transform: scale(1);
+  }
+}
+body.paused .meter .meter-icon {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .meter .meter-icon {
+    animation: none !important;
+  }
+}
+/* Forced colours paint the track as canvas: the empty cells keep a system grey of their own. */
+@media (forced-colors: active) {
+  .plate .bar.gauge {
+    forced-color-adjust: none;
+    background: GrayText;
+  }
+  .plate .bar.gauge i {
+    background: CanvasText !important;
+  }
+}
+/* Details behind a glyph beside a plate's name — the wild one's temperament, your companion's
+   stage, rarity and nature: read on hover, focus or a screen reader. */
+.codicon.plate-info {
+  flex: none;
+  align-self: center;
+  font-size: 12px;
+  opacity: 0.55;
+  cursor: help;
+}
+.codicon.plate-info:hover,
+.codicon.plate-info:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+.plate .bar.exp {
+  margin: 4px 0 3px;
+}
+.plate .bar.exp i {
+  background: var(--exp);
+}
+/* The companion's road: the same rule and cells as the wild plate's mood, in EXP blue. */
+.exp-row {
+  --tone: var(--exp);
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+}
+.exp-row .meter-icon {
+  opacity: 1;
+}
+.plate .exp-row .bar.exp {
+  margin: 0;
+}
+.plate .bar.exp.gauge i {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tone) 70%, #fff) 0 35%,
+    var(--tone) 35% 100%
+  );
+}
+.plate-player .plate-pct {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--exp) 22%, transparent);
+  color: color-mix(in srgb, var(--exp) 55%, var(--ink));
+  font-size: 10.5px;
+}
+.plate-sub.to-next {
+  margin-top: 2px;
+  font-size: 10px;
+}
+
+/* The dialog box: double rule, white on deep blue, in every editor theme. The question and
+   what a miss risks share a line when they fit; a longer result line pushes the risk under it. */
+.dialog {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  padding: 8px 13px 9px;
+  background: var(--dialog);
+  color: var(--dialog-text);
+  border: 2px solid var(--dialog-text);
+  outline: 2px solid var(--dialog-rule);
+  outline-offset: -6px;
+  border-radius: 0 0 4px 4px;
+}
+.dialog-text {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+.dialog-text.empty {
+  display: none;
+}
+.dialog-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  opacity: 0.78;
+}
+.dialog .progress {
+  flex-basis: 100%;
+  margin-top: 6px;
+}
+/* In battle the dialog is one slim line — the question, or what just happened — over the menu
+   that answers it. */
+.dialog.slim {
+  padding: 5px 12px 6px;
+  outline-offset: -5px;
+}
+.dialog.slim .dialog-text {
+  font-size: 12px;
+}
+/* What a miss risks, heading the menu: the heading, then each reaction as a chip led by its
+   glyph — the price of a throw, read beside the balls it is the price of. */
+.dialog-note.risk {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 3px 5px;
+  margin: 3px 0 0;
+  opacity: 1;
+}
+.commands .dialog-note.risk {
   justify-content: center;
-  gap: 6px;
+  margin: 0 0 2px;
+  padding: 1px 4px 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+  font-size: 11px;
 }
-.ball-rack .ball {
-  display: flex;
-  flex-direction: column;
+.commands .risk-item {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+.commands .risk-item.flee .codicon {
+  color: var(--nerves);
+}
+.commands .risk-item.attack .codicon {
+  color: var(--anger);
+}
+.risk-heading {
+  opacity: 0.7;
+}
+.risk-item {
+  display: inline-flex;
   align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dialog-text) 12%, transparent);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.risk-item .codicon {
+  font-size: 11px;
+}
+.risk-item.flee .codicon {
+  color: color-mix(in srgb, var(--nerves) 75%, #fff);
+}
+.risk-item.attack .codicon {
+  color: color-mix(in srgb, var(--anger) 65%, #fff);
+}
+.dialog .progress .meta {
+  font-size: 11px;
+  opacity: 0.85;
+}
+.dialog .bar {
+  background: rgba(255, 255, 255, 0.16);
+}
+.dialog .bar i {
+  background: #7fd1ff;
+}
+.dialog .streak {
+  opacity: 0.9;
+}
+.dialog .streak .dot {
+  background: rgba(255, 255, 255, 0.22);
+}
+.dialog .streak .dot.on {
+  background: #7fd1ff;
+}
+
+/* The battle menu: four commands, or the balls and berries behind two of them. The ▸ cursor
+   marks the one under the pointer or the keyboard, the way the games point at a choice. */
+.commands {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+}
+/* While the box animates between the heights of two menu levels, nothing spills out of it. */
+.commands.resizing {
+  overflow: hidden;
+}
+.commands.list {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* The balls, all four in one row: each a tile with its sprite, how many are left on the
+   sprite's corner, the catch chance under it and the name in small print — the same facts the
+   list rows carried, in a quarter of the height. */
+.ball-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 2px;
+}
+.command.ball {
+  flex-direction: column;
+  justify-content: center;
   gap: 1px;
-  padding: 4px 6px;
-  background: transparent;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  color: var(--vscode-foreground);
-  cursor: pointer;
+  padding: 6px 2px 5px;
+  text-align: center;
 }
-.ball-rack .ball:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+.command.ball::before {
+  content: none;
 }
-.ball-rack .ball:disabled {
-  opacity: 0.4;
-  cursor: default;
+.ball-sprite {
+  position: relative;
+  width: 30px;
+  height: 30px;
 }
-.ball-rack .ball.none {
-  opacity: 0.25;
-  border-style: dashed;
-}
-.ball-rack .ball img {
+.ball-sprite img {
   width: 30px;
   height: 30px;
   image-rendering: pixelated;
 }
-.ball-rack .ball .count {
-  font-size: 0.75em;
-  opacity: 0.8;
-}
-/* The catch chance for the encounter on stage — the same maths the throw will roll. */
-.ball-rack .ball .odds {
-  font-size: 0.7em;
-  opacity: 0.65;
+.ball-count {
+  position: absolute;
+  right: -12px;
+  bottom: -2px;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
   font-variant-numeric: tabular-nums;
 }
-
-/* How many more are waiting — a count only, never the species: the next one is a surprise. */
-.wild-more {
-  margin: -6px 0 10px;
-  text-align: center;
-  opacity: 0.6;
-  font-size: 0.85em;
+.ball-odds {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.ball-name {
+  max-width: 100%;
+  font-size: 9.5px;
+  font-weight: 600;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* The companion's progress as a small card, kept visible while a capture occupies the stage:
-   portrait at half scale (48px — exactly half the 96px sheet), identity and the bar. */
-.companion-card {
+/* Bag and Run, side by side under the balls, set off from them by a rule — and at the end of
+   the same line, the queue count or the way to the shop, sized to its text. */
+.command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
+}
+/* Centred in their halves, so the two read as a pair rather than as the start of a list. */
+.command-row > .command:not(.info) {
+  justify-content: center;
+  gap: 6px;
+  padding-left: 18px;
+}
+.command {
+  position: relative;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  margin-bottom: 14px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
-  background: var(--vscode-editorWidget-background, transparent);
+  gap: 8px;
+  min-height: 34px;
+  margin: 0;
+  padding: 4px 8px 4px 20px;
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
 }
-.companion-card .thumb {
-  width: 48px;
-  height: 48px;
+.command::before {
+  content: '▸';
+  position: absolute;
+  left: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+button.command:hover:not(:disabled),
+.command:focus-visible {
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  outline: none;
+}
+button.command:hover:not(:disabled)::before,
+.command:focus-visible::before {
+  opacity: 1;
+}
+/* The same 30px as the items in the submenus (`.command.item img`): the sprite sheet's native
+   size, so a ball or berry is the same picture at both levels of the menu. */
+.command-icon {
+  width: 30px;
+  height: 30px;
   flex: none;
+  image-rendering: pixelated;
+}
+/* Doubled class to outrank the codicon sheet's own `.codicon[class*='codicon-']`, which set it
+   back to a 16px block glyph sitting high in its 30px cell. */
+.codicon.command-icon.command-icon {
   display: grid;
   place-items: center;
+  font-size: 20px;
+  line-height: 1;
 }
-.companion-card .thumb img {
+.command:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.command.info {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.7;
+  cursor: default;
+  padding-left: 8px;
+}
+button.command.info {
+  cursor: pointer;
+  opacity: 1;
+  color: var(--paper-link);
+  padding-left: 20px;
+}
+/* The queue: a pill, not a command — it is read, never pressed. */
+.command.info.queue {
+  gap: 4px;
+  min-height: 22px;
+  margin: 0 2px 0 4px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.command.info.queue .codicon {
+  font-size: 12px;
+}
+/* Too narrow for three across — below this Bag and Run start to clip (measured in the bench,
+   Spanish copy): the note takes a line of its own under them. */
+@container (max-width: 320px) {
+  .command-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .command-row > .command.info {
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+}
+.command.item img {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+  flex: none;
+}
+.command-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* Wrapped, never cut: a berry's description is the only place its effect is explained, and a
+   hover tooltip reaches neither a keyboard nor a touch screen. */
+.command-name small {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.3;
+  opacity: 0.7;
+}
+.command-figure {
+  font-variant-numeric: tabular-nums;
+}
+.command-count {
+  min-width: 2.6em;
+  text-align: right;
+  font-weight: 500;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.command.none {
+  opacity: 0.35;
+}
+/* An empty ball is the way to buy more: the tile stays (its odds are worth knowing), faded, with
+   a + where the count was — and wakes up under the pointer. */
+.command.ball.none {
+  opacity: 1;
+}
+.command.ball.none img,
+.command.ball.none .ball-odds,
+.command.ball.none .ball-name {
+  opacity: 0.4;
+  transition: opacity 150ms ease;
+}
+.command.ball.none img {
+  filter: grayscale(1);
+}
+.ball-count.shop {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  padding: 0;
+  background: var(--paper-link);
+}
+.ball-count.shop .codicon {
+  font-size: 10px;
+  line-height: 13px;
+}
+button.command.ball.none:hover img,
+button.command.ball.none:hover .ball-odds,
+button.command.ball.none:hover .ball-name,
+.command.ball.none:focus-visible img,
+.command.ball.none:focus-visible .ball-odds,
+.command.ball.none:focus-visible .ball-name {
+  opacity: 0.85;
+}
+button.command.ball.none:hover .ball-name,
+.command.ball.none:focus-visible .ball-name {
+  color: var(--paper-link);
+}
+.command.back {
+  justify-content: center;
+  padding-left: 8px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+.command.back::before {
+  content: '◂';
+  position: static;
+  opacity: 1;
+}
+
+/* A narrow sidebar: the plates take more of the width so the name is not the thing that gives,
+   and the follower steps closer to the trainer, out from under the plate. */
+@container (max-width: 310px) {
+  /* Taller, so the wild Pokémon can stand below its plate instead of behind it. */
+  .battle .wild-scene.has-wild {
+    height: 300px;
+  }
+  .battle .wild-scene.has-wild .wild-mon {
+    top: 104px;
+  }
+  .battle .wild-scene.has-wild .pad-wild {
+    top: 186px;
+  }
+  .battle .plate-wild {
+    width: 72%;
+  }
+  .battle .plate-player {
+    width: 54%;
+  }
+  .battle .rarity-badge {
+    font-size: 9px;
+    padding: 0 4px;
+  }
+  .battle .companion-mon {
+    left: calc(2% + 30px);
+  }
+  .battle .wild-scene .trainer {
+    left: 1%;
+  }
+}
+
+/* The one orchestrated moment: a new Pokémon steps onto the stage, its plate slides in. */
+.wild-scene.entering .wild-mon {
+  animation: wild-enter 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.wild-scene.entering .plate-wild {
+  animation: plate-enter 420ms 120ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+@keyframes wild-enter {
+  from {
+    transform: translateX(60px);
+    opacity: 0;
+  }
+}
+@keyframes plate-enter {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+
+/* High contrast: the illustration gives way to the system's own ink and canvas. */
+body.vscode-high-contrast .wild-scene,
+body.vscode-high-contrast-light .wild-scene {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-contrastBorder);
+}
+@media (forced-colors: active) {
+  .plate,
+  .commands,
+  .dialog {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+  }
+}
+
+/* Eating: a small happy hop where the berry landed. */
+.wild-scene.feeding .throw-ball img {
+  width: 24px;
+  height: 24px;
+}
+.wild-scene.fed .throw-ball {
+  opacity: 0;
+}
+.wild-scene.fed .wild-mon img {
+  animation: fed-hop 400ms ease-out;
+}
+@keyframes fed-hop {
+  40% {
+    transform: translateY(-8px);
+  }
+}
+
+/* It struck back: a lunge toward you and a red flash over the scene. 500 ms, as STRIKE_MS. */
+.wild-scene.attacked .wild-mon img {
+  animation: lunge 500ms ease-in-out;
+}
+.wild-scene.attacked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  background: var(--anger);
+  animation: hit-flash 500ms ease-out forwards;
+}
+@keyframes lunge {
+  35% {
+    transform: translateX(-40px);
+  }
+}
+@keyframes hit-flash {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Items lying in the wild: chips with a rarity border, and one button to take them all. */
+.wild-finds,
+.wild-trail {
+  margin-bottom: 14px;
+}
+.finds-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.finds-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.find {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--vscode-foreground);
+}
+.find:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+.find img {
+  width: 28px;
+  height: 28px;
+  image-rendering: pixelated;
+}
+.find .count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-size: 0.7em;
+}
+.find.rarity-uncommon {
+  border-color: var(--vscode-charts-green);
+}
+.find.rarity-rare {
+  border-color: var(--vscode-charts-blue);
+}
+.find.rarity-legendary {
+  border-color: var(--vscode-charts-purple);
+}
+
+/* Tracking spends tokens, but it is still a side errand: a quiet button, not the panel's loudest. */
+.trail-row .action {
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  border: 1px solid currentColor;
+  padding: 3px 10px;
+}
+.trail-row .action:disabled {
+  opacity: 0.45;
+}
+.trail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.trail-row img {
   width: 48px;
   height: 48px;
   image-rendering: pixelated;
+  filter: grayscale(0.6);
 }
-.companion-card .thumb .egg-small {
-  font-size: 30px;
-  line-height: 1;
-}
-.companion-card .body {
+.trail-row .body {
   flex: 1;
-  min-width: 0;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
 }
-.companion-card .title {
-  font-weight: 600;
-  font-size: 0.95em;
-}
-.companion-card .desc {
-  opacity: 0.6;
-  font-size: 0.82em;
-}
-.companion-card .progress {
-  margin-top: 1px;
-}
-.companion-card .progress .meta {
-  font-size: 0.78em;
-  margin-bottom: 3px;
+.trail-row .desc {
+  opacity: 0.7;
+  font-size: 0.85em;
 }
 
 .badge.wild {
@@ -1368,27 +2544,6 @@ body.paused .wild-scene *::after {
   opacity: 0.7;
   font-size: 0.88em;
 }
-/* A row selling the same thing at two quantities.
-
-   The pair sits beside the name while there is room and drops to its own full-width line when
-   there is not — which at 300px it always does, because two priced buttons beside a name leave
-   the name a column too narrow for "モンスターボール". The `min-width` is what makes that
-   happen: `.body` may shrink to nothing, so without a floor the name would be crushed to one
-   character per line rather than the buttons wrapping. */
-.row.multi {
-  flex-wrap: wrap;
-  row-gap: 7px;
-}
-.row.multi .body {
-  min-width: 7.5em;
-}
-.row.multi .buys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  /* Right-aligned when it shares the name's line; flush left once it has its own. */
-  margin-left: auto;
-}
 /* A figure where a sentence used to be — the ball rack on Home already states a catch rate as a
    number, so this is the house form. Sits with the name rather than under it, which is the
    entire saving: no second line. */
@@ -1399,48 +2554,12 @@ body.paused .wild-scene *::after {
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
 }
-/* The price rides inside the button when a row has two of them: a separate price column would
-   have to be read twice to learn which price belongs to which quantity. */
-button.action.priced {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 5px 10px;
-}
-button.action.priced .cost {
-  font-variant-numeric: tabular-nums;
-}
-/* Same rule as the price column: dimmed and italic, never struck through. */
-button.action.priced .cost.cant {
-  font-style: italic;
-  opacity: 0.75;
-}
-/* The bundle's saving. Without it, grouping the ×1 and the ×10 onto one row would have deleted
-   the only reason to prefer the ten-pack. */
-button.action.priced .save {
-  font-size: 0.82em;
-  font-weight: 600;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--vscode-button-foreground);
-  color: var(--vscode-button-background);
-  /* In a high contrast theme the two button colours can coincide; the outline keeps the badge
-     a separate object either way. */
-  outline: 1px solid var(--vscode-contrastBorder, transparent);
-}
 /* PokéAPI item sprites are 30px; shown as-is, like every other sprite. */
 .row .icon img {
   width: 30px;
   height: 30px;
   image-rendering: pixelated;
   display: block;
-}
-/* A price the wallet cannot cover, told by the price itself rather than only by a grey button.
-   Dimmed, never struck through: a line through a price reads as a discount everywhere else on
-   the internet, which is the opposite of what it means here. */
-.row .price.cant {
-  opacity: 0.5;
-  font-style: italic;
 }
 
 /* The core's hatch/evolve/graduate window (4-6s): the subject pops and sparkles where you are
@@ -1534,18 +2653,21 @@ body.paused .stage.celebrate img {
   gap: 4px;
   width: 100%;
 }
+/* Every trainer on a small tile; the one you are is ringed in ink, on paper. */
 .trainer-cell {
   padding: 2px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  border: 2px solid transparent;
+  border-radius: 10px;
   cursor: pointer;
 }
 .trainer-cell:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 .trainer-cell[aria-selected='true'] {
-  border-color: var(--vscode-focusBorder);
+  background: var(--paper);
+  border-color: var(--ink);
+  box-shadow: 0 2px 0 var(--paper-edge);
 }
 .trainer-cell img {
   width: 40px;
@@ -1782,7 +2904,12 @@ body.compact .stage::after {
   width: 38px;
   height: 7px;
 }
-body.compact .egg {
+/* The card's egg at ×1 of its crop: the 48px stage pin above must not stretch it. */
+body.compact .stage img.egg {
+  width: 28px;
+  height: 30px;
+}
+body.compact span.egg {
   font-size: 30px;
 }
 body.compact .hero-name {
@@ -1812,4 +2939,1019 @@ body.compact .row-stat {
 }
 body.compact .row-stat .label {
   font-size: 0.75em;
+}
+
+/* ---- shop, bag and Pokédex: the game's furniture ----
+   Quieter than the battle screen on purpose — the scene is the one loud thing — but drawn with
+   the same pieces: paper-and-ink plates, price tags, the ▸ cursor, the dialog box, and the
+   Pokédex's red for the one device that has a colour of its own. */
+
+/* The wallet, as a plate: every price below is read against it. */
+.shop-wallet {
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 10px 4px 10px 4px;
+  box-shadow: 0 2px 0 var(--paper-edge);
+}
+.shop-wallet .label {
+  font-size: 0.92em;
+  font-weight: 600;
+  opacity: 0.75;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.shop-wallet .value {
+  font-size: 1.15em;
+  font-weight: 800;
+}
+
+/* Rows are a counter's list, not cards: one rule between products, nothing around them. */
+#shop .shop-rows .row,
+#shop .row {
+  margin: 0;
+  padding: 10px 2px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  border-radius: 0;
+}
+#shop .row .icon,
+.bag-row .icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+  font-size: 20px;
+}
+#shop .row .icon img,
+.bag-row .icon img {
+  width: 30px;
+  height: 30px;
+}
+
+/* Price tags: paper and ink, filled in when pointed at. The verb and the price read as one
+   object, which is what a tag on a shelf is. */
+#shop button.action {
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  padding: 3px 10px;
+  font-weight: 700;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+#shop button.action:hover:not(:disabled),
+#shop button.action:focus-visible {
+  background: var(--ink);
+  color: var(--paper);
+  outline: none;
+}
+#shop button.action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+#shop button.action.priced .save {
+  background: var(--rarity-uncommon);
+  color: #fff;
+}
+
+/* ---- the shop in the wallet's style ----
+   The balance and every price are drawn on the same screen as the wallet on the Pokédex lid —
+   dark glass, phosphor digits, the Nugget — so a price reads as the currency it is paid in. */
+.shop-wallet {
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(120% 160% at 25% 0%, #1d4a52 0%, #0d2228 70%);
+  color: #8dffb0;
+  border: 2px solid #08171b;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 1px rgb(141 255 176 / 0.18),
+    inset 0 2px 8px rgb(0 0 0 / 0.6),
+    0 2px 0 var(--paper-edge);
+}
+.shop-wallet::after,
+#shop button.action.priced::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 3px);
+}
+.shop-wallet .label {
+  opacity: 0.7;
+}
+.shop-wallet .value {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+/* One balance, one look: the lid's badge on Home and the shop's screen draw the number with the
+   same rule, so the figure never changes size between the two places it is read. */
+.wallet-badge .wallet-value,
+.shop-wallet .value {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 6px rgb(141 255 176 / 0.55);
+  font-variant-numeric: tabular-nums;
+}
+/* The wallet's Nugget: native 30px, pulled into the padding so it sets no line height. */
+.shop-wallet .coin {
+  width: 30px;
+  height: 30px;
+  margin: -8px 0 -8px -2px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 3px rgb(255 214 90 / 0.45));
+}
+
+#shop {
+  container: shop / inline-size;
+}
+/* An icon cut from a 96px sheet (the egg): its middle 28×30 at ×1, not the sheet shrunk. */
+#shop .row .icon img.sheet {
+  width: 28px;
+  height: 30px;
+  object-view-box: inset(34px 34px 32px 34px);
+}
+/* Every row the same three columns: sprite, what it is, and its price tags stacked. */
+#shop .row.shop-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 9px 2px;
+}
+#shop .row.shop-item .desc {
+  margin-top: 1px;
+  font-size: 0.9em;
+  line-height: 1.35;
+  opacity: 0.72;
+}
+#shop .row.shop-item .buys {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+/* A price tag is the wallet's screen from edge to edge: dark glass, scanlines, the quantity in
+   pale ink and the price in phosphor green. Pointed at, the glass lights up rather than
+   inverting, so the price stays readable under the cursor. */
+#shop button.action.priced {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 108px;
+  padding: 3px 3px 3px 9px;
+  background: radial-gradient(120% 160% at 25% 0%, #1d4a52 0%, #0d2228 70%);
+  color: #d9efe2;
+  box-shadow:
+    inset 0 0 0 1px rgb(141 255 176 / 0.18),
+    inset 0 2px 5px rgb(0 0 0 / 0.55);
+}
+#shop button.action.priced:hover:not(:disabled),
+#shop button.action.priced:focus-visible {
+  background: radial-gradient(120% 160% at 25% 0%, #265d67 0%, #11303a 70%);
+  color: #f2fff6;
+  box-shadow:
+    inset 0 0 0 1px rgb(141 255 176 / 0.45),
+    0 0 8px rgb(141 255 176 / 0.35);
+}
+#shop button.action.priced .price-tag {
+  position: relative;
+  display: flex;
+  margin-left: auto;
+}
+/* The price on the wallet's screen, inside the tag that pays it. */
+#shop .cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 3px 1px 4px;
+  color: #8dffb0;
+  font-size: 0.92em;
+  font-weight: 800;
+  text-shadow: 0 0 5px rgb(141 255 176 / 0.5);
+  font-variant-numeric: tabular-nums;
+}
+/* A smaller Nugget would be a fractional scale of a pixel sprite. The sheet is 30px with the
+   nugget drawn in its middle 14px, so the box is that 14px and `object-fit: none` shows the
+   middle of the sheet at native size — every pixel whole, and nothing left for the chip's
+   height to crop (negative margins did, wherever the editor's font made the chip shorter). */
+#shop .cost .coin {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0 0 0 3px;
+  object-fit: none;
+  object-position: center;
+  image-rendering: pixelated;
+}
+/* Unaffordable: the screen's digits dim and lean, never struck through. */
+#shop .cost.cant {
+  color: color-mix(in srgb, #8dffb0 45%, #0d2228);
+  font-style: italic;
+  text-shadow: none;
+  opacity: 1;
+}
+#shop button.action.priced:disabled {
+  opacity: 0.55;
+}
+/* The pack's saving, small on the top-right corner of the price it discounts. Without it,
+   grouping the ×1 and the ×10 onto one row would hide the only reason to prefer the pack. */
+#shop button.action.priced .save {
+  position: absolute;
+  top: -11px;
+  right: -5px;
+  z-index: 1;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 0.68em;
+  font-weight: 600;
+  line-height: 1.35;
+  /* In a high contrast theme the badge and the tag can share a colour; the outline keeps the
+     badge a separate object either way. */
+  outline: 1px solid var(--vscode-contrastBorder, transparent);
+}
+/* An owned passive: its tag says so, with no price left to pay. */
+#shop .row.shop-item.owned {
+  opacity: 0.7;
+}
+/* Too narrow for a column of tags beside the name: they move under it, side by side. */
+@container shop (max-width: 300px) {
+  #shop .row.shop-item {
+    grid-template-columns: 38px minmax(0, 1fr);
+    row-gap: 7px;
+  }
+  #shop .row.shop-item .buys {
+    grid-column: 1 / -1;
+    display: grid;
+    /* The ×10 tag carries the saving as well as a longer price, so it takes the larger share. */
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+  #shop button.action.priced {
+    min-width: 0;
+    padding-left: 6px;
+  }
+  /* The wallet above carries the Nugget; at this width the price tags give it up for digits. */
+  #shop .cost .coin {
+    display: none;
+  }
+  #shop .cost {
+    padding-left: 6px;
+  }
+}
+/* A tag that is only a price: the screen fills it, centred. */
+#shop button.action.priced:not(:has(.verb)) {
+  justify-content: center;
+  padding: 3px;
+}
+#shop button.action.priced:not(:has(.verb)) .price-tag {
+  margin-left: 0;
+  flex: 1;
+}
+#shop button.action.priced:not(:has(.verb)) .cost {
+  flex: 1;
+  justify-content: center;
+}
+@media (forced-colors: active) {
+  #shop .cost,
+  .shop-wallet .value {
+    text-shadow: none;
+  }
+  #shop button.action.priced::before,
+  .shop-wallet::after {
+    content: none;
+  }
+}
+
+/* ---- the bag: pockets, a list with a cursor, and the dialog box ---- */
+.pockets,
+.segments {
+  display: flex;
+  gap: 0;
+  padding: 3px;
+  margin-bottom: 10px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+}
+.pocket,
+.segments .seg {
+  flex: 1;
+  appearance: none;
+  min-width: 0;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.pocket[aria-pressed='true'],
+.segments .seg[aria-selected='true'] {
+  background: var(--ink);
+  color: var(--paper);
+  opacity: 1;
+}
+.pocket:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+.bag-list {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 12px 12px 0 0;
+}
+.bag-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 10px 4px 22px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bag-row .icon {
+  width: 34px;
+  height: 34px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.bag-row::before {
+  content: '▸';
+  position: absolute;
+  left: 7px;
+  opacity: 0;
+}
+.bag-row[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.bag-row[aria-pressed='true']::before,
+.bag-row:hover::before {
+  opacity: 1;
+}
+.bag-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bag-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.7;
+}
+/* The bag's dialog stacks — a description, then its action — instead of sharing a line. */
+.bag-dialog {
+  display: block;
+  border-radius: 0 0 8px 8px;
+}
+.bag-dialog .dialog-text {
+  font-weight: 500;
+}
+.dialog-action {
+  margin-top: 8px;
+  padding: 4px 14px;
+  border: 2px solid var(--dialog-text);
+  border-radius: 7px;
+  background: var(--dialog-text);
+  color: var(--dialog);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.dialog-action:hover,
+.dialog-action:focus-visible {
+  background: transparent;
+  color: var(--dialog-text);
+  outline: none;
+}
+
+/* ---- the Pokédex ---- */
+.dex-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 10px 14px 12px;
+  margin-bottom: 12px;
+  color: #fff;
+  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  border-radius: 12px;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18);
+}
+/* The lens every Pokédex has in its corner. */
+.dex-lens {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #d8f3ff, #3fa7e0 55%, #1d6fa8);
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 4px rgba(0, 0, 0, 0.2);
+}
+.dex-title {
+  font-weight: 800;
+  font-size: 1.1em;
+}
+.dex-head .dex-progress {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+}
+.dex-head .dex-progress .desc {
+  /* The count sits up on the title's line, right-aligned, like a device's counter. */
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  color: #fff;
+  opacity: 0.95;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.dex-head .dex-progress .bar {
+  background: rgba(255, 255, 255, 0.25);
+}
+.dex-head .dex-progress .bar i {
+  background: #fff;
+}
+
+/* A caught species: a lifted tile, a Poké Ball mark in its corner and its rarity along the
+   bottom edge. The silhouettes stay flat, which is what makes the caught ones read as caught. */
+.dex .cell.owned {
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  overflow: hidden;
+}
+.dex .cell.owned::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--ink);
+  background: linear-gradient(180deg, var(--anger) 0 42%, var(--ink) 42% 58%, #fff 58%);
+}
+.dex .cell.owned::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--rarity-common);
+}
+.dex .cell.rarity-uncommon::after {
+  background: var(--rarity-uncommon);
+}
+.dex .cell.rarity-rare::after {
+  background: var(--rarity-rare);
+}
+.dex .cell.rarity-legendary::after {
+  background: linear-gradient(90deg, #7b3fe4, #d0479b);
+}
+
+/* The detail sheet becomes an entry: the device's red band with number and name, the sprite on
+   a pedestal, the facts beside it. */
+.dex-detail {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+}
+.dex-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 40px 7px 14px;
+  color: #fff;
+  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+}
+.dex-entry-head .num {
+  font-weight: 700;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+.dex-entry-name {
+  font-weight: 800;
+  font-size: 1.05em;
+}
+.dex-entry-head .dex-close {
+  top: 5px;
+  color: #fff;
+}
+.dex-entry-body {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px 12px;
+}
+.dex-detail .portrait {
+  background: radial-gradient(
+    60% 22% at 50% 88%,
+    color-mix(in srgb, var(--vscode-foreground) 16%, transparent),
+    transparent 70%
+  );
+}
+.dex-detail .rarity-badge {
+  align-self: flex-start;
+}
+
+/* The catch log: a stripe of the rarity's colour instead of a box around every row. */
+.log .row.log-row {
+  margin-bottom: 6px;
+  padding: 8px 12px;
+  border: none;
+  border-left: 4px solid var(--rarity-common);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.log .row.log-row.rarity-uncommon {
+  border-left-color: var(--rarity-uncommon);
+}
+.log .row.log-row.rarity-rare {
+  border-left-color: var(--rarity-rare);
+}
+.log .row.log-row.rarity-legendary {
+  border-left-color: var(--rarity-legendary);
+}
+.log .row.log-row.active {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+@media (forced-colors: active) {
+  .shop-wallet,
+  .pockets,
+  .segments,
+  .bag-list,
+  .dex-head,
+  .dex-entry-head {
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
+}
+
+/* ---- settings: the trainer card ----
+   The games' trainer card — your trainer big, on paper, beside the options that are yours. */
+.trainer-card {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 12px 4px 12px 4px;
+  box-shadow: 0 3px 0 var(--paper-edge);
+}
+.tc-portrait {
+  display: grid;
+  place-items: end center;
+  height: 92px;
+  border-radius: 10px;
+  background:
+    radial-gradient(70% 18% at 50% 92%, rgba(29, 36, 51, 0.22), transparent 70%),
+    linear-gradient(180deg, #bfe6f6, #e9f6ea);
+}
+.tc-portrait img {
+  width: 80px;
+  height: 80px;
+  image-rendering: pixelated;
+}
+.tc-fields {
+  display: grid;
+  gap: 8px;
+}
+.trainer-card .tc-field {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+.trainer-card .tc-field span {
+  font-size: 0.85em;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.trainer-card .tc-field select {
+  width: 100%;
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 6px;
+  color: var(--ink);
+  background: var(--paper-field);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+}
+.trainer-card .tc-field select:focus-visible {
+  outline: 2px solid var(--exp);
+  outline-offset: 1px;
+}
+
+/* Save data: two tags, the same object as the shop's prices. */
+.save-actions .action.secondary {
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  font-weight: 700;
+}
+.save-actions .action.secondary:hover,
+.save-actions .action.secondary:focus-visible {
+  background: var(--ink);
+  color: var(--paper);
+  outline: none;
+}
+
+@media (forced-colors: active) {
+  .trainer-card,
+  .trainer-card select,
+  .trainer-cell[aria-selected='true'] {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+  }
+}
+
+/* ---- Home, refined ---- */
+
+/* Status conditions, as the games print them on a plate: short, coloured, one word. */
+.statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.status {
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.status.primed {
+  background: #d9534f;
+}
+.status.stolen {
+  background: #6b4fa0;
+}
+
+/* The evolution line, kept with the companion it belongs to: a paper strip under the dialog box,
+   where the battle menu sits while a wild Pokémon is on stage. */
+.evo-strip {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+}
+.evo-strip .evoline {
+  margin: 0;
+}
+.evo-strip .slot {
+  background: var(--paper-field);
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.evo-strip .slot.current {
+  border-color: var(--ink);
+  box-shadow: 0 2px 0 var(--paper-edge);
+}
+.evo-strip .arrow,
+.evo-strip .mystery {
+  color: var(--ink);
+}
+.battle:has(.evo-strip) .dialog {
+  border-radius: 0;
+}
+
+/* Today and this month, side by side: the two figures a glance is for. */
+.stat-tiles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.stat-tile {
+  display: grid;
+  gap: 1px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+}
+.stat-tile .label {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+.stat-tile .value {
+  font-size: 1.35em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-tile .note {
+  font-size: 0.85em;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Items on the ground and the legendary trail: each its own card, so they read as places in the
+   game rather than as lists that happen to follow the scene. */
+.wild-finds,
+.wild-trail {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  border: 1px solid var(--vscode-contrastBorder, transparent);
+}
+.wild-finds h2.section,
+.wild-trail h2.section {
+  margin: 0 0 8px;
+  font-size: 0.9em;
+}
+.wild-trail .trail-row {
+  padding: 2px 0 0;
+}
+
+/* The wallet over the battle, drawn as the lid of a Pokédex: the red casing with its lens and
+   three lights, the name in the games' own logo colours — yellow, outlined in blue — and the
+   balance on the device's green screen. A change arrives as a chip beside the screen — green
+   sliding into the coin, red sliding out of it — and the screen answers with a bump or a shake.
+   1600 ms in all, as WALLET_CHANGE_MS in main.ts. The device keeps its own palette in every
+   theme, as the Pokédex tab does. */
+.wallet-bar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 6px 7px 6px 10px;
+  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  border: 2px solid #6e1c17;
+  border-radius: 12px;
+  box-shadow:
+    inset 0 -3px 0 rgb(0 0 0 / 0.18),
+    inset 0 1px 0 rgb(255 255 255 / 0.25);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.brand-lens {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #d8f3ff, #3fa7e0 55%, #1d6fa8);
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 4px rgb(0 0 0 / 0.25);
+}
+.brand-leds {
+  display: flex;
+  gap: 3px;
+  align-self: flex-start;
+}
+.brand-leds i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 0.35);
+  background: #ff6b5e;
+}
+.brand-leds i:nth-child(2) {
+  background: #ffd23f;
+}
+.brand-leds i:nth-child(3) {
+  background: #4cd964;
+}
+.brand-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  color: #ffcb05;
+  -webkit-text-stroke: 4px #2a4f9c;
+  paint-order: stroke fill;
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.35);
+}
+.brand-name b {
+  color: #fff;
+}
+/* The balance on the Pokédex's screen: dark glass, phosphor-green digits and faint scanlines,
+   the same in every editor theme because it sits on the red casing, not on the editor. */
+.wallet-badge {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 3px 2px 10px;
+  background: radial-gradient(120% 140% at 30% 0%, #1d4a52 0%, #0d2228 70%);
+  color: #8dffb0;
+  border: 2px solid #3a0f0c;
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 1px rgb(141 255 176 / 0.18),
+    inset 0 2px 6px rgb(0 0 0 / 0.6);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 6px rgb(141 255 176 / 0.55);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.wallet-badge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 3px);
+}
+.wallet-badge:hover,
+.wallet-badge:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+/* The narrowest sidebar keeps the lens and the name; the lights are the first thing to go. */
+@media (max-width: 300px) {
+  .brand-leds {
+    display: none;
+  }
+}
+/* A Nugget — the item the games sell for money — at the item sheet's native 30px, pulled into
+   the screen's padding so it does not make the badge taller than its digits. */
+.coin {
+  width: 30px;
+  height: 30px;
+  /* The sheet's transparent 8px border trimmed off the sides too, so the nugget sits as close to
+     the digits and the screen's edge as a glyph would. */
+  margin: -5px -6px -5px -5px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 0 3px rgb(255 214 90 / 0.45));
+}
+.wallet-delta {
+  position: absolute;
+  right: calc(100% + 6px);
+  top: 50%;
+  margin-top: -10px;
+  line-height: 18px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: wallet-float 1600ms ease-out forwards;
+}
+.wallet-delta.gain {
+  background: #2f8f4e;
+}
+.wallet-delta.loss {
+  background: #c8432f;
+  animation-name: wallet-drop;
+}
+@keyframes wallet-float {
+  0% {
+    opacity: 0;
+    transform: translateX(-24px) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(0) scale(1.1);
+  }
+  30% {
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(28px) scale(0.6);
+  }
+}
+@keyframes wallet-drop {
+  0% {
+    opacity: 0;
+    transform: translateX(24px) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(0) scale(1.1);
+  }
+  30% {
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-24px) translateY(8px);
+  }
+}
+.wallet-badge.bump-gain {
+  animation: wallet-bump 520ms ease-out;
+}
+.wallet-badge.bump-gain .coin {
+  animation: coin-spin 520ms ease-out;
+}
+.wallet-badge.bump-loss {
+  animation: wallet-shake 420ms ease-in-out;
+}
+@keyframes wallet-bump {
+  30% {
+    transform: scale(1.1);
+    box-shadow:
+      inset 0 2px 6px rgb(0 0 0 / 0.6),
+      0 0 0 4px rgb(76 217 100 / 0.6);
+  }
+}
+@keyframes coin-spin {
+  50% {
+    transform: scaleX(0.15);
+  }
+}
+@keyframes wallet-shake {
+  20%,
+  60% {
+    transform: translateX(-4px);
+  }
+  40%,
+  80% {
+    transform: translateX(4px);
+  }
+}
+body.paused .wallet-badge,
+body.paused .wallet-badge .coin {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wallet-badge,
+  .wallet-badge .coin,
+  .wallet-delta {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .wallet-badge {
+    border-color: CanvasText;
+    text-shadow: none;
+  }
+  .wallet-badge::after {
+    content: none;
+  }
+  .coin {
+    forced-color-adjust: none;
+  }
+  .wallet-delta {
+    border: 1px solid CanvasText;
+  }
 }

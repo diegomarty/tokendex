@@ -61,6 +61,33 @@ export async function atomicWriteFile(
 }
 
 /**
+ * Publishes `data` at `path` **only if nothing is there yet**, all at once: written to a private
+ * temp file, then hard-linked into place. A link either creates the name with the complete
+ * contents or fails because the name exists, so no reader can ever see the file half-written —
+ * which an exclusive `open` cannot promise, since it creates the name first and writes after.
+ *
+ * `true` if this call created it, `false` if something already held the name.
+ */
+export async function atomicCreateFile(
+  path: string,
+  data: string,
+  encoding: BufferEncoding = 'utf8',
+): Promise<boolean> {
+  await fs.mkdir(dirname(path), { recursive: true })
+  const temp = tempPathFor(path)
+  try {
+    await fs.writeFile(temp, data, { encoding })
+    await fs.link(temp, path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  } finally {
+    await fs.rm(temp, { force: true }).catch(() => {})
+  }
+}
+
+/**
  * How old an orphan has to be before it is collected. An hour is far longer than any write
  * here takes and far shorter than a session, so it can never race a live writer.
  */

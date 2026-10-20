@@ -73,9 +73,43 @@ export function sceneSpriteURL(speciesID: number, shiny: boolean): string {
   return spriteURL(speciesID, shiny, true)
 }
 
-/** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...). */
+/** Frames this tall or shorter count as small species on the wild side. */
+const SMALL_WILD_FRAME = 56
+/** The ×2 step is for the tiniest only, so it still fits the 96px sheet with room to spare. */
+const TINY_WILD_FRAME = 40
+
+/**
+ * How much the wild sprite is enlarged. The wild Pokémon is the encounter's subject, and a small
+ * species at native size is a speck in its own scene — but the scene's rule still holds: a scale
+ * `pixelated` draws exactly, which means whole DEVICE pixels per sprite pixel. ×1.5 is exact on
+ * a 2× display only; elsewhere a tiny frame may take ×2 and every other frame stays native.
+ * Large species never grow: they already fill the sheet.
+ */
+export function wildSpriteScale(frameHeight: number, devicePixelRatio: number): number {
+  if (frameHeight > SMALL_WILD_FRAME) return 1
+  if (Number.isInteger(1.5 * devicePixelRatio)) return 1.5
+  if (frameHeight <= TINY_WILD_FRAME && Number.isInteger(2 * devicePixelRatio)) return 2
+  return 1
+}
+
+/**
+ * The egg's sprite is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet with
+ * the egg drawn in the middle 28×30.
+ */
+const EGG_SPRITE = 'egg'
+
+/** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...) — or the egg. */
 export function itemSpriteURL(name: string): string {
+  if (name === EGG_SPRITE) return `${SPRITE_BASE}/egg.png`
   return `${ITEM_SPRITE_BASE}/${name}.png`
+}
+
+/**
+ * Whether an icon comes from a full 96px sheet rather than a 30px item sheet. Shrinking it to
+ * the icon box would be a fractional scale of pixel art; the box crops its middle instead.
+ */
+export function itemSpriteIsSheet(name: string): boolean {
+  return name === EGG_SPRITE
 }
 
 /** The player's avatar. The slug comes from the core's roster and is never built here. */

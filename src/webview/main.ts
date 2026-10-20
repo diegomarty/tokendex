@@ -7,9 +7,25 @@
  * formatting path would be a second source of truth that drifts.
  */
 
-import type { PanelLineItem, PanelShopAction, PanelState, PanelThrowResult } from './protocol.js'
+import type {
+  PanelLineItem,
+  PanelShopAction,
+  PanelState,
+  PanelEncounterResult,
+  PanelMoodMeter,
+  PanelWildEncounter,
+  PanelWalletChange,
+} from './protocol.js'
 import { PANEL_TABS, type PanelTabID } from './shell.js'
-import { ANIMATED_SPRITE_MAX, itemSpriteURL, sceneSpriteURL, spriteURL, trainerURL } from './sprite.js'
+import {
+  ANIMATED_SPRITE_MAX,
+  itemSpriteIsSheet,
+  itemSpriteURL,
+  sceneSpriteURL,
+  spriteURL,
+  trainerURL,
+  wildSpriteScale,
+} from './sprite.js'
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void
@@ -38,6 +54,25 @@ let dexLogFilter = 'all'
  * kept standing under the *next* Pokémon that stepped up.
  */
 let wildResult: { text: string; encounterID: string } | undefined
+/** Which level of the battle menu is open, and for which encounter. View state only. */
+let wildMenu: 'main' | 'bag' = 'main'
+/** The bag's open pocket and selected item. View state only. */
+let bagPocket: 'balls' | 'berries' | 'items' | undefined
+let bagSelected: string | undefined
+let stagedID: string | undefined
+/**
+ * The encounter whose entrance has already played. Home is repainted wholesale — by every state
+ * push, and it used to be by every menu click — and the entrance hung off the scene's own class,
+ * so each repaint walked the same Pokémon back on stage as if it had just appeared. It plays
+ * once per encounter now: only a Pokémon this panel has not shown yet gets the `entering` class.
+ */
+let enteredID: string | undefined
+/** The last balance change seen, so a re-sent state never replays it. See `noteWalletChange`. */
+let seenWalletChangeID: number | undefined
+let walletPrimed = false
+let pendingWallet: PanelWalletChange | undefined
+/** As `wallet-float` in styles.css. */
+const WALLET_CHANGE_MS = 1600
 /** The last state actually painted, serialised — identical pushes skip the re-render. */
 let lastRenderedState: string | undefined
 /** Wild count at the last announcement, so only an *arrival* is spoken. */
@@ -114,7 +149,7 @@ function renderCompanion(state: PanelState): string {
   // The animated Gen-V sprite is integer-scaled on load; see the 'load' listener below.
   const art =
     c.speciesID === undefined
-      ? '<div class="egg">🥚</div>'
+      ? `<img class="egg" src="${itemSpriteURL('egg')}" alt="" data-emoji-fallback="🥚">`
       : `<img class="bob" src="${spriteURL(c.speciesID, c.isShiny, true)}" alt="" data-fallback="${spriteURL(c.speciesID, c.isShiny, false)}">`
 
   return `
@@ -149,13 +184,12 @@ function renderWildStrip(state: PanelState): string {
     </button>`
 }
 
-/** One usage row: label, value, and the cost trailing it dimmed on the same line. */
-function statRow(label: string, value: string, note?: string, exact?: string): string {
-  const title = exact === undefined ? '' : ` title="${escapeHTML(exact)}"`
-  return `<div class="row-stat">
+/** A headline figure: the label above, the number large, its cost beneath. */
+function statTile(label: string, value: string, note: string, exact: string): string {
+  return `<div class="stat-tile">
       <span class="label">${escapeHTML(label)}</span>
-      <span class="value"${title}>${escapeHTML(value)}</span>
-      ${note === undefined ? '' : `<span class="note">${escapeHTML(note)}</span>`}
+      <span class="value" title="${escapeHTML(exact)}">${escapeHTML(value)}</span>
+      <span class="note">${escapeHTML(note)}</span>
     </div>`
 }
 
@@ -234,16 +268,41 @@ function renderHome(state: PanelState): string {
       <tbody>${rows}</tbody>
     </table>`
 
-  return `
-    <div class="game">${game}</div>
-    <div class="stats">
-      ${statRow(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
-      ${statRow(state.strings.month, t.monthText, t.monthCostText, t.monthExactText)}
-      <div class="row-stat">
+  // The wallet heads the page as the lid of a Pokédex: the name on the red casing, the balance on
+  // its screen. It is the currency every action on this screen is paid in, and the number that
+  // moves when an attack takes tokens or a scan brings some in. The Explorer card is a glance and
+  // keeps the plain row.
+  const wallet = compact
+    ? ''
+    : `<div class="wallet-bar">
+        <span class="brand" role="img" aria-label="Tokendex">
+          <span class="brand-lens"></span>
+          <span class="brand-leds"><i></i><i></i><i></i></span>
+          <span class="brand-name">TOKEN<b>DEX</b></span>
+        </span>
+        <button class="wallet-badge" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
+          aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
+          <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
+          <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
+        </button>
+      </div>`
+  const walletRow = compact
+    ? `<div class="row-stat">
         <span class="label">${escapeHTML(state.strings.spendable)}</span>
         <span class="value">${escapeHTML(state.spendableText)}</span>
         <span class="note">${shopLink}</span>
+      </div>`
+    : ''
+
+  return `
+    ${wallet}
+    <div class="game">${game}</div>
+    <div class="stats">
+      <div class="stat-tiles">
+        ${statTile(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
+        ${statTile(state.strings.month, t.monthText, t.monthCostText, t.monthExactText)}
       </div>
+      ${walletRow}
     </div>
     ${renderLimits(state)}
     ${breakdown}`
@@ -280,8 +339,12 @@ function motionOff(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.hidden
 }
 
-function beginThrow(encounterID: string, ball: string, sprite: string): void {
-  if (throwing !== undefined) return // one ball in the air at a time
+/**
+ * Starts a turn: a ball or a berry leaves your hand. The same arc for both — what differs is what
+ * happens when it lands, which the reply decides.
+ */
+function beginTurn(kind: 'throw' | 'feed', encounterID: string, item: string, sprite: string): void {
+  if (throwing !== undefined) return // one thing in the air at a time
   wildResult = undefined
   invalidate('home')
 
@@ -300,16 +363,18 @@ function beginThrow(encounterID: string, ball: string, sprite: string): void {
     const ballImg = scene.querySelector<HTMLImageElement>('.throw-ball img')
     if (ballImg !== null) ballImg.src = itemSpriteURL(sprite)
     scene.classList.add('throwing')
+    if (kind === 'feed') scene.classList.add('feeding')
   }
 
-  vscode.postMessage({ type: 'throw', encounterID, ball })
+  if (kind === 'throw') vscode.postMessage({ type: 'throw', encounterID, ball: item })
+  else vscode.postMessage({ type: 'feed', encounterID, berry: item })
 }
 
-async function playThrow(result: PanelThrowResult): Promise<void> {
+async function playThrow(result: PanelEncounterResult): Promise<void> {
   const flight = throwing
   const scene = document.querySelector<HTMLElement>('.wild-scene')
   if (flight === undefined) return
-  if (scene === null || motionOff() || result.kind === 'noBall' || result.kind === 'unknownEncounter') {
+  if (scene === null || motionOff() || result.animation === 'none') {
     finishThrow(result)
     return
   }
@@ -317,6 +382,19 @@ async function playThrow(result: PanelThrowResult): Promise<void> {
   // Let the arc that started on click land first.
   await sleep(Math.max(0, ARC_MS - (performance.now() - flight.startedAt)))
   scene.classList.remove('throwing')
+
+  if (result.animation === 'feed') {
+    // A berry is not absorbed and does not wobble: it lands, and the Pokémon answers.
+    scene.classList.remove('feeding')
+    scene.classList.add(result.kind === 'fled' ? 'fled-out' : 'fed')
+    if (result.attacked) await strikeBack(scene)
+    const line = document.querySelector<HTMLElement>('.wild-result')
+    if (line !== null) line.textContent = result.resultText
+    await sleep(RESULT_HOLD_MS)
+    finishThrow(result)
+    return
+  }
+
   scene.classList.add('absorbing')
   await sleep(ABSORB_MS)
   scene.classList.remove('absorbing')
@@ -338,17 +416,27 @@ async function playThrow(result: PanelThrowResult): Promise<void> {
   } else {
     scene.classList.remove('landed')
     scene.classList.add(result.kind === 'fled' ? 'fled-out' : 'broke-out')
+    if (result.attacked) await strikeBack(scene)
   }
 
-  const line = scene.querySelector<HTMLElement>('.wild-result')
+  // The dialog box sits under the scene, so it is looked up on the page, not inside the scene.
+  const line = document.querySelector<HTMLElement>('.wild-result')
   if (line !== null) line.textContent = result.resultText
 
   await sleep(RESULT_HOLD_MS)
   finishThrow(result)
 }
 
+/** It lunged at you: a short lunge and a red flash. Its duration is mirrored in styles.css. */
+const STRIKE_MS = 500
+async function strikeBack(scene: HTMLElement): Promise<void> {
+  scene.classList.add('attacked')
+  await sleep(STRIKE_MS)
+  scene.classList.remove('attacked')
+}
+
 /** Ends the flight: applies whatever state arrived meanwhile and repaints. */
-function finishThrow(result?: PanelThrowResult): void {
+function finishThrow(result?: PanelEncounterResult): void {
   const flight = throwing
   if (flight === undefined) return
   clearTimeout(flight.deadline)
@@ -383,136 +471,301 @@ function renderGame(state: PanelState): string {
   const selected = wild.encounters[0]
   const c = state.companion
 
-  // A result line belongs to the throw it reports: it shows while its own encounter is still
-  // on stage (a break), or when the stage emptied (the catch/flee that ended the queue) —
-  // never under the *next* Pokémon that stepped up.
-  const resultLine =
-    wildResult === undefined
-      ? undefined
-      : selected === undefined || selected.id === wildResult.encounterID
-        ? wildResult.text
-        : undefined
+  // A new Pokémon on stage starts at the top of the menu; the same one keeps whatever submenu the
+  // player was in, so throwing ball after ball is one click each, not two.
+  if (selected?.id !== stagedID) {
+    stagedID = selected?.id
+    wildMenu = 'main'
+  }
 
-  // `celebrating` is the core's 4-6s hatch/evolve/graduate window finally reaching the panel —
-  // before this, the toast fired while the page you were looking at showed nothing.
+  // The last turn's line stays in the dialog box until the next action, as the games leave it:
+  // "Gotcha! Dratini was caught!" is still on screen while the next Pokémon steps up. A line in a
+  // box that is plainly a transcript cannot be mistaken for the newcomer's.
+  const resultLine = wildResult?.text
+
+  // `celebrating` is the core's 4-6s hatch/evolve/graduate window finally reaching the panel.
   const celebrate = c?.celebrating === true ? ' celebrate' : ''
   const follower =
     c === undefined
       ? ''
       : c.speciesID === undefined
-        ? `<div class="companion-mon${celebrate}"><div class="egg-small">🥚</div></div>`
+        ? `<div class="companion-mon${celebrate}"><img class="egg-small" src="${itemSpriteURL('egg')}" alt="" data-emoji-fallback="🥚"></div>`
         : `<div class="companion-mon${celebrate}"><img class="bob" src="${sceneSpriteURL(c.speciesID, c.isShiny)}" alt=""
              data-fallback="${spriteURL(c.speciesID, c.isShiny, false)}"></div>`
 
+  // The ground says what is coming before the name does: a beach for a water type, a volcano for
+  // a fire one. The core picks the token — its type, or its rarity when the type is unknown.
+  const terrain = selected === undefined ? 'home' : selected.terrain
   const wildPart =
     selected === undefined
       ? ''
       : `
+      ${wildPlate(selected)}
+      <div class="pad pad-wild" aria-hidden="true"></div>
       <div class="wild-mon">
         <img class="mon bob" src="${sceneSpriteURL(selected.speciesID, selected.isShiny)}" alt=""
              data-fallback="${spriteURL(selected.speciesID, selected.isShiny, false)}">
       </div>
       <div class="throw-ball"><span class="throw-ball-y"><img alt=""></span></div>`
 
+  const entering = selected !== undefined && selected.id !== enteredID
+  enteredID = selected?.id
   const scene = `
-    <div class="wild-scene${selected === undefined ? '' : ` has-wild rarity-${escapeHTML(selected.rarity)}`}">
+    <div class="wild-scene${selected === undefined ? '' : ` has-wild rarity-${escapeHTML(selected.rarity)}`}${entering ? ' entering' : ''}" data-terrain="${escapeHTML(terrain)}" data-staged="${escapeHTML(selected?.id ?? '')}">
+      ${wildPart}
+      <div class="pad pad-player" aria-hidden="true"></div>
       <img class="trainer" src="${trainerURL(state.trainerID)}" alt="">
       ${follower}
-      ${wildPart}
-      ${
-        selected === undefined
-          ? ''
-          : `<div class="wild-title">
-        <span class="title">${escapeHTML(selected.name)}${selected.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
-        <span class="desc">${escapeHTML(selected.rarityText)} · ${escapeHTML(selected.appearedText)}</span>
-      </div>`
-      }
-      <p class="wild-result" aria-live="polite">${resultLine === undefined ? '' : escapeHTML(resultLine)}</p>
-      ${
-        selected === undefined
-          ? ''
-          : `<div class="ball-rack">
-        ${wild.balls
-          .map(
-            (ball) => `
-        <button class="ball${ball.count === 0 ? ' none' : ''}" data-throw="${escapeHTML(selected.id)}"
-                data-ball="${escapeHTML(ball.kind)}" data-sprite="${escapeHTML(ball.sprite)}"
-                ${ball.count === 0 ? 'disabled' : ''}
-                title="${escapeHTML(ball.name)}${ball.oddsText === undefined ? '' : ` — ${escapeHTML(ball.oddsText)}`}"
-                aria-label="${escapeHTML(ball.name)} ×${ball.count}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}">
-          <img src="${itemSpriteURL(ball.sprite)}" alt="">
-          ${ball.oddsText === undefined ? '' : `<span class="odds">${escapeHTML(ball.oddsText)}</span>`}
-          ${ball.count === 0 ? '' : `<span class="count">×${ball.count}</span>`}
-        </button>`,
-          )
-          .join('')}
-        <button class="action secondary" data-run="${escapeHTML(selected.id)}">${escapeHTML(strings.run)}</button>
-      </div>
-      ${
-        wild.balls.every((b) => b.count === 0)
-          ? `<div class="no-balls">
-        <p class="desc">${escapeHTML(wild.noBallsText)}</p>
-        <button class="action" data-tab="shop">🛒 ${escapeHTML(strings.getBalls)}</button>
-      </div>`
-          : ''
-      }`
-      }
+      ${playerPlate(state)}
     </div>`
 
-  // Under the scene: mid-capture, how many more are waiting (a count, never the species) plus
-  // a one-line companion strip — a heavy user can have encounters queued for days, and without
-  // this the egg's incubation and the companion's progress would simply vanish from Home.
-  if (selected !== undefined) {
-    const more =
-      wild.encounters.length < 2 ? '' : `<p class="desc wild-more">${escapeHTML(wild.waitingText)}</p>`
-    // A miniature of the compact card: portrait, name, stage line and the bar. The bare
-    // one-line strip it replaces read as a caption, not as "your companion is still here".
-    const meta =
-      c === undefined
-        ? ''
-        : [c.stageText, c.rarityText]
-            .filter((part): part is string => part !== undefined && part !== '')
-            .map(escapeHTML)
-            .join(' · ')
-    const card =
-      c === undefined
-        ? ''
-        : `<div class="companion-card">
-        <div class="thumb">${
-          c.speciesID === undefined
-            ? '<span class="egg-small">🥚</span>'
-            : `<img src="${spriteURL(c.speciesID, c.isShiny, false)}" alt="">`
-        }</div>
-        <div class="body">
-          <div class="title">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</div>
-          ${meta === '' ? '' : `<div class="desc">${meta}</div>`}
-          <div class="progress">
-            <div class="meta">
-              <span>${escapeHTML(c.toNextText)}</span>
-              <span class="pct">${Math.round(c.progress * 100)}%</span>
-            </div>
-            <div class="bar"><i data-fill="${Math.round(c.progress * 100)}"></i></div>
+  // The dialog box: what just happened, or the question the games ask. Idle, it carries the
+  // road to the next encounter instead — the one thing worth reading while nothing is on stage.
+  // In battle it is one slim line over the menu: what a miss risks moved down beside the balls,
+  // where the throw is decided, and the Razz Berry and stolen tokens are statuses on the plate.
+  const dialogLines =
+    selected === undefined
+      ? `<div class="progress next-encounter">
+          <div class="meta">
+            <span>${escapeHTML(wild.nextText)}</span>
+            <span class="pct">${wild.progressPercent}%</span>
           </div>
-        </div>
-      </div>`
-    return `${scene}${more}${card}`
+          <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
+          ${streakRow(wild.streak)}
+        </div>`
+      : ''
+  const prompt = selected === undefined ? undefined : strings.commandPrompt
+  const dialog = `
+    <div class="dialog${selected === undefined ? '' : ' slim'}">
+      <p class="dialog-text wild-result${(resultLine ?? prompt) ? '' : ' empty'}" aria-live="polite">${escapeHTML(resultLine ?? prompt ?? '')}</p>
+      ${dialogLines}
+    </div>`
+
+  if (selected === undefined) {
+    const line = c === undefined ? '' : renderLine(c.line)
+    return `<div class="battle">${scene}${dialog}${line === '' ? '' : `<div class="evo-strip">${line}</div>`}</div>
+      ${renderFindsAndTrail(wild)}`
   }
 
-  // The same progress component the companion uses, rather than a second, narrower, centred
-  // bar with no figure on it: two bars stacked in two shapes, for two different meanings, read
-  // as a layout accident.
-  return `${scene}
-    <section class="scene-info">
-      ${companionInfo(state)}
-      <div class="progress next-encounter">
-        <div class="meta">
-          <span>${escapeHTML(wild.nextText)}</span>
-          <span class="pct">${wild.progressPercent}%</span>
-        </div>
-        <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
-        ${streakRow(wild.streak)}
+  return `<div class="battle">${scene}${dialog}${commandMenu(state, selected)}</div>
+    ${renderFindsAndTrail(wild)}`
+}
+
+/** The glyph beside each mood gauge: a flame for anger, a pulse for nerves, a heart for trust. */
+const MOOD_ICONS: Record<PanelMoodMeter['key'], string> = {
+  anger: 'flame',
+  nervousness: 'pulse',
+  trust: 'heart',
+}
+
+/**
+ * The wild Pokémon's plate, top left as in the games: name, rarity, character and three gauges
+ * where the games put HP. The gauges are anger, nerves and trust — drawn, never measured, here:
+ * the core's `tone` picks how loudly each one shows, never a threshold of the webview's own.
+ */
+function wildPlate(encounter: PanelWildEncounter): string {
+  // All three low says one thing — "calm" — so it takes one line: the gauges side by side, the
+  // labels kept for the tooltip and the screen reader. Any of them rising opens the full rows.
+  const calm = encounter.meters.every((m) => m.tone === 'low')
+  const meters = encounter.meters
+    .map(
+      (
+        m,
+      ) => `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
+        <i class="codicon codicon-${MOOD_ICONS[m.key]} meter-icon" aria-hidden="true"></i>
+        <span class="meter-label">${escapeHTML(m.label)}</span>
+        <div class="bar gauge" aria-label="${escapeHTML(m.label)}"><i data-fill="${Math.max(0, Math.min(100, Math.round(m.percent)))}"></i></div>
+      </div>`,
+    )
+    .join('')
+  return `<div class="plate plate-wild">
+      <div class="plate-head">
+        <span class="plate-name">${escapeHTML(encounter.name)}${encounter.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        ${
+          // Nature and traits are flavour more than a decision, so they wait behind a glyph by the
+          // name instead of taking a line of the plate.
+          encounter.temperamentText === undefined
+            ? ''
+            : `<i class="codicon codicon-info plate-info" role="img" tabindex="0" title="${escapeHTML(encounter.temperamentText)}" aria-label="${escapeHTML(encounter.temperamentText)}"></i>`
+        }
+        <span class="rarity-badge ${escapeHTML(encounter.rarity)}">${escapeHTML(encounter.rarityText)}</span>
       </div>
-    </section>`
+
+      <div class="meters${calm ? ' calm' : ''}">${meters}</div>
+      ${
+        (encounter.statuses ?? []).length === 0
+          ? ''
+          : `<div class="statuses">${(encounter.statuses ?? [])
+              .map(
+                (st) =>
+                  `<span class="status ${escapeHTML(st.key)}" title="${escapeHTML(st.title)}" aria-label="${escapeHTML(st.title)}">${escapeHTML(st.text)}</span>`,
+              )
+              .join('')}</div>`
+      }
+    </div>`
+}
+
+/** The glyph before each reaction a miss risks: running off, or striking back. */
+const RISK_ICONS: Record<PanelWildEncounter['risk']['items'][number]['key'], string> = {
+  flee: 'run-all',
+  attack: 'zap',
+}
+
+/**
+ * Your side's plate, bottom right: the companion and its road to the next evolution, drawn as
+ * the wild plate draws its mood — a gauge of cells led by its glyph, under the same rule.
+ */
+function playerPlate(state: PanelState): string {
+  const c = state.companion
+  if (c === undefined) return ''
+  const percent = Math.round(c.progress * 100)
+  const meta = [c.stageText, c.rarityText, c.natureText].filter(
+    (part): part is string => part !== undefined && part !== '',
+  )
+  return `<div class="plate plate-player">
+      <div class="plate-head">
+        <span class="plate-name">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        ${
+          // Stage, rarity and nature, behind the same glyph as the wild plate's temperament:
+          // what the plate is for is the road to the next stage, not the card's details.
+          meta.length === 0
+            ? ''
+            : `<i class="codicon codicon-info plate-info" role="img" tabindex="0" title="${escapeHTML(meta.join(' · '))}" aria-label="${escapeHTML(meta.join(' · '))}"></i>`
+        }
+        <span class="plate-pct">${percent}%</span>
+      </div>
+      <div class="exp-row">
+        <i class="codicon codicon-sparkle meter-icon" aria-hidden="true"></i>
+        <div class="bar exp gauge"><i data-fill="${percent}"></i></div>
+      </div>
+      <div class="plate-sub to-next">${escapeHTML(c.toNextText)}</div>
+    </div>`
+}
+
+/**
+ * The battle menu under the dialog box. The balls are the menu: throwing one is what an
+ * encounter is mostly made of, so it is one click, not two. Under them, the Bag — everything
+ * else usable in battle, berries today and whatever is added later — and Run. Which level is
+ * open is view state — it never reaches the host, and a new Pokémon on stage always starts back
+ * at the top.
+ */
+function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
+  const encounterID = encounter.id
+  const wild = state.wild
+  const strings = state.strings
+  const noBalls = wild.balls.every((b) => b.count === 0)
+
+  if (wildMenu === 'bag') {
+    const berries = wild.berries
+      .map(
+        (berry) => `<button class="command item" data-feed="${escapeHTML(encounterID)}"
+              data-berry="${escapeHTML(berry.kind)}" data-sprite="${escapeHTML(berry.sprite)}"
+              aria-label="${escapeHTML(berry.name)} ×${berry.count}. ${escapeHTML(berry.effectText)}">
+          <img src="${itemSpriteURL(berry.sprite)}" alt="">
+          <span class="command-name">${escapeHTML(berry.name)}<small>${escapeHTML(berry.effectText)}</small></span>
+          <span class="command-count">×${berry.count}</span>
+        </button>`,
+      )
+      .join('')
+    return `<div class="commands list" role="group" aria-label="${escapeHTML(strings.tabs.bag)}">
+        ${berries}
+        <button class="command back" data-menu="main">${escapeHTML(strings.commandBack)}</button>
+      </div>`
+  }
+
+  // An empty ball is a way to the shop rather than a dead tile: `data-tab` is handled before
+  // `data-throw`, so the click opens the shop and can never throw a ball that is not there.
+  const balls = wild.balls
+    .map((ball) => {
+      const none = ball.count === 0
+      const label = `${escapeHTML(ball.name)} ×${ball.count}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}`
+      return `<button class="command ball${none ? ' none' : ''}" data-throw="${escapeHTML(encounterID)}"
+            data-ball="${escapeHTML(ball.kind)}" data-sprite="${escapeHTML(ball.sprite)}"
+            ${none ? 'data-tab="shop"' : ''} title="${none ? `${escapeHTML(ball.name)} · ${escapeHTML(strings.getBalls)}` : escapeHTML(ball.name)}"
+            aria-label="${none ? `${label}. ${escapeHTML(strings.getBalls)}` : label}">
+        <span class="ball-sprite"><img src="${itemSpriteURL(ball.sprite)}" alt="">${
+          none
+            ? '<span class="ball-count shop"><i class="codicon codicon-add" aria-hidden="true"></i></span>'
+            : `<span class="ball-count">×${ball.count}</span>`
+        }</span>
+        <span class="ball-odds">${ball.oddsText === undefined ? '' : escapeHTML(ball.oddsText)}</span>
+        <span class="ball-name">${escapeHTML(ball.name)}</span>
+      </button>`
+    })
+    .join('')
+  // At the end of the Bag and Run line: with an empty rack, the way to the shop — the moment
+  // of highest purchase intent; otherwise how many more are waiting, when any are.
+  const note = noBalls
+    ? `<button class="command info" data-tab="shop">${escapeHTML(strings.getBalls)}</button>`
+    : wild.moreText !== undefined
+      ? `<p class="command info queue" title="${escapeHTML(wild.waitingText)}">
+          <i class="codicon codicon-layers" aria-hidden="true"></i>${escapeHTML(wild.moreText)}</p>`
+      : ''
+  // What a miss risks, over the balls it is the price of.
+  const risk = `<p class="dialog-note risk" title="${escapeHTML(encounter.riskText)}" aria-label="${escapeHTML(encounter.riskText)}">
+      <span class="risk-heading">${escapeHTML(encounter.risk.heading)}</span>${encounter.risk.items
+        .map(
+          (item) =>
+            `<span class="risk-item ${escapeHTML(item.key)}"><i class="codicon codicon-${RISK_ICONS[item.key]}" aria-hidden="true"></i>${escapeHTML(item.text)}</span>`,
+        )
+        .join('')}
+    </p>`
+  return `<div class="commands list" role="group" aria-label="${escapeHTML(strings.commandBalls)}">
+      ${risk}
+      <div class="ball-row">${balls}</div>
+      <div class="command-row">
+        <button class="command" data-menu="bag" ${wild.berries.length === 0 ? 'disabled' : ''}>
+          <i class="codicon codicon-package command-icon" aria-hidden="true"></i>${escapeHTML(strings.tabs.bag)}</button>
+        <button class="command" data-run="${escapeHTML(encounterID)}">
+          <i class="codicon codicon-run-all command-icon" aria-hidden="true"></i>${escapeHTML(strings.run)}</button>
+        ${note}
+      </div>
+    </div>`
+}
+
+/** Items lying in the wild area, and legendaries that can still be tracked back. */
+function renderFindsAndTrail(wild: PanelState['wild']): string {
+  const finds =
+    wild.finds.length === 0
+      ? ''
+      : `<section class="wild-finds">
+        <div class="finds-head">
+          <h2 class="section">${escapeHTML(wild.findsText ?? '')}</h2>
+          <button class="link" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
+        </div>
+        <div class="finds-row">${wild.finds
+          .map(
+            (
+              find,
+            ) => `<button class="find rarity-${escapeHTML(find.rarity)}" data-collect="${escapeHTML(find.id)}"
+                title="${escapeHTML(find.label)} — ${escapeHTML(find.rarityText)}" aria-label="${escapeHTML(find.label)}">
+              ${find.sprite === undefined ? `<span class="emoji">${find.emoji}</span>` : `<img src="${itemSpriteURL(find.sprite)}" alt="">`}
+              ${find.count > 1 ? `<span class="count">×${find.count}</span>` : ''}
+            </button>`,
+          )
+          .join('')}</div>
+      </section>`
+  const trail =
+    wild.trail.length === 0
+      ? ''
+      : `<section class="wild-trail">
+        <h2 class="section">${escapeHTML(wild.trailTitle)}</h2>
+        ${wild.trail
+          .map(
+            (entry) => `<div class="trail-row">
+              <img src="${spriteURL(entry.speciesID, entry.isShiny, false)}" alt="">
+              <span class="body">
+                <span class="title">${escapeHTML(entry.name)}${entry.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+                <span class="desc">${escapeHTML(entry.expiresText)}</span>
+              </span>
+              <button class="action" data-track="${escapeHTML(entry.id)}" data-title="${escapeHTML(entry.confirmTitle)}"
+                      data-price="${escapeHTML(entry.priceText)}" data-confirm="${escapeHTML(entry.confirmLabel)}"
+                      ${entry.enabled ? '' : 'disabled'}>${escapeHTML(entry.trackText)}</button>
+            </div>`,
+          )
+          .join('')}
+      </section>`
+  return `${finds}${trail}`
 }
 
 /**
@@ -547,7 +800,8 @@ function streakRow(streak: PanelState['wild']['streak'] | undefined): string {
  *  on-error fallback — see the delegated error listener). */
 function itemIcon(sprite: string | undefined, emoji: string): string {
   if (sprite === undefined) return `<div class="icon">${escapeHTML(emoji)}</div>`
-  return `<div class="icon"><img src="${itemSpriteURL(sprite)}" alt="" data-emoji-fallback="${escapeHTML(emoji)}"></div>`
+  const sheet = itemSpriteIsSheet(sprite) ? ' class="sheet"' : ''
+  return `<div class="icon"><img${sheet} src="${itemSpriteURL(sprite)}" alt="" data-emoji-fallback="${escapeHTML(emoji)}"></div>`
 }
 
 /**
@@ -562,20 +816,24 @@ function shopAction(
   item: PanelState['shop'][number],
   action: PanelShopAction,
   withPrice: boolean,
+  withWord: boolean,
 ): string {
   // Dimmed and italic, never struck through: a line through a price reads as a discount, and
   // this row has a real one two millimetres away.
   const cant = !action.enabled && !item.owned ? ' cant' : ''
+  // The saving is pinned small to the corner of the price it discounts, so it reads as that
+  // price's and no other's.
+  const save =
+    action.saveText === undefined ? '' : `<span class="save">${escapeHTML(action.saveText)}</span>`
   const price = withPrice
-    ? `<span class="cost${cant}">${escapeHTML(action.priceText)}</span>` +
-      (action.saveText === undefined ? '' : `<span class="save">${escapeHTML(action.saveText)}</span>`)
+    ? `<span class="price-tag"><span class="cost${cant}">${escapeHTML(action.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>${save}</span>`
     : ''
   return `<button class="action${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"
                 data-title="${escapeHTML(action.confirmTitle)}" data-price="${escapeHTML(action.priceText)}"
                 data-confirm="${escapeHTML(state.strings.buy)}"
                 aria-label="${escapeHTML(action.label)}"
                 ${action.enabled ? '' : 'disabled'}>
-          <span class="verb">${escapeHTML(action.text)}</span>${price}
+          ${withWord ? `<span class="verb">${escapeHTML(action.text)}</span>` : ''}${price}
         </button>`
 }
 
@@ -583,13 +841,13 @@ function renderShop(state: PanelState): string {
   if (state.shop.length === 0) return `<p class="empty">${escapeHTML(state.strings.empty)}</p>`
 
   /**
-   * Two layouts, chosen by how many prices the row carries rather than by what it sells.
-   *
-   * One price keeps the shape the whole shop has always had — name and sentence left, price and
-   * button right, two lines. Two prices cannot fit that: at 300px the buttons would leave the
-   * name a column narrow enough to break "モンスターボール" across four lines. So the pair drops
-   * to its own line under the name, and the prices move inside the buttons, which is also what
-   * lets the two be told apart without reading the same word twice.
+   * One shape for every row: the sprite, the name with its figure and sentence, and a column of
+   * price tags — each tag the verb (or quantity) and its price on the wallet's own screen, so a
+   * price is always read on the button that pays it. A ball's ×1 and ×10 stack in that column
+   * instead of taking a line of their own under the name, which is where the shop's height went.
+   * A row with one price has no word on its tag — the price on the screen is the button, and the
+   * accessible name still says "Buy … for …". Two prices keep their quantities, which are the
+   * difference between them. An owned passive's tag has its word and no price: nothing to pay.
    */
   const row = (item: PanelState['shop'][number]): string => {
     const stat =
@@ -602,36 +860,30 @@ function renderShop(state: PanelState): string {
           <div class="title">${escapeHTML(item.title)}${stat}</div>
           ${desc}
         </div>`
-    if (item.actions.length === 1) {
-      const only = item.actions[0]!
-      return `
-      <div class="row">
-        ${itemIcon(item.sprite, item.emoji)}
-        ${body}
-        <div class="desc price${!only.enabled && !item.owned ? ' cant' : ''}">${escapeHTML(only.priceText)}</div>
-        ${shopAction(state, item, only, false)}
-      </div>`
-    }
     return `
-      <div class="row multi">
+      <div class="row shop-item${item.owned ? ' owned' : ''}">
         ${itemIcon(item.sprite, item.emoji)}
         ${body}
-        <div class="buys">${item.actions.map((a) => shopAction(state, item, a, true)).join('')}</div>
+        <div class="buys">${item.actions
+          .map((a) => shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1))
+          .join('')}</div>
       </div>`
   }
 
   // The wallet on top: every price below is judged against this number, so making the reader
   // hop back to Home to know it is a dead end.
+  // Drawn as the Pokédex lid's screen on Home, so the balance looks the same wherever it is read.
   const wallet = `
     <div class="shop-wallet">
       <span class="label">${escapeHTML(state.strings.spendable)}</span>
-      <span class="value">${escapeHTML(state.spendableText)}</span>
+      <span class="value">${escapeHTML(state.spendableText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>
     </div>`
 
   // `note` is what every card in the group would otherwise repeat. Only the eggs have one so
   // far, and saying it once is the entire reason they each fit on one line now.
   const groups: { id: PanelState['shop'][number]['group']; title: string; note?: string }[] = [
     { id: 'balls', title: state.strings.shopBalls },
+    { id: 'berries', title: state.strings.shopBerries },
     { id: 'items', title: state.strings.shopItems },
     { id: 'eggs', title: state.strings.shopEggs, note: state.strings.shopEggsNote },
   ]
@@ -653,25 +905,60 @@ function renderShop(state: PanelState): string {
   return `${wallet}${sections}`
 }
 
+/**
+ * The bag as the games lay it out: pockets across the top, the pocket's items as a list with a
+ * cursor, and the selected item's description in the dialog box below — with Use when it can be
+ * used from here. Which pocket and which item are view state; the contents all come from the core.
+ */
 function renderBag(state: PanelState): string {
   if (state.bag.length === 0) return `<p class="empty">${escapeHTML(state.strings.bagEmpty)}</p>`
-  return state.bag
+
+  const pockets: { id: PanelState['bag'][number]['pocket']; label: string }[] = [
+    { id: 'balls', label: state.strings.shopBalls },
+    { id: 'berries', label: state.strings.shopBerries },
+    { id: 'items', label: state.strings.shopItems },
+  ]
+  const filled = pockets.filter((p) => state.bag.some((item) => item.pocket === p.id))
+  if (bagPocket === undefined || !filled.some((p) => p.id === bagPocket)) bagPocket = filled[0]?.id
+  const items = state.bag.filter((item) => item.pocket === bagPocket)
+  const selected = items.find((item) => item.id === bagSelected) ?? items[0]
+  bagSelected = selected?.id
+
+  const tabs = pockets
+    .map((p) => {
+      const empty = !filled.some((f) => f.id === p.id)
+      return `<button class="pocket" data-pocket="${p.id}" aria-pressed="${p.id === bagPocket}" ${empty ? 'disabled' : ''}>${escapeHTML(p.label)}</button>`
+    })
+    .join('')
+  const rows = items
     .map(
-      (item) => `
-      <div class="row">
+      (
+        item,
+      ) => `<button class="bag-row" data-bag-select="${escapeHTML(item.id)}" aria-pressed="${item.id === selected?.id}">
         ${itemIcon(item.sprite, item.emoji)}
-        <div class="body">
-          <div class="title">${escapeHTML(item.title)} ×${item.count}</div>
-          <div class="desc">${escapeHTML(item.description)}</div>
-        </div>
-        ${
-          item.usable
-            ? `<button class="action" data-use="${escapeHTML(item.id)}">${escapeHTML(state.strings.use)}</button>`
-            : `<span class="desc">${escapeHTML(item.hint ?? '')}</span>`
-        }
-      </div>`,
+        <span class="bag-name">${escapeHTML(item.title)}</span>
+        <span class="bag-count">×${item.count}</span>
+      </button>`,
     )
     .join('')
+  const dialog =
+    selected === undefined
+      ? ''
+      : `<div class="dialog bag-dialog">
+        <p class="dialog-text">${escapeHTML(selected.description)}</p>
+        ${
+          selected.usable
+            ? `<button class="dialog-action" data-use="${escapeHTML(selected.id)}">${escapeHTML(state.strings.use)}</button>`
+            : selected.hint === undefined
+              ? ''
+              : `<p class="dialog-note">${escapeHTML(selected.hint)}</p>`
+        }
+      </div>`
+  return `<div class="bag">
+      <div class="pockets" role="group">${tabs}</div>
+      <div class="bag-list">${rows}</div>
+      ${dialog}
+    </div>`
 }
 
 /** The dex number the games print: three digits, hash first. */
@@ -689,12 +976,14 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
   if (sp === undefined) {
     return `
     <div class="dex-detail locked">
-      <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
-      <div class="body">
-        <div class="title">${dexNumber(dexSelected)}</div>
-        <div class="desc">?????</div>
+      <div class="dex-entry-head">
+        <span class="num">${dexNumber(dexSelected)}</span>
+        <span class="dex-entry-name">?????</span>
+        ${close}
       </div>
-      ${close}
+      <div class="dex-entry-body">
+        <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+      </div>
     </div>`
   }
 
@@ -716,19 +1005,22 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
 
   return `
     <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
-      <div class="portrait">
-        <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
-             data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+      <div class="dex-entry-head">
+        <span class="num">${dexNumber(sp.id)}</span>
+        <span class="dex-entry-name">${escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
+        ${close}
       </div>
-      <div class="body">
-        <div class="title">
-          <span class="num">${dexNumber(sp.id)}</span> ${escapeHTML(sp.name)}
-          ${sp.isShiny ? '<span class="star-inline" title="shiny">★</span>' : ''}
+      <div class="dex-entry-body">
+        <div class="portrait">
+          <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
+               data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
         </div>
-        <div class="desc">${escapeHTML(sp.rarityText)}${sp.isRaising ? ` · ${escapeHTML(state.strings.raisingBadge)}` : ''}</div>
-        ${entries}
+        <div class="body">
+          <span class="rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+          ${sp.isRaising ? `<div class="desc">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
+          ${entries}
+        </div>
       </div>
-      ${close}
     </div>`
 }
 
@@ -799,7 +1091,7 @@ function renderDex(state: PanelState): string {
         </button>`)
       } else {
         cells.push(`
-        <button class="cell${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
+        <button class="cell owned rarity-${escapeHTML(sp.rarity)}${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
                 data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.rarityText)}">
           ${sp.isShiny ? '<span class="star" title="shiny">★</span>' : ''}
           <img src="${spriteURL(sp.id, sp.isShiny, false)}" alt="" loading="lazy">
@@ -815,11 +1107,12 @@ function renderDex(state: PanelState): string {
         : `<div class="dex">${cells.join('')}</div>`
     // The detail renders after the grid but floats fixed at the bottom of the view: a card at
     // the top of a 649-cell grid opens off-screen when the click happened four screens down.
-    return `${segments}${controls}${completion}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
+    return `${dexHead(state, completion)}${segments}${controls}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
   }
 
+  const head = dexHead(state, '')
   if (state.dexLog.length === 0) {
-    return `${segments}
+    return `${head}${segments}
       <p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
       <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
   }
@@ -839,13 +1132,13 @@ function renderDex(state: PanelState): string {
   const visible =
     dexLogFilter === 'all' ? state.dexLog : state.dexLog.filter((e) => e.rarity === dexLogFilter)
   if (visible.length === 0) {
-    return `${segments}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+    return `${head}${segments}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
   }
 
   const rows = visible
     .map(
       (e) => `
-      <div class="row${e.isActive ? ' active' : ''}">
+      <div class="row log-row rarity-${escapeHTML(e.rarity)}${e.isActive ? ' active' : ''}">
         <img class="thumb" src="${spriteURL(e.finalID, e.isShiny, false)}" alt="" loading="lazy">
         <div class="body">
           <div class="title">${escapeHTML(e.name)}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>
@@ -856,7 +1149,19 @@ function renderDex(state: PanelState): string {
       </div>`,
     )
     .join('')
-  return `${segments}${chips}${rows}`
+  return `${head}${segments}${chips}<div class="log">${rows}</div>`
+}
+
+/**
+ * The top of the device: the Pokédex's own red, its title, and — on the collection — how far
+ * along it is. The one accent this tab spends; everything under it stays the editor's.
+ */
+function dexHead(state: PanelState, progress: string): string {
+  return `<div class="dex-head">
+      <span class="dex-lens" aria-hidden="true"></span>
+      <span class="dex-title">${escapeHTML(state.strings.tabs.dex)}</span>
+      ${progress}
+    </div>`
 }
 
 function renderSettings(state: PanelState): string {
@@ -881,7 +1186,7 @@ function renderSettings(state: PanelState): string {
     state.refresh === undefined
       ? ''
       : `
-    <label class="setting">
+    <label class="setting tc-field">
       <span>${escapeHTML(state.strings.refreshInterval)}</span>
       <select id="refresh-interval">${state.refresh.options
         .map(
@@ -890,14 +1195,20 @@ function renderSettings(state: PanelState): string {
         )
         .join('')}</select>
     </label>`
+  // The games' trainer card: who you are, big, beside the options that are yours to set.
   return `
-    <label class="setting">
-      <span>${escapeHTML(state.strings.language)}</span>
-      <select id="language">${options}</select>
-    </label>
-    ${refresh}
+    <div class="trainer-card">
+      <div class="tc-portrait"><img src="${trainerURL(state.trainerID)}" alt=""></div>
+      <div class="tc-fields">
+        <label class="setting tc-field">
+          <span>${escapeHTML(state.strings.language)}</span>
+          <select id="language">${options}</select>
+        </label>
+        ${refresh}
+      </div>
+    </div>
+    <h2 class="section">${escapeHTML(state.strings.trainer)}</h2>
     <div class="setting trainer-setting">
-      <span>${escapeHTML(state.strings.trainer)}</span>
       <div class="trainer-grid">${trainers}</div>
     </div>
     <h2 class="section">${escapeHTML(state.strings.saveSection)}</h2>
@@ -1051,7 +1362,19 @@ function render(): void {
   // of a sidebar — for a grid nobody was looking at.
   if (!painted.has(tab)) {
     const section = el(tab)
+    // The scene's sprites are animated GIFs. A repaint that recreates them restarts every
+    // animation at frame one, which reads as the whole stage flickering — so a sprite whose
+    // source did not change keeps its node across the repaint.
+    const kept = tab === 'home' ? sceneSprites(section) : new Map<string, HTMLImageElement>()
+    const previousTerrain = section.querySelector<HTMLElement>('.wild-scene')?.dataset['terrain']
     section.innerHTML = RENDERERS[tab](state)
+    if (kept.size > 0) {
+      for (const [key, fresh] of sceneSprites(section)) {
+        const old = kept.get(key)
+        if (old !== undefined && old.src === fresh.src) fresh.replaceWith(old)
+      }
+    }
+    changeTerrain(section, previousTerrain)
     painted.add(tab)
     paintBars(section)
   }
@@ -1083,6 +1406,108 @@ function render(): void {
   // offset reads 0, and measuring there was exactly how the first throw's arc came out 60px
   // long. `beginThrow` measures again at click time as the authoritative value.
   if (tab === 'home') measureThrowDistance()
+
+  // Shown where it happened or not at all: a +12M played minutes later, on the way back from the
+  // Pokédex, would be news about nothing in particular.
+  if (pendingWallet !== undefined && tab === 'home') playWalletChange(pendingWallet)
+  pendingWallet = undefined
+}
+
+/**
+ * Remembers a balance change to play on the next paint. Taken from every state as it arrives —
+ * before a throw can defer it — because a deferred state is overwritten by the next one, and the
+ * attack's −4M would go with it. The very first state a panel sees is only recorded: the change
+ * it carries happened before this panel existed.
+ */
+function noteWalletChange(state: PanelState): void {
+  const change = state.walletChange
+  if (change !== undefined && change.id !== seenWalletChangeID) {
+    if (walletPrimed) pendingWallet = change
+    seenWalletChangeID = change.id
+  }
+  walletPrimed = true
+}
+
+/** As long as a step through the menu takes: the box resizing, then the options settling in. */
+const MENU_RESIZE_MS = 240
+
+/**
+ * Grows or shrinks the menu from the height it had to the one it has now, instead of jumping —
+ * four commands to five items is ~100px — and lets the new options fade in one after another.
+ * Through the Web Animations API, not inline styles: the CSP's `style-src` has no
+ * 'unsafe-inline'. Skipped with reduced motion or a paused panel, where the menu simply is.
+ */
+function resizeMenu(menu: HTMLElement, from: number): void {
+  if (document.body.classList.contains('paused')) return
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  const to = menu.getBoundingClientRect().height
+  if (Math.abs(to - from) > 1) {
+    menu.classList.add('resizing')
+    const resize = menu.animate([{ height: `${from}px` }, { height: `${to}px` }], {
+      duration: MENU_RESIZE_MS,
+      easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+    })
+    const done = () => menu.classList.remove('resizing')
+    resize.addEventListener('finish', done)
+    resize.addEventListener('cancel', done)
+  }
+  ;[...menu.children].forEach((option, index) => {
+    option.animate(
+      [
+        { opacity: 0, transform: 'translateY(6px)' },
+        { opacity: 1, transform: 'none' },
+      ],
+      { duration: 180, delay: 40 + index * 30, easing: 'ease-out', fill: 'backwards' },
+    )
+  })
+}
+
+/** A chip with the signed amount drifts into the badge (a gain) or out of it (a loss). */
+function playWalletChange(change: PanelWalletChange): void {
+  const badge = document.querySelector<HTMLElement>('#home .wallet-badge')
+  if (badge === null) return
+  const chip = document.createElement('span')
+  chip.className = `wallet-delta ${change.kind}`
+  chip.textContent = change.text
+  chip.setAttribute('aria-hidden', 'true')
+  badge.append(chip)
+  badge.classList.remove('bump-gain', 'bump-loss')
+  void badge.offsetWidth
+  badge.classList.add(`bump-${change.kind}`)
+  // A timer, not `animationend`: with reduced motion there is no animation to end.
+  setTimeout(() => {
+    chip.remove()
+    badge.classList.remove(`bump-${change.kind}`)
+  }, WALLET_CHANGE_MS)
+}
+
+/**
+ * A fresh scene starts at its final colours, so a new terrain would arrive as a cut. Painting it
+ * with the previous terrain first and switching once styles are computed is what gives the
+ * stylesheet's transition a starting point.
+ */
+function changeTerrain(root: HTMLElement, previous: string | undefined): void {
+  const scene = root.querySelector<HTMLElement>('.wild-scene')
+  const next = scene?.dataset['terrain']
+  if (scene === null || previous === undefined || next === undefined || previous === next) return
+  scene.dataset['terrain'] = previous
+  void getComputedStyle(scene).getPropertyValue('--sky-top')
+  scene.dataset['terrain'] = next
+}
+
+/** The scene's sprites by role, so a repaint can tell which of them are the same picture. */
+function sceneSprites(root: HTMLElement): Map<string, HTMLImageElement> {
+  const roles: [string, string][] = [
+    ['wild', '.wild-scene .wild-mon img'],
+    ['companion', '.wild-scene .companion-mon img'],
+    ['trainer', '.wild-scene img.trainer'],
+  ]
+  const found = new Map<string, HTMLImageElement>()
+  for (const [role, selector] of roles) {
+    const img = root.querySelector<HTMLImageElement>(selector)
+    if (img !== null) found.set(role, img)
+  }
+  return found
 }
 
 /**
@@ -1099,9 +1524,22 @@ function measureThrowDistance(): void {
   if (mon.offsetWidth === 0) return // hidden: keep whatever a visible pass measured
   const distance = mon.offsetLeft + mon.offsetWidth / 2 - 15 - ballOrigin.offsetLeft
   scene.style.setProperty('--throw-distance', `${Math.max(60, Math.round(distance))}px`)
+  // The wild Pokémon stands higher than your hand in a battle layout, so the arc climbs: it ends
+  // a ball's height above the wild's feet, where the games make the ball pop it in.
+  const rise = mon.offsetTop + mon.offsetHeight - 40 - ballOrigin.offsetTop
+  scene.style.setProperty('--throw-rise', `${Math.round(rise)}px`)
 }
 
 // MARK: - Events
+
+// The entrance is spent once it has played. Left on the scene, the class replays it whenever Home
+// is shown again — a section going from hidden to shown restarts its CSS animations — so the same
+// Pokémon walked back on stage after every visit to another tab. The plate's slide is the later
+// of the two, so its end is the end of the entrance.
+document.addEventListener('animationend', (event) => {
+  if (event.animationName !== 'plate-enter') return
+  ;(event.target as HTMLElement).closest('.wild-scene')?.classList.remove('entering')
+})
 
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement
@@ -1170,7 +1608,83 @@ document.addEventListener('click', (event) => {
   const throwButton = target.closest('[data-throw]')
   if (throwButton !== null) {
     const b = throwButton as HTMLElement
-    beginThrow(b.dataset['throw'] ?? '', b.dataset['ball'] ?? '', b.dataset['sprite'] ?? 'poke-ball')
+    beginTurn(
+      'throw',
+      b.dataset['throw'] ?? '',
+      b.dataset['ball'] ?? '',
+      b.dataset['sprite'] ?? 'poke-ball',
+    )
+    return
+  }
+  const pocketButton = target.closest('[data-pocket]')
+  if (pocketButton !== null) {
+    bagPocket = (pocketButton as HTMLElement).dataset['pocket'] as typeof bagPocket
+    bagSelected = undefined
+    invalidate('bag')
+    render()
+    return
+  }
+  const bagRow = target.closest('[data-bag-select]')
+  if (bagRow !== null) {
+    bagSelected = (bagRow as HTMLElement).dataset['bagSelect']
+    invalidate('bag')
+    render()
+    return
+  }
+  const menuButton = target.closest('[data-menu]')
+  if (menuButton !== null && throwing === undefined) {
+    wildMenu = ((menuButton as HTMLElement).dataset['menu'] as typeof wildMenu | undefined) ?? 'main'
+    // Only the menu changes, so only the menu is redrawn. Repainting Home for it rebuilt the
+    // whole scene — sprites reloaded, the wild Pokémon's GIF restarted from its first frame —
+    // on every step through Balls, Berries and Back.
+    const menu = document.querySelector('.commands')
+    const staged = current?.wild.encounters[0]
+    if (menu !== null && current !== undefined && staged !== undefined) {
+      const from = menu.getBoundingClientRect().height
+      menu.outerHTML = commandMenu(current, staged)
+      const fresh = document.querySelector<HTMLElement>('.commands')
+      if (fresh !== null) resizeMenu(fresh, from)
+      // Keyboard users keep their place: focus moves to the first command of the new level.
+      document.querySelector<HTMLElement>('.commands button:not(:disabled):not(.none)')?.focus()
+    } else {
+      invalidate('home')
+      render()
+    }
+    return
+  }
+  const feedButton = target.closest('[data-feed]')
+  if (feedButton !== null) {
+    const b = feedButton as HTMLElement
+    beginTurn(
+      'feed',
+      b.dataset['feed'] ?? '',
+      b.dataset['berry'] ?? '',
+      b.dataset['sprite'] ?? 'oran-berry',
+    )
+    return
+  }
+  const collectButton = target.closest('[data-collect]')
+  if (collectButton !== null) {
+    vscode.postMessage({
+      type: 'collect',
+      findID: (collectButton as HTMLElement).dataset['collect'] ?? '',
+    })
+    return
+  }
+  if (target.closest('[data-collect-all]') !== null) {
+    vscode.postMessage({ type: 'collectAll' })
+    return
+  }
+  const trackButton = target.closest('[data-track]')
+  if (trackButton !== null) {
+    const el = trackButton as HTMLElement
+    vscode.postMessage({
+      type: 'track',
+      trailID: el.dataset['track'] ?? '',
+      title: el.dataset['title'] ?? '',
+      priceText: el.dataset['price'] ?? '',
+      confirmLabel: el.dataset['confirm'],
+    })
     return
   }
   const runButton = target.closest('[data-run]')
@@ -1330,7 +1844,8 @@ document.addEventListener('visibilitychange', () => {
 // the two the same way in battle) — normalising them toward one size is what briefly made an
 // Aron tower over the trainer. The HERO is different: a portrait with no human beside it, so a
 // 32px companion would just look lost — there, and only there, small sprites are integer-scaled
-// up toward ~80px. Whole multiples only, the condition under which `pixelated` is exact.
+// up toward ~80px. Whole multiples only, the condition under which `pixelated` is exact. The
+// wild side's small species are the one exception in the scene, by `wildSpriteScale`'s rule.
 // Delegated in capture phase ('load' does not bubble), like the error fallback below.
 document.addEventListener(
   'load',
@@ -1343,12 +1858,20 @@ document.addEventListener(
     const w = img.naturalWidth
     const h = img.naturalHeight
     if (w === 0 || h === 0) return
-    if (img.matches('.stage img')) {
+    // The egg is a crop of its sheet drawn by CSS (object-view-box), never sized here.
+    if (img.matches('.stage img') && !img.classList.contains('egg')) {
       const scale = Math.min(3, Math.max(1, Math.round(80 / h)))
       img.style.width = `${w * scale}px`
       img.style.height = `${h * scale}px`
     } else if (img.matches('.wild-mon img')) {
-      // Native size (×1): the size just settled, so the arc's landing point may have moved.
+      // The one exception on the wild side: a small species steps up, by a factor that stays
+      // exact on this display (see wildSpriteScale). The size just settled, so the arc's landing
+      // point may have moved.
+      const scale = wildSpriteScale(h, window.devicePixelRatio)
+      if (scale !== 1) {
+        img.style.width = `${w * scale}px`
+        img.style.height = `${h * scale}px`
+      }
       measureThrowDistance()
     }
   },
@@ -1372,6 +1895,7 @@ document.addEventListener(
     const emoji = img.dataset['emojiFallback']
     if (emoji !== undefined) {
       const span = document.createElement('span')
+      span.className = img.className
       span.textContent = emoji
       img.replaceWith(span)
     }
@@ -1381,8 +1905,9 @@ document.addEventListener(
 
 window.addEventListener(
   'message',
-  (event: MessageEvent<{ type: string; state?: PanelState; result?: PanelThrowResult }>) => {
+  (event: MessageEvent<{ type: string; state?: PanelState; result?: PanelEncounterResult }>) => {
     if (event.data.type === 'state' && event.data.state !== undefined) {
+      noteWalletChange(event.data.state)
       // Mid-throw, the fresh state already shows the outcome (the Pokémon gone, the ball
       // spent); rendering it now would spoil the animation still playing. It applies when the
       // ball lands.

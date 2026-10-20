@@ -19,6 +19,7 @@ import {
   RareCandy,
   type Rarity,
   type ShopEntry,
+  itemIsBundled,
   itemIsPassive,
   itemShopPrice,
   shopEntryPrice,
@@ -50,22 +51,19 @@ function isPurchasedPassive(state: CompanionState, entry: ShopEntry): boolean {
   return itemIsPassive(entry.item) && itemCount(state, entry.item) > 0
 }
 
-/**
- * Balls sold in tens as well as singly.
- *
- * Not the Master Ball: a ten-pack of guaranteed catches is not a thing worth pricing. Bundles
- * exist because every purchase raises a native confirmation modal, so buying ten balls one at a
- * time is ten modals — unusable, and the reason the shop grew a quantity at all.
- */
-const BUNDLED_BALLS: readonly ItemKind[] = ['pokeBall', 'greatBall', 'ultraBall']
-
 export function shopEntries(state: CompanionState): ShopEntry[] {
   const entries: ShopEntry[] = ITEM_KINDS.filter((k) => itemShopPrice(k) !== undefined).map((item) => ({
     kind: 'item',
     item,
   }))
   entries.push(
-    ...BUNDLED_BALLS.map((item) => ({ kind: 'item' as const, item, quantity: Pokeball.bundleSize })),
+    // Ten-packs exist because every purchase raises a native confirmation modal, so buying ten
+    // balls one at a time is ten modals. `itemIsBundled` is the one list of what comes in packs.
+    ...ITEM_KINDS.filter(itemIsBundled).map((item) => ({
+      kind: 'item' as const,
+      item,
+      quantity: Pokeball.bundleSize,
+    })),
   )
   // Eggs are only offered while there is a Pokémon to discard.
   if (state.active !== undefined) {
@@ -77,6 +75,18 @@ export function shopEntries(state: CompanionState): ShopEntry[] {
     if (aDone !== bDone) return aDone ? 1 : -1
     return shopEntryPrice(a) - shopEntryPrice(b)
   })
+}
+
+/**
+ * Whether the host raises its native modal before this purchase. A single ball or berry — the
+ * small change bought mid-encounter, the things sold in packs — goes straight through; a pack,
+ * an egg (it sends the current Pokémon off), anything sold only singly, and the Master Ball still
+ * ask. Decided here and asked by the host, never by the webview that sent the click.
+ */
+export function purchaseNeedsConfirmation(entry: ShopEntry): boolean {
+  if (entry.kind === 'egg') return true
+  if ((entry.quantity ?? 1) !== 1) return true
+  return !itemIsBundled(entry.item) || entry.item === 'masterBall'
 }
 
 /** What a row costs, so the gate and the purchase can never disagree about the bundle discount. */

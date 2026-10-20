@@ -19,7 +19,7 @@ import type { ItemKind, Rarity } from '../companion/model.js'
 import type { CompanionState } from '../companion/model.js'
 import { compact } from '../tokenFormatter.js'
 import { type DevState, parseAmount, tokensToGraduation, tokensToMilestone } from './simulation.js'
-import { tokensToNextEncounter } from '../companion/encounters.js'
+import { EncounterBalance, tokensToNextEncounter } from '../companion/encounters.js'
 
 /**
  * Every development-only action the worker understands.
@@ -41,6 +41,8 @@ export type DevAction =
   | { action: 'devSnapshot'; slot: 'save' | 'restore' }
   | { action: 'devSpawnEncounter'; variant: string }
   | { action: 'devGrantBalls'; count: number }
+  | { action: 'devSpawnFind' }
+  | { action: 'devLoseLegendary' }
 
 export type DevGroup = 'tokens' | 'items' | 'state' | 'edge' | 'reset'
 
@@ -166,7 +168,7 @@ export const DEV_SCENARIOS: DevScenario[] = [
     id: 'spawn-wild',
     group: 'state',
     label: 'Spawn a wild encounter',
-    detail: 'Queues one directly, no network — the real trigger is one per 2.5M tokens',
+    detail: `Queues one directly, no network — the real trigger is one arrival per ${compact(EncounterBalance.threshold)} tokens`,
     input: {
       kind: 'choice',
       prompt: 'What appears',
@@ -174,6 +176,7 @@ export const DEV_SCENARIOS: DevScenario[] = [
         { value: 'common', label: 'Common (Caterpie, always caught)' },
         { value: 'rare', label: 'Rare (Dratini, breaks out of Poké Balls)' },
         { value: 'legendary', label: 'Legendary (Mewtwo, needs the Master Ball)' },
+        { value: 'angry', label: 'Angry legendary (Mewtwo, attacks and steals tokens)' },
         { value: 'shiny', label: 'Shiny (Magikarp ✨, tests the rare toast)' },
       ],
       defaultValue: 'common',
@@ -184,18 +187,34 @@ export const DEV_SCENARIOS: DevScenario[] = [
     id: 'fill-wild-queue',
     group: 'state',
     label: 'Fill the wild queue',
-    detail: 'Twelve commons in a row — proves the cap and the full-queue banking',
+    detail: 'Commons up to the cap — proves the cap, the full-queue banking and the "full" notice',
     input: { kind: 'none' },
-    steps: 12,
+    steps: EncounterBalance.maxQueue,
     build: () => ({ action: 'devSpawnEncounter', variant: 'common' }),
   },
   {
     id: 'grant-balls',
     group: 'items',
-    label: 'Grant 10 of every ball',
-    detail: 'Poké, Great, Ultra and Master — a capture test session in one click',
+    label: 'Grant 10 of every ball and berry',
+    detail: 'Every ball and every berry — a capture test session in one click',
     input: { kind: 'none' },
     build: () => ({ action: 'devGrantBalls', count: 10 }),
+  },
+  {
+    id: 'spawn-find',
+    group: 'state',
+    label: 'Drop an item find',
+    detail: 'One item lying in the wild area, rolled from the real find table',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devSpawnFind' }),
+  },
+  {
+    id: 'lose-legendary',
+    group: 'state',
+    label: 'Lose a legendary to the trail',
+    detail: 'A Mewtwo that just got away, ready to be tracked back for tokens',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devLoseLegendary' }),
   },
   {
     id: 'shiny-on',

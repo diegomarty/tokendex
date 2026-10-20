@@ -18,10 +18,12 @@ import type {
   PanelDexEntry,
   PanelDexFilter,
   PanelDexSpecies,
+  PanelMoodMeter,
   PanelShopAction,
   PanelShopItem,
   PanelState,
   PanelStreak,
+  PanelWalletChange,
   PanelWild,
 } from '../../webview/protocol.js'
 import type { UsageSnapshot } from '../snapshot.js'
@@ -29,15 +31,19 @@ import {
   APP_LANGUAGES,
   type AppLanguage,
   BALL_KINDS,
+  BERRY_KINDS,
   type CompanionState,
   type EvoLine,
   FreshEgg,
+  type WildEncounter,
   ITEM_KINDS,
   Pokeball,
   RARITIES,
   currentSpeciesID,
   isBallKind,
+  isBerryKind,
   itemEmoji,
+  itemIsBundled,
   itemIsPassive,
   itemSpriteName,
   languageLabel,
@@ -54,7 +60,20 @@ import {
 } from '../companion/shop.js'
 import { spendableBalance, streakWindow } from '../companion/ledger.js'
 import { dexCount, dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
-import { catchChance, encounterThresholdFor, tokensToNextEncounter } from '../companion/encounters.js'
+import {
+  EncounterBalance,
+  TrailBalance,
+  attackPermille,
+  encounterCatchChance,
+  encounterThresholdFor,
+  fleePermille,
+  moodOf,
+  queuedCount,
+  temperamentOf,
+  tokensToNextEncounter,
+  trailIsCold,
+  trailPrice,
+} from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
 import { todayKey } from '../usage/entry.js'
 import { compact, cost, grouped, percent } from '../tokenFormatter.js'
@@ -81,6 +100,12 @@ export interface PanelBuildInputs {
   refreshSeconds?: number | undefined
   /** The Dev tab, already built by the worker (it owns the dev state). Absent = no tab. */
   dev?: PanelDev | undefined
+  /**
+   * The spendable balance as the previous panel showed it, and a serial for this change. Absent
+   * on the first panel and whenever nothing moved; the impure part — remembering — is the
+   * worker's.
+   */
+  walletChange?: { previous: number; id: number } | undefined
 }
 
 /**
@@ -107,6 +132,54 @@ function streakRow(state: CompanionState, lang: AppLanguage, now: number): Panel
   }
 }
 
+/** A reaction threshold as the panel prints it: permille is exactly what the roll is held to. */
+function permilleText(permille: number): string {
+  const pct = permille / 10
+  return percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
+}
+
+/** Where a 0–100 reading starts to stand out, for the words and the bars alike. */
+const HIGH = 65
+const LOW = 35
+
+function moodMeters(encounter: WildEncounter, lang: AppLanguage): PanelMoodMeter[] {
+  const mood = moodOf(encounter)
+  return (['anger', 'nervousness', 'trust'] as const).map((key) => ({
+    key,
+    label: D.moodMeterLabel(lang, key),
+    percent: mood[key],
+    tone: mood[key] >= HIGH ? 'high' : mood[key] <= LOW ? 'low' : 'mid',
+  }))
+}
+
+function temperamentText(encounter: WildEncounter, lang: AppLanguage): string {
+  const t = temperamentOf(encounter)
+  // An encounter from before temperaments existed has nothing to say beyond neutral.
+  if (encounter.temperament === undefined && encounter.nature === undefined) return ''
+  return D.temperamentText(
+    lang,
+    encounter.nature === undefined ? undefined : natureName(encounter.nature, lang),
+    {
+      aggressive: t.aggression >= HIGH,
+      gentle: t.aggression <= LOW,
+      skittish: t.skittishness >= HIGH,
+      steady: t.skittishness <= LOW,
+      hungry: t.appetite >= HIGH,
+    },
+  )
+}
+
+function walletChange(
+  change: PanelBuildInputs['walletChange'],
+  spendable: number,
+): { walletChange?: PanelWalletChange } {
+  if (change === undefined || change.previous === spendable) return {}
+  const delta = spendable - change.previous
+  // U+2212, not a hyphen: a hyphen beside a number reads as a dash at this size.
+  const text = `${delta > 0 ? '+' : '\u2212'}${compact(Math.abs(delta))}`
+  return { walletChange: { id: change.id, text, kind: delta > 0 ? 'gain' : 'loss' } }
+}
+
 export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   const { usage, state, line, now, locale } = inputs
   const lang = state.language
@@ -126,7 +199,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     // same generated sentence on all three, so a third of the tab was a repeated clause. The
     // ids are untouched: `parseEntryID` still sees `item:pokeBall` and `item:pokeBall:10`, and
     // still refuses any quantity that is not exactly the bundle size.
-    const bundled = isBall && kind !== 'masterBall'
+    const bundled = itemIsBundled(kind)
     const singlePrice = compact(shopEntryPrice({ kind: 'item', item: kind }))
     const actions: PanelShopAction[] = [
       {
@@ -163,7 +236,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       title: name,
       actions,
       owned,
-      group: isBall ? 'balls' : 'items',
+      group: isBall ? 'balls' : isBerryKind(kind) ? 'berries' : 'items',
     }
     // A ball's catch rate is a figure, and the figure is the whole content of the sentence it
     // replaces. The Poké Ball keeps a `1×` for the same reason a scale needs its origin: `1.5×`
@@ -186,6 +259,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       shop.push({
         id: `egg:${tier ?? 'any'}`,
         emoji: '🥚',
+        sprite: 'egg',
         title: name,
         // Only the guarantee. What all three eggs cost you — the Pokémon you are raising — is
         // said once under the heading, as `strings.shopEggsNote`.
@@ -223,8 +297,10 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       description: D.itemDescription(lang, item.kind),
       count: item.count,
       usable,
+      pocket: isBallKind(item.kind) ? 'balls' : isBerryKind(item.kind) ? 'berries' : 'items',
     }
     if (!usable && itemIsPassive(item.kind)) entry.hint = str(lang, 'shinyCharmEffectHint')
+    if (isBerryKind(item.kind)) entry.hint = D.berryBagHint(lang)
     return entry
   })
 
@@ -267,21 +343,25 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     isShiny: sp.isShiny,
     isRaising: sp.isRaising,
     rarityText: D.rarityLabel(lang, sp.rarity),
+    rarity: sp.rarity,
   }))
 
   const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
   const threshold = encounterThresholdFor(state.encountersSeen)
-  // The head of the queue is the one on stage: its capture rate prices every ball's odds, and
-  // its rarity decides whether letting it go deserves a native confirmation.
+  // The head of the queue is the one on stage: its capture rate and mood price every ball's
+  // odds, and its rarity decides whether letting it go deserves a native confirmation.
   const staged = state.wild[0]
   const wild: PanelWild = {
     encounters: state.wild.map((e) => {
+      const flee = permilleText(fleePermille(e))
+      const attack = permilleText(attackPermille(e))
       const row: PanelWild['encounters'][number] = {
         id: e.id,
         speciesID: e.speciesID,
         name: e.names?.[lang] ?? `#${e.speciesID}`,
         rarityText: D.rarityLabel(lang, e.rarity),
         rarity: e.rarity,
+        terrain: e.types?.[0] ?? e.rarity,
         isShiny: e.isShiny,
         appearedText:
           todayKey(e.appearedAt) === todayKey(now)
@@ -290,6 +370,32 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
                 minute: '2-digit',
               })
             : new Date(e.appearedAt).toLocaleDateString(locale, { month: 'short', day: 'numeric' }),
+        meters: moodMeters(e, lang),
+        statuses: [],
+        // The reaction thresholds for the mood on screen — the one a berry can change. A miss
+        // moves the mood before the roll, so the next miss is slightly riskier than this reads.
+        riskText: D.riskText(lang, flee, attack),
+        risk: {
+          heading: D.riskHeading(lang),
+          items: [
+            { key: 'flee', text: D.riskFlee(lang, flee) },
+            { key: 'attack', text: D.riskAttack(lang, attack) },
+          ],
+        },
+      }
+      const temperament = temperamentText(e, lang)
+      if (temperament !== '') row.temperamentText = temperament
+      if (e.primed === true) {
+        row.primedText = D.primedText(lang)
+        row.statuses.push({ key: 'primed', text: D.primedBadge(lang), title: row.primedText })
+      }
+      if ((e.stolen ?? 0) > 0) {
+        row.stolenText = D.stolenText(lang, compact(e.stolen ?? 0))
+        row.statuses.push({
+          key: 'stolen',
+          text: D.stolenBadge(lang, compact(e.stolen ?? 0)),
+          title: row.stolenText,
+        })
       }
       // Running from a common stays one click; discarding what hurts to lose asks first.
       if (e.rarity === 'rare' || e.rarity === 'legendary' || e.isShiny) {
@@ -298,6 +404,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       return row
     }),
     waitingText: D.wildBadgeTooltip(lang, state.wild.length),
+    ...(state.wild.length > 1 ? { moreText: D.moreWaitingText(lang, state.wild.length - 1) } : {}),
     nextText: D.wildNextEncounterText(lang, compact(toNext)),
     progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
     streak: streakRow(state, lang, now),
@@ -309,14 +416,61 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         sprite: itemSpriteName(kind) ?? 'poke-ball',
       }
       if (staged !== undefined) {
-        // Same maths the throw rolls (`catchChance`), so the number shown is the number played.
-        const pct = catchChance(staged.captureRate, kind) * 100
+        // Same maths the throw rolls, mood included, so the number shown is the number played.
+        const pct = encounterCatchChance(staged, kind) * 100
         ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
       }
       return ball
     }),
     noBallsText: D.wildNoBallsText(lang),
+    // Only berries the bag holds: an empty berry is a button that cannot do anything, and the
+    // shop is where you learn they exist.
+    berries: BERRY_KINDS.filter((kind) => itemCount(state, kind) > 0).map((kind) => ({
+      kind,
+      name: D.itemName(lang, kind),
+      count: itemCount(state, kind),
+      sprite: itemSpriteName(kind) ?? 'oran-berry',
+      effectText: D.itemDescription(lang, kind),
+    })),
+    finds: state.finds.map((find) => {
+      const name = D.itemName(lang, find.item)
+      const row: PanelWild['finds'][number] = {
+        id: find.id,
+        name,
+        count: find.count,
+        emoji: itemEmoji(find.item),
+        rarity: find.rarity,
+        rarityText: D.rarityLabel(lang, find.rarity),
+        label: D.collectLabel(lang, find.count > 1 ? `${name} ×${find.count}` : name),
+      }
+      const sprite = itemSpriteName(find.item)
+      if (sprite !== undefined) row.sprite = sprite
+      return row
+    }),
+    collectAllText: D.collectAllLabel(lang),
+    trail: state.legendaryTrail
+      .filter((entry) => !trailIsCold(entry, now))
+      .map((entry) => {
+        const name = entry.names?.[lang] ?? `#${entry.speciesID}`
+        const priceText = compact(trailPrice(entry))
+        return {
+          id: entry.id,
+          speciesID: entry.speciesID,
+          name,
+          isShiny: entry.isShiny,
+          expiresText: D.trailExpiresText(lang, (entry.lostAt + TrailBalance.windowMs - now) / 3_600_000),
+          trackText: D.trackLabel(lang, priceText),
+          priceText,
+          confirmTitle: D.trackConfirmTitle(lang, name),
+          confirmLabel: D.trackConfirmLabel(lang),
+          // The same three conditions `trackLegendary` refuses on, so the button is never live
+          // for a track the rule would turn down.
+          enabled: queuedCount(state) < EncounterBalance.maxQueue && spendable >= trailPrice(entry),
+        }
+      }),
+    trailTitle: D.trailTitle(lang),
   }
+  if (state.finds.length > 0) wild.findsText = D.findsText(lang, state.finds.length)
 
   const panel: PanelState = {
     totals: {
@@ -340,6 +494,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       return row
     }),
     spendableText: compact(spendable),
+    ...walletChange(inputs.walletChange, spendable),
     shop,
     bag,
     dexSpecies: species,

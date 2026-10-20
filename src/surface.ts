@@ -12,7 +12,7 @@
  */
 
 import * as vscode from 'vscode'
-import type { PanelMessage, PanelState, PanelThrowResult } from './webview/protocol.js'
+import type { PanelMessage, PanelState, PanelEncounterResult } from './webview/protocol.js'
 import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export type PanelRequestKind =
@@ -24,6 +24,10 @@ export type PanelRequestKind =
   | { kind: 'importSave' }
   | { kind: 'dev'; id: string; value?: string }
   | { kind: 'throw'; encounterID: string; ball: string }
+  | { kind: 'feed'; encounterID: string; berry: string }
+  | { kind: 'collect'; findID: string }
+  | { kind: 'collectAll' }
+  | { kind: 'track'; trailID: string; title: string; priceText: string; confirmLabel?: string }
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setRefreshInterval'; seconds: number }
@@ -71,7 +75,7 @@ export class PanelSurface {
     void this.webview.postMessage({ type: 'state', state })
   }
 
-  postThrow(result: PanelThrowResult): void {
+  postThrow(result: PanelEncounterResult): void {
     if (this.disposed) return
     void this.webview.postMessage({ type: 'throw', result })
   }
@@ -126,6 +130,27 @@ export class PanelSurface {
         // id fails closed in the core if the queue no longer holds it.
         this.onRequest({ kind: 'throw', encounterID: message.encounterID, ball: message.ball })
         break
+      case 'feed':
+        // Validated on the extension side against `BERRY_KINDS`, like the ball slug.
+        this.onRequest({ kind: 'feed', encounterID: message.encounterID, berry: message.berry })
+        break
+      case 'collect':
+        this.onRequest({ kind: 'collect', findID: message.findID })
+        break
+      case 'collectAll':
+        this.onRequest({ kind: 'collectAll' })
+        break
+      case 'track': {
+        const request: PanelRequestKind = {
+          kind: 'track',
+          trailID: message.trailID,
+          title: message.title,
+          priceText: message.priceText,
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
       case 'run': {
         const request: PanelRequestKind = { kind: 'run', encounterID: message.encounterID }
         if (message.confirmText !== undefined) request.confirmText = message.confirmText
@@ -203,7 +228,7 @@ export function updateSurfaces(state: PanelState): void {
  * applying the accompanying state until the animation lands, so the order here is what lets it
  * pair the two.
  */
-export function broadcastThrow(result: PanelThrowResult): void {
+export function broadcastThrow(result: PanelEncounterResult): void {
   for (const surface of surfaces) surface.postThrow(result)
 }
 
