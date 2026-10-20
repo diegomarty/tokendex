@@ -2,6 +2,72 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Wild Pokémon have a mood, and berries to change it.** Every encounter now carries a
+  nature and a temperament drawn from the species' real base stats (`/pokemon/{id}`, fetched
+  with the species and cached), and three meters the plate shows as gauges: anger, nerves and
+  trust. A missed throw raises anger and nerves and costs trust; anger lowers the catch value
+  and, past a point, makes the Pokémon strike back and take some of your spendable tokens
+  (common 500k up to legendary 4M, three times at most, never below zero — and all of it paid
+  back if you catch it); nerves decide whether it flees. An Oran Berry calms it and earns
+  trust, a Nanab Berry settles its nerves, a Razz Berry makes the next ball easier. The odds on
+  each ball already include the mood, and the dialog says what a miss risks, so the number you
+  read is the number that is rolled. Berries are sold in the shop singly or in ten-packs.
+- **A legendary that gets away leaves tracks.** One that flees or wanders off can be followed
+  for 72 hours — the same Pokémon, nature and temperament, back in the queue a little more
+  nervous — for 100M, then 200M, then 400M; running from it on purpose leaves nothing. The
+  catch cap moved from 200 to 250 so Great and Ultra Balls matter against commons too; with
+  neutral temperaments the final odds are 13 / 18 / 23% on a capture rate of 3 and
+  59 / 70 / 77% on 45, both pinned in tests.
+- **Items turn up in the wild.** A quarter of arrivals are finds rather than Pokémon — balls
+  and berries by rarity, never a Master Ball or a candy — collected with a click. The queue
+  holds 30 (Pokémon and finds together, up from 12), and the first time it fills a toast says
+  so, once; it re-arms when room is made.
+- **Saves merge across machines.** Each install mints a device id, every token is attributed
+  to the device that counted it, and each save carries a revision vector. Importing a save from
+  another computer now offers **Merge** as well as Replace: both Pokédexes and all the usage
+  either machine counted are kept, the companion, bag and queue continue from whichever save
+  progressed more, and today's ledger and the display language always stay with the machine.
+- **Copilot Chat in VS Code counts** when the extension's opt-in
+  `github.copilot.chat.otel.dbSpanExporter.enabled` is on: its `agent-traces.db` is read like
+  the other SQLite stores (chat spans only, cached tokens subtracted from the prompt, the
+  in-editor CLI excluded so it is never counted twice), with a 60-second settle window because
+  the store is written in batches. The README documents the setting; nothing is on disk
+  without it.
+- **A Makefile** wraps the day-to-day commands (`make check`, `make test FILE=…`, `make dev`,
+  `make shots`, `make bench-run SCRIPT=…`).
+
+### Changed
+
+- **Home is a battle screen.** Your trainer and companion on one side, the wild Pokémon on its
+  platform on the other, each with a paper-and-ink plate; a dialog box; and the balls as one
+  row of tiles with Bag and Run beneath — a throw is one click, not two. The scenery follows
+  the wild Pokémon's primary type (eighteen terrains, drawn in CSS so nothing is bundled) and
+  fades from one to the next; an encounter from before types were kept stands on the terrain of
+  its rarity. Every sprite renders at its true size, legendaries at the top of the scale. The
+  stage no longer flickers when you open Balls or change tab: the entrance plays once per
+  encounter and sprites keep their nodes across repaints.
+- **Your balance heads the page** on a Pokédex lid — lens, lights, the name — with the spendable
+  tokens on its screen. A change arrives as a chip beside it: green sliding in when a scan
+  brings tokens, red sliding out when a Pokémon steals some or you buy something; a state
+  re-sent to the panel never replays it. The shop wears the same screen, single balls and
+  berries buy in one click (packs, eggs and the Master Ball still ask), and the bag has pockets.
+- **The Pokédex is a red device** and Settings is a trainer card. With a dark editor theme the
+  plates, menu, shop and card use dark paper; in high contrast every bar fill is drawn in
+  `CanvasText`.
+
+### Fixed
+
+- **SQLite stores in WAL mode are read in full.** `sql.js` opens the main file as bytes, so a
+  store whose writer had not checkpointed read as of the last checkpoint — on the development
+  machine, Copilot's session store was 4 KB of empty schema beside a 152 KB `-wal`, and Codex's
+  whole schema lived in the WAL. The `-wal` frames are now folded in (sizes checked before
+  reading, a consistent snapshot with a retry), and the result was checked against `sqlite3` on
+  real stores.
+- The companion store sets the owed-legendary cap from its own constant rather than the queue
+  size, so raising the queue to 30 did not also raise how many legendaries can be owed.
+
 ## [0.4.0] - 2026-09-19
 
 ### Added
