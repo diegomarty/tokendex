@@ -21,3 +21,4 @@ image.png
 media/make_icon.py
 media/readme/**
 .vscode-test/**
+Makefile
