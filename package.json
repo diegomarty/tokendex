@@ -255,6 +255,7 @@
     "readme:hero": "node tools/bench/record.mjs",
     "status": "node esbuild.mjs --dev && node dist/tools/status-preview.mjs",
     "scan:real": "node esbuild.mjs --dev && node dist/tools/scan-real.mjs",
+    "sim": "node esbuild.mjs --dev && node dist/tools/economy-sim.mjs",
     "package": "npm run typecheck && node esbuild.mjs --production && npx --yes @vscode/vsce package --no-dependencies",
     "test:e2e": "node esbuild.mjs && node tools/e2e/run.mjs"
   },

@@ -87,6 +87,12 @@ const development = [
     outfile: 'dist/tools/scan-real.mjs',
     format: 'esm',
   },
+  {
+    ...shared,
+    entryPoints: ['tools/economy-sim.ts'],
+    outfile: 'dist/tools/economy-sim.mjs',
+    format: 'esm',
+  },
 ]
 
 /**

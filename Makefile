@@ -5,7 +5,7 @@
 #   make test FILE=test/x.ts   one test file (or several, space-separated)
 #   make bench-run SCRIPT=…    drive the bench with a Playwright script (the bench is served on its own)
 
-.PHONY: help install build watch typecheck test format format-check check e2e shots hero bench bench-run dev package clean
+.PHONY: help install build watch typecheck test format format-check check e2e shots hero bench bench-run dev package clean sim
 
 SCRIPT ?=
 ARGS ?=
@@ -54,6 +54,10 @@ bench: build
 bench-run: build
 	@test -n "$(SCRIPT)" || (echo 'usage: make bench-run SCRIPT=path/to/driver.mjs [ARGS=...]' && exit 2)
 	node $(SCRIPT) $(ARGS)
+
+# The economy simulator: N days of play through the real engine, per usage profile.
+sim:
+	node esbuild.mjs --dev && node dist/tools/economy-sim.mjs $(ARGS)
 
 # An Extension Development Host with its own save, so testing never touches your real game.
 dev: build
