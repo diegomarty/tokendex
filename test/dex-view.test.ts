@@ -4,6 +4,7 @@ import {
   currentIsShiny,
   dexEntriesSorted,
   dexSpecies,
+  dexTally,
   entryName,
   isFinalStage,
   lineItems,
@@ -14,7 +15,9 @@ import {
   type DexEntry,
   type EvoNode,
   type MonState,
+  type SpeciesProgress,
   freshCompanionState,
+  freshSpeciesProgress,
   makeEvoLine,
 } from '../src/core/companion/model.js'
 
@@ -200,5 +203,84 @@ describe('species pokédex', () => {
   it('falls back to the species number when no name is known', () => {
     const s = state({ dex: [dexEntry({ chainOrder: [77] })] })
     expect(dexSpecies(s, undefined)[0]?.name).toBe('#77')
+  })
+})
+
+// The registry is what the Pokédex shows now: every species it knows, with a state on two axes
+// (how far, and its shiny form) and the bar's percentage. The states are the registry's flags,
+// never re-derived from xp.
+describe('species pokédex from the registry', () => {
+  const line = makeEvoLine(1, node(1, [node(2, [node(3)])]), 'common', { 1: { en: 'Base' } })
+  const progress = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    ...over,
+  })
+
+  // [trigger branch] Met in the wild and nothing else: no dex entry, no active Pokémon. Without
+  // reading the registry it would not appear at all.
+  it('shows a species that was only seen, by number, at 0%', () => {
+    const s = state({ species: { 25: progress({ seen: true }) } })
+    const only = dexSpecies(s, undefined)
+    expect(only).toHaveLength(1)
+    expect(only[0]).toMatchObject({ id: 25, name: '#25', status: 'seen', percent: 0 })
+  })
+
+  it('shows an unlocked species with its registration percentage', () => {
+    const s = state({ species: { 7: progress({ unlocked: true, xp: 4_000_000, threshold: 8_000_000 }) } })
+    expect(dexSpecies(s, undefined)[0]).toMatchObject({ id: 7, status: 'unlocked', percent: 50 })
+  })
+
+  it('reads a registered species at 100% from its flag', () => {
+    const s = state({
+      species: { 7: progress({ unlocked: true, registered: true, xp: 0, threshold: 8_000_000 }) },
+    })
+    expect(dexSpecies(s, undefined)[0]).toMatchObject({ status: 'registered', percent: 100 })
+  })
+
+  it('puts the shiny form on its own axis', () => {
+    const s = state({
+      species: {
+        1: progress({ unlocked: true }),
+        2: progress({ unlocked: true, registered: true, shinyUnlocked: true }),
+        3: progress({ unlocked: true, registered: true, shinyUnlocked: true, shinyRegistered: true }),
+      },
+    })
+    expect(dexSpecies(s, undefined).map((x) => x.shiny)).toEqual(['none', 'unlocked', 'registered'])
+  })
+
+  // An entry the dex shows but the registry has not seeded (a save mid-migration) is owned.
+  it('treats a dex species missing from the registry as unlocked', () => {
+    const s = state({ dex: [dexEntry({ chainOrder: [1] })] })
+    expect(dexSpecies(s, line)[0]).toMatchObject({ status: 'unlocked', percent: 0 })
+  })
+
+  // A seen species that is later caught keeps one cell, not two.
+  it('merges the registry and the dex into one cell per species', () => {
+    const s = state({
+      dex: [dexEntry({ chainOrder: [1], names: { 1: { en: 'Base' } } })],
+      species: { 1: progress({ unlocked: true, registered: true }) },
+    })
+    expect(dexSpecies(s, line)).toHaveLength(1)
+    expect(dexSpecies(s, line)[0]).toMatchObject({ name: 'Base', status: 'registered' })
+  })
+})
+
+// The Pokédex's two counts — what is owned (the collection) and what is registered (the
+// completion) — come from the core, so the panel never filters its own list to find them.
+describe('dexTally', () => {
+  it('counts owned species apart from seen ones, and registered ones apart from owned', () => {
+    const s = state({
+      species: {
+        1: { ...freshSpeciesProgress(), seen: true },
+        2: { ...freshSpeciesProgress(), unlocked: true },
+        3: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+      },
+    })
+    expect(dexTally(dexSpecies(s, undefined))).toEqual({ owned: 3, registered: 2 })
+  })
+
+  it('counts nothing for an empty Pokédex', () => {
+    expect(dexTally([])).toEqual({ owned: 0, registered: 0 })
   })
 })

@@ -10,7 +10,9 @@
 import type { PanelStrings } from '../../webview/protocol.js'
 import type { AppLanguage } from '../companion/model.js'
 import {
+  chooseCompanionText,
   closeLabel,
+  companionBadgeText,
   commandBack,
   commandBalls,
   commandPrompt,
@@ -28,6 +30,8 @@ import {
   shopGroupEggs,
   shopGroupItems,
   shopEggsNote,
+  starterPromptText,
+  starterTitleText,
   trainerLabel,
   wildCaughtBadge,
 } from './dispatch.js'
@@ -61,6 +65,10 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     exportSave: s(lang, 'exportSaveButton'),
     importSave: s(lang, 'importSaveButton'),
     incubating: s(lang, 'eggIncubating'),
+    chooseCompanion: chooseCompanionText(lang),
+    companionBadge: companionBadgeText(lang),
+    starterTitle: starterTitleText(lang),
+    starterPrompt: starterPromptText(lang),
     language: s(lang, 'language'),
     run: runAwayLabel(lang),
     trainer: trainerLabel(lang),

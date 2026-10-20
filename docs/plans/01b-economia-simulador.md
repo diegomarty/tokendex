@@ -20,6 +20,17 @@ Lo que dice:
 - **Los encuentros sobran**: 48 al día para el medio, casi todos caducan; la captura está limitada por la atención del jugador, no por los tokens. Las recompensas por duplicado no pueden ser una granja, pero tampoco hace falta que sean generosas.
 - El perfil chat vive del primer tramo barato (una especie registrada al día 38, 48 desbloqueadas por captura): el "modo lento" existe y funciona.
 
+## Segunda medición, con las reglas de la fase 2 (el compañero registrado se queda; la política elige otra especie desbloqueada sin registrar o incuba un huevo del stock)
+
+| Perfil | Registradas | Desbloqueadas | Saldo final | % gastado |
+|---|---|---|---|---|
+| chat | 5 | 48 | 80M | 69 % |
+| ligero | 38 | 115 | 330M | 87 % |
+| medio | 94 (antes 130) | 135 | 4,7B | 64 % |
+| intenso | **197 = desbloqueadas** (antes 236) | 197 | 55B | 15 % |
+
+**Hallazgo:** sin el huevo gratis tras cada graduación, las líneas nuevas solo llegan por el huevo diario (1/día, tope 3) y por capturas de especies base. Al usuario intenso se le acaban las especies que registrar a los pocos meses: el embudo ya no son los tokens, es el **desbloqueo**. Las fases 3 (capturar desbloquea al 5 %) y 3b (formas evolucionadas salvajes) ensanchan ese embudo; la fase 4 debe comprobar que el huevo diario y la captura dan juntos más líneas de las que un usuario intenso registra al día (~2).
+
 Política del jugador simulada: recoge los finds, lanza a 1 de cada 8 encuentros con la ball adecuada por rareza (Poké para común y poco común, Ultra para rara y legendaria, hasta 5 lanzamientos, compra packs de 10 cuando se queda sin), usa los caramelos en cuanto los tiene. Sin bayas, sin rastro, sin cambiar de compañero (fase 2). Semana laboral de 5 días, 12 refrescos por día.
 **Depende de:** fase 1 (la escala nueva y el mapa `species`).
 

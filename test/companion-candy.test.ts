@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -9,9 +9,12 @@ import {
   PokemonBalance,
   RareCandy,
   currentSpeciesID,
+  freshCompanionState,
+  freshSpeciesProgress,
   makeEvoLine,
   type EvoNode,
 } from '../src/core/companion/model.js'
+import { encodeCompanionState } from '../src/core/companion/persistence.js'
 import type { BaseSpecies, PokeProviding } from '../src/core/pokeapi.js'
 
 // The candy end to end, through the store the worker uses: the debit, the count against the
@@ -38,10 +41,21 @@ function stubProvider(): PokeProviding {
   }
 }
 
+/** A game that has begun (#999 obtained before), so usage hatches an egg rather than waiting for a starter. */
+function begunFile(): string {
+  const path = join(mkdtempSync(join(tmpdir(), 'ptb-candy-')), 'companion-state.json')
+  const begun = {
+    ...freshCompanionState('en'),
+    species: { 999: { ...freshSpeciesProgress(), unlocked: true } },
+  }
+  writeFileSync(path, encodeCompanionState(begun), 'utf8')
+  return path
+}
+
 const store = () =>
   new CompanionStore({
     provider: stubProvider(),
-    filePath: join(mkdtempSync(join(tmpdir(), 'ptb-candy-')), 'companion-state.json'),
+    filePath: begunFile(),
     now: () => 1_700_000_000_000,
     rng: () => 1,
     hostLanguage: 'en',

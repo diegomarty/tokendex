@@ -157,6 +157,26 @@ export function revealedDitto(mon: MonState): MonState {
   }
 }
 
+/** The ids from the root down to `speciesID`, or undefined when the tree does not hold it. */
+export function pathToSpecies(root: EvoNode, speciesID: number): number[] | undefined {
+  if (root.speciesID === speciesID) return [root.speciesID]
+  for (const child of root.children) {
+    const below = pathToSpecies(child, speciesID)
+    if (below !== undefined) return [root.speciesID, ...below]
+  }
+  return undefined
+}
+
+/** Whether anything below `node` is still unregistered: what keeps a registered species evolving. */
+function subtreeHasUnregistered(node: EvoNode, species: Record<number, SpeciesProgress>): boolean {
+  return node.children.some((child) => branchHasUnregistered(child, species))
+}
+
+/** `node` itself or anything below it is still unregistered. */
+function branchHasUnregistered(node: EvoNode, species: Record<number, SpeciesProgress>): boolean {
+  return !(species[node.speciesID]?.registered ?? false) || subtreeHasUnregistered(node, species)
+}
+
 /** Guard against a malformed tree spinning the evolution loop forever. */
 const MAX_EVOLUTION_STEPS = 50
 
@@ -199,8 +219,25 @@ export function applyUsage(
   const fix = (id: number, of: MonState): void => {
     const p = entry(id)
     const threshold = PokemonBalance.phaseThreshold(of.rarity, of.totalForms, of.stageIndex)
-    if (p.unlocked && p.threshold === threshold && p.lineRarity === of.rarity) return
-    put(id, { ...p, unlocked: true, threshold, lineRarity: of.rarity })
+    if (
+      p.unlocked &&
+      p.threshold === threshold &&
+      p.lineRarity === of.rarity &&
+      p.baseID === of.baseID &&
+      p.stageIndex === of.stageIndex &&
+      p.totalForms === of.totalForms
+    ) {
+      return
+    }
+    put(id, {
+      ...p,
+      unlocked: true,
+      threshold,
+      lineRarity: of.rarity,
+      baseID: of.baseID,
+      stageIndex: of.stageIndex,
+      totalForms: of.totalForms,
+    })
   }
   const register = (id: number, threshold: number, overflow: number): void => {
     const p = entry(id)
@@ -245,10 +282,22 @@ export function applyUsage(
     const node = evoNodeWithID(line.tree, currentSpeciesID(current))
     if (node === undefined) break
 
+    // A registered species stays where it is unless a branch below it still has something to
+    // register: the bar reads full, the surplus is the shiny bar's (phase 5), and `graduated`
+    // fires exactly once — when the final form first registers — for the celebration and the
+    // Pokédex entry, never again on the next refresh.
+    const here = currentSpeciesID(current)
+    const wasRegistered = entry(here).registered
     if (node.children.length === 0) {
-      register(currentSpeciesID(current), threshold, current.usedAtStage - threshold)
+      register(here, threshold, current.usedAtStage - threshold)
+      current = { ...current, usedAtStage: threshold }
+      if (wasRegistered) break
       events.push({ kind: 'graduated' })
       return { mon: current, events, graduated: true, notes, species }
+    }
+    if (wasRegistered && !subtreeHasUnregistered(node, species)) {
+      current = { ...current, usedAtStage: threshold }
+      break
     }
 
     const nextIndex = current.stageIndex + 1
@@ -256,11 +305,18 @@ export function applyUsage(
     const planned =
       plannedID === undefined ? undefined : node.children.find((c) => c.speciesID === plannedID)
 
+    // A registered species evolves only to reach something unregistered, so a plan pointing at
+    // a branch that is all registered is redirected like an invalid one: following it would
+    // park the companion at a dead end while a sibling branch still waits.
+    const candidates = wasRegistered
+      ? { ...node, children: node.children.filter((c) => branchHasUnregistered(c, species)) }
+      : node
+
     let next: EvoNode
-    if (planned !== undefined) {
+    if (planned !== undefined && candidates.children.includes(planned)) {
       next = planned
     } else {
-      next = pickPlannedChild(node, unlocked, rng)
+      next = pickPlannedChild(candidates, unlocked, rng)
       const fallbackRoute = [node.speciesID, ...makeEvolutionPlan(next, unlocked, rng)]
       const repaired = repairedPlan(current.pathIDs, current.stageIndex, fallbackRoute)
       current = { ...current, plannedPathIDs: repaired, totalForms: repaired.length }

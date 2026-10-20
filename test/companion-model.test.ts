@@ -279,6 +279,16 @@ describe('CompanionState decoding', () => {
     expect(decodeCompanionState({ ...legacy, species: {} }).species).toEqual({})
   })
 
+  // The nature a companion left the stage with: a real one is kept, anything else is dropped
+  // rather than read as a nature the player never had.
+  it('keeps a species’ recorded nature only when it is one', () => {
+    const state = decodeCompanionState({
+      species: { '4': { unlocked: true, nature: 'bold' }, '5': { unlocked: true, nature: 'grumpy' } },
+    })
+    expect(state.species[4]?.nature).toBe('bold')
+    expect(state.species[5]?.nature).toBeUndefined()
+  })
+
   it('reads the registry entry by entry and drops what it cannot read', () => {
     const state = decodeCompanionState({
       species: {
@@ -328,6 +338,26 @@ describe('CompanionState decoding', () => {
     }
     expect(decodeCompanionState({ ...legacy, species: null }).species[10]?.unlocked).toBe(true)
     expect(decodeCompanionState({ ...legacy, species: 'x' }).species[10]?.unlocked).toBe(true)
+  })
+
+  it('reads the egg stock within its capacity, and grants nothing for a missing key', () => {
+    expect(decodeCompanionState({}).eggStock).toEqual({ count: 0 })
+    expect(decodeCompanionState({ eggStock: { count: 9, lastGrantDay: '2026-10-20' } }).eggStock).toEqual(
+      {
+        count: 3,
+        lastGrantDay: '2026-10-20',
+      },
+    )
+    expect(decodeCompanionState({ eggStock: { count: 1, lastGrantDay: 'today' } }).eggStock).toEqual({
+      count: 1,
+    })
+  })
+
+  it('reads where a species sits in its line', () => {
+    const state = decodeCompanionState({
+      species: { 5: { unlocked: true, baseID: 4, stageIndex: 1, totalForms: 3 } },
+    })
+    expect(state.species[5]).toMatchObject({ baseID: 4, stageIndex: 1, totalForms: 3 })
   })
 
   it('never reads a negative payout', () => {

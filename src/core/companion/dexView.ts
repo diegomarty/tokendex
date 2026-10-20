@@ -20,6 +20,7 @@ import {
   localizedName,
   resolveName,
 } from './model.js'
+import { registrationPercent } from './registry.js'
 
 /** Shininess stays hidden while a Ditto is disguised; the reveal is what discloses it. */
 export function currentIsShiny(mon: MonState | undefined): boolean {
@@ -126,6 +127,11 @@ export interface DexSpecies {
   rarity: Rarity
   /** Whether this species has ever been held as a shiny. */
   isShiny: boolean
+  /** The registry's state: how far the species is, and its shiny form. Flags, never xp. */
+  status: 'seen' | 'unlocked' | 'registered'
+  shiny: 'none' | 'unlocked' | 'registered'
+  /** 0..100 of the registration bar. */
+  percent: number
   /**
    * This cell exists only because of the Pokémon currently being raised — nothing has
    * graduated yet, so it is not permanent. Buying a fresh egg discards that Pokémon (the dex
@@ -184,15 +190,68 @@ export function dexSpecies(
     }
   }
 
+  // Every species the registry knows, including those only seen in the wild — which have no
+  // dex entry and no name yet, so they show by number. A species the dex shows but the registry
+  // has not seeded is owned all the same: it reads unlocked at 0%.
+  for (const [key, progress] of Object.entries(state.species)) {
+    if (!progress.seen && !progress.unlocked && !progress.registered) continue
+    const id = Number(key)
+    if (!acc.has(id)) {
+      acc.set(id, {
+        rarity: progress.lineRarity ?? 'common',
+        isShiny: false,
+        // Not raising: a registry entry is permanent, the cell never disappears.
+        isGraduated: true,
+      })
+    }
+  }
+
   return [...acc.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([id, a]) => ({
-      id,
-      name: (a.names === undefined ? undefined : resolveName(lang, a.names)) ?? `#${id}`,
-      rarity: a.rarity,
-      isShiny: a.isShiny,
-      isRaising: !a.isGraduated,
-    }))
+    .map(([id, a]) => {
+      const progress = state.species[id]
+      const status: DexSpecies['status'] =
+        progress === undefined
+          ? 'unlocked'
+          : progress.registered
+            ? 'registered'
+            : progress.unlocked || !progress.seen
+              ? 'unlocked'
+              : 'seen'
+      const shiny: DexSpecies['shiny'] =
+        progress?.shinyRegistered === true
+          ? 'registered'
+          : progress?.shinyUnlocked === true
+            ? 'unlocked'
+            : 'none'
+      return {
+        id,
+        name: (a.names === undefined ? undefined : resolveName(lang, a.names)) ?? `#${id}`,
+        rarity: a.rarity,
+        isShiny: a.isShiny,
+        isRaising: !a.isGraduated,
+        status,
+        shiny,
+        percent: progress === undefined ? 0 : registrationPercent(progress),
+      }
+    })
+}
+
+/**
+ * The species Pokédex's two counts: what is owned (the collection — a seen species is not) and
+ * what is registered (the completion). One pass, so the two can never disagree with the list.
+ */
+export function dexTally(species: readonly Pick<DexSpecies, 'status'>[]): {
+  owned: number
+  registered: number
+} {
+  let owned = 0
+  let registered = 0
+  for (const sp of species) {
+    if (sp.status !== 'seen') owned++
+    if (sp.status === 'registered') registered++
+  }
+  return { owned, registered }
 }
 
 /** Catch-log counts by rarity, per individual. The species Pokédex uses `dexSpecies`. */

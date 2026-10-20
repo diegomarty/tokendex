@@ -57,7 +57,14 @@ import {
 import { deviceIdentity } from './core/companion/device.js'
 import { mergeSaves, withRevision } from './core/companion/merge.js'
 import type { AppLanguage, Rarity } from './core/companion/model.js'
-import { BALL_KINDS, ITEM_KINDS, Pokeball, isBerryKind, itemIsBundled } from './core/companion/model.js'
+import {
+  ANIMATED_SPECIES_MAX,
+  BALL_KINDS,
+  ITEM_KINDS,
+  Pokeball,
+  isBerryKind,
+  itemIsBundled,
+} from './core/companion/model.js'
 import { purchaseNeedsConfirmation } from './core/companion/shop.js'
 import { isTrainerID } from './core/companion/trainers.js'
 import { freshCompanionState, systemDefaultLanguage } from './core/companion/model.js'
@@ -566,9 +573,15 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'track',
   'run',
   'setTrainer',
+  'setCompanion',
+  'chooseStarter',
+  'incubateEgg',
 ])
 
 /** Ids echoed back by the webview are opaque, but a bounded string is the least they must be. */
+const isSpeciesID = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= ANIMATED_SPECIES_MAX
+
 function isOpaqueID(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 80
 }
@@ -697,6 +710,19 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     case 'setTrainer': {
       if (!isTrainerID(request.trainerID)) return
       response = await requestAction({ action: 'setTrainer', trainerID: request.trainerID }, true)
+      break
+    }
+
+    // A species id, not an opaque string: an integer inside the Pokédex, or nothing happens.
+    case 'setCompanion':
+    case 'chooseStarter': {
+      if (!isSpeciesID(request.speciesID)) return
+      response = await requestAction({ action: request.kind, speciesID: request.speciesID }, true)
+      break
+    }
+
+    case 'incubateEgg': {
+      response = await requestAction({ action: 'incubateEgg' }, true)
       break
     }
 

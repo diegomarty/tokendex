@@ -1236,3 +1236,107 @@ export function saveBusyText(lang: AppLanguage): string {
     'Otra ventana estaba escribiendo tu partida, así que no se cambió nada. Inténtalo de nuevo.',
   )
 }
+
+// MARK: - Companion choice, starters and the egg stock (phase 2)
+
+/** A label with its count, the way the Pokédex segments show it: "Collection (8)". */
+export function countedLabel(label: string, count: number): string {
+  return `${label} (${count})`
+}
+
+/** The Pokédex completion line: "5 / 649". */
+export function dexProgressText(done: number, total: number): string {
+  return `${done} / ${total}`
+}
+
+/** A species' registration line in the Pokédex: "45% registered", or "Registered" once full. */
+export function registrationText(lang: AppLanguage, percent: number, registered: boolean): string {
+  if (registered) return t(lang, '등록 완료', 'Registered', 'とうろくずみ', 'Registrado')
+  return t(
+    lang,
+    `${percent}% 등록`,
+    `${percent}% registered`,
+    `${percent}% とうろく`,
+    `${percent}% registrado`,
+  )
+}
+
+/** The egg stock: "2 eggs in stock". */
+export function eggStockText(lang: AppLanguage, count: number): string {
+  return t(
+    lang,
+    `알 ${count}개 보유`,
+    count === 1 ? '1 egg in stock' : `${count} eggs in stock`,
+    `タマゴ ${count}こ`,
+    count === 1 ? '1 huevo en reserva' : `${count} huevos en reserva`,
+  )
+}
+
+/** The button that starts incubating an egg from the stock. */
+export const incubateEggText = (lang: AppLanguage): string =>
+  t(lang, '알 부화시키기', 'Incubate an egg', 'タマゴをあたためる', 'Incubar un huevo')
+
+/** The same button when an egg was set aside for a companion and is waiting. */
+export const resumeEggText = (lang: AppLanguage): string =>
+  t(lang, '알 이어서 부화시키기', 'Resume the egg', 'タマゴのつづきをあたためる', 'Retomar el huevo')
+
+/** The Pokédex detail's button that makes an unlocked species the companion. */
+export const chooseCompanionText = (lang: AppLanguage): string =>
+  t(lang, '컴패니언으로 선택', 'Choose as companion', 'コンパニオンにする', 'Elegir como compañero')
+
+/** Badge on the species that is the companion right now. */
+export const companionBadgeText = (lang: AppLanguage): string =>
+  t(lang, '내 컴패니언', 'Your companion', 'あなたのコンパニオン', 'Tu compañero')
+
+/** The first-run screen's title. */
+export const starterTitleText = (lang: AppLanguage): string =>
+  t(
+    lang,
+    '첫 포켓몬을 골라요',
+    'Choose your first Pokémon',
+    'さいしょのポケモンをえらぼう',
+    'Elige tu primer Pokémon',
+  )
+
+/** The first-run screen's line under the title. */
+export const starterPromptText = (lang: AppLanguage): string =>
+  t(
+    lang,
+    '컴패니언이 되어 사용하는 토큰마다 함께 성장해요.',
+    'It becomes your companion, and every token you spend helps it grow.',
+    'コンパニオンになり、つかったトークンでそだちます。',
+    'Será tu compañero, y cada token que gastes lo hará crecer.',
+  )
+
+/** The companion could not be rebuilt: its evolution line needs the network. */
+export function companionOfflineText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 오프라인이라 이 포켓몬을 데려올 수 없어요. 잠시 후 다시 시도하세요.',
+    'This Pokémon cannot join you offline. Try again in a moment.',
+    'オフラインではこのポケモンを連れてこられません。しばらくしてからもう一度。',
+    'Sin conexión no se puede traer a este Pokémon. Inténtalo en un momento.',
+  )
+}
+
+/** The species is not unlocked (or the starter screen is over). */
+export function companionLockedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '아직 얻지 못한 포켓몬이에요.',
+    'You have not obtained that Pokémon yet.',
+    'まだ手に入れていないポケモンです。',
+    'Todavía no has conseguido ese Pokémon.',
+  )
+}
+
+/** Nothing to incubate: the stock is empty and no egg is paused. */
+export function noEggsText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '알이 없어요. 하루에 하나씩 생겨요.',
+    'No eggs to incubate. One arrives each day you work.',
+    'タマゴがありません。作業した日に1つ手に入ります。',
+    'No hay huevos que incubar. Cada día de trabajo llega uno.',
+  )
+}

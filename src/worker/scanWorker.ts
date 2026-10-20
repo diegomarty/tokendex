@@ -36,6 +36,8 @@ import { candyEligibleWindows, limitSeverity } from '../core/limits/windows.js'
 import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { spendableBalance } from '../core/companion/ledger.js'
+import { registrationPercent } from '../core/companion/registry.js'
+import { isFreshGame } from '../core/companion/eggs.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
 import {
   type AppLanguage,
@@ -58,6 +60,10 @@ import {
   setShiny,
   tokensToGraduation,
   tokensToMilestone,
+  grantSpeciesXP,
+  registerNow,
+  markSeenDev,
+  grantEgg,
 } from '../core/dev/simulation.js'
 import { freshCompanionState } from '../core/companion/model.js'
 import { type DevAction, DEV_GROUPS, DEV_SCENARIOS, devSummary } from '../core/dev/scenarios.js'
@@ -94,6 +100,9 @@ export type WorkerAction =
   | { action: 'trackLegendary'; trailID: string }
   | { action: 'runFrom'; encounterID: string }
   | { action: 'setTrainer'; trainerID: string }
+  | { action: 'setCompanion'; speciesID: number }
+  | { action: 'chooseStarter'; speciesID: number }
+  | { action: 'incubateEgg' }
   // Development-only. Declared in `core/dev/scenarios.ts` so the panel's Dev tab, the quick pick
   // and this switch are all driven by one table.
   | DevAction
@@ -608,11 +617,14 @@ function companionView(
   const wildTooltip = D.wildBadgeTooltip(lang, wildCount)
 
   if (active === undefined) {
+    // A new game has no egg yet — usage is waiting for the starter — so the bar says so instead
+    // of counting down a hatch that is not happening.
+    const fresh = isFreshGame(state)
     return {
       state: 'egg',
       isShiny: false,
-      progress: eggProgress(state),
-      toNextText: f.eggToHatch(lang, compact(eggTokensToHatch(state))),
+      progress: fresh ? 0 : eggProgress(state),
+      toNextText: fresh ? D.starterTitleText(lang) : f.eggToHatch(lang, compact(eggTokensToHatch(state))),
       dexCount,
       spendableTokens,
       wildCount,
@@ -637,6 +649,10 @@ function companionView(
   }
   const name = companion.displayName()
   if (name !== undefined) view.name = name
+  const progress = state.species[currentSpeciesID(active)]
+  if (progress !== undefined) {
+    view.registrationText = D.registrationText(lang, registrationPercent(progress), progress.registered)
+  }
   return view
 }
 
@@ -750,6 +766,24 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
       await companion.setTrainer(payload.trainerID)
       return undefined
 
+    case 'setCompanion':
+    case 'chooseStarter': {
+      const outcome =
+        payload.action === 'setCompanion'
+          ? await companion.setCompanion(payload.speciesID)
+          : await companion.chooseStarter(payload.speciesID)
+      // Localised here, like a trail that cannot be tracked: the host shows it as an error toast.
+      if (outcome === 'offline') throw new Error(D.companionOfflineText(companion.snapshot().language))
+      if (outcome !== 'set') throw new Error(D.companionLockedText(companion.snapshot().language))
+      return undefined
+    }
+
+    case 'incubateEgg': {
+      const outcome = await companion.incubateEgg()
+      if (outcome === 'noEggs') throw new Error(D.noEggsText(companion.snapshot().language))
+      return undefined
+    }
+
     case 'useItem': {
       if (payload.item === 'rareCandy') {
         // The debit and the XP it buys are one operation, so they share one hold: committing
@@ -812,6 +846,18 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
 
     case 'devGrantTokens':
       await commit((state) => grantTokens(state, payload.amount))
+      return undefined
+    case 'devSpeciesXP':
+      await commit((state) => grantSpeciesXP(state, payload.amount))
+      return undefined
+    case 'devRegisterNow':
+      await commit((state) => registerNow(state))
+      return undefined
+    case 'devMarkSeen':
+      await commit((state) => markSeenDev(state, payload.speciesID))
+      return undefined
+    case 'devGrantEgg':
+      await commit((state) => grantEgg(state))
       return undefined
 
     case 'devSetShiny':

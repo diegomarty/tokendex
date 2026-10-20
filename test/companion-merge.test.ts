@@ -373,6 +373,17 @@ describe('the registry', () => {
     expect(seven.xp).toBe(winner.species[7]?.xp ?? 0)
   })
 
+  // A nature only one side recorded survives the merge: it was set by a switch (or a Mint) on
+  // that side, and dropping it would roll a new one next time the species is chosen.
+  it('keeps a recorded nature either side knew', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress() } },
+      { species: { 4: progress({ nature: 'bold' }) } },
+    )
+    expect(mergeSaves(local, remote).state.species[4]?.nature).toBe('bold')
+    expect(mergeSaves(remote, local).state.species[4]?.nature).toBe('bold')
+  })
+
   it('keeps the winner’s payouts, as it keeps its spend', () => {
     const local = save({ revision: { [A]: 4, [B]: 7 }, earnedTokens: 30 })
     const remote = save({ revision: { [A]: 2, [B]: 7 }, earnedTokens: 999 })
@@ -408,5 +419,21 @@ describe('the registry and the merge credit', () => {
     expect(result.creditedTokens).toBe(50)
     expect(result.state.active?.usedAtStage).toBe(60)
     expect(result.state.species[4]?.xp).toBe(60)
+  })
+})
+
+describe('the egg stock', () => {
+  // [trigger branch] A maximum would resurrect eggs one side already incubated; the winner's
+  // count is fail-closed. The grant day is the most recent, so today's egg is never granted twice.
+  it('takes the winner’s eggs and the latest grant day', () => {
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      eggStock: { count: 1, lastGrantDay: '2026-10-19' },
+    })
+    const remote = save({
+      revision: { [A]: 2, [B]: 7 },
+      eggStock: { count: 3, lastGrantDay: '2026-10-20' },
+    })
+    expect(mergeSaves(local, remote).state.eggStock).toEqual({ count: 1, lastGrantDay: '2026-10-20' })
   })
 })

@@ -18,6 +18,7 @@
 
 import {
   PokemonBalance,
+  currentSpeciesID,
   RareCandy,
   freshSpeciesProgress,
   type CompanionState,
@@ -81,6 +82,22 @@ export function unlockSpecies(state: CompanionState, speciesID: number): Compani
   const current = progressOf(state, speciesID)
   if (current.unlocked) return state
   return { ...state, species: { ...state.species, [speciesID]: { ...current, unlocked: true } } }
+}
+
+/**
+ * Records who the companion was on its current species before it leaves the stage — its nature
+ * and whether it is shiny — so choosing that species again rebuilds the same Pokémon rather than
+ * a fresh roll. No-op without a companion.
+ */
+export function retireCompanion(state: CompanionState): CompanionState {
+  const mon = state.active
+  if (mon === undefined) return state
+  const id = currentSpeciesID(mon)
+  const current = progressOf(state, id)
+  const next: SpeciesProgress = { ...current }
+  if (mon.nature !== undefined) next.nature = mon.nature
+  if (mon.isShiny) next.shinyUnlocked = true
+  return { ...state, species: { ...state.species, [id]: next } }
 }
 
 /** Marks a species as met in the wild. Idempotent. */

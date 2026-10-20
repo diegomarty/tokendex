@@ -20,6 +20,7 @@ import {
   freshCompanionState,
   type CompanionState,
   type MonState,
+  EGG_STOCK_MAX,
   RareCandy,
 } from '../src/core/companion/model.js'
 import { decodeCompanionState } from '../src/core/companion/persistence.js'
@@ -119,13 +120,20 @@ describe('sanitized', () => {
     expect(s.eggUsage).toBe(MAX_TOKEN_VALUE)
   })
 
-  // An egg guarantee belongs to the egg being incubated. Left alongside an active Pokémon it
-  // leaks onto the next egg and becomes permanently premium.
-  it('drops an egg guarantee that coexists with an active Pokémon', () => {
+  // A companion chosen while an egg incubated pauses the egg; its guarantee and pre-roll are
+  // the egg's and stay with it. (They used to be dropped here.)
+  it('keeps a paused egg’s guarantee beside the active Pokémon', () => {
     const s = sanitized(state({ active: mon(), eggTier: 'rare', pendingHatchID: 25 }))
-    expect(s.eggTier).toBeUndefined()
-    // The pre-roll goes too, or the free post-graduation egg hatches a premium result.
-    expect(s.pendingHatchID).toBeUndefined()
+    expect(s.eggTier).toBe('rare')
+    expect(s.pendingHatchID).toBe(25)
+  })
+
+  it('clamps the egg stock to its capacity', () => {
+    expect(sanitized(state({ eggStock: { count: 99, lastGrantDay: '2026-10-20' } })).eggStock).toEqual({
+      count: EGG_STOCK_MAX,
+      lastGrantDay: '2026-10-20',
+    })
+    expect(sanitized(state({ eggStock: { count: -1 } })).eggStock).toEqual({ count: 0 })
   })
 
   // Legendary cannot be expressed via capture_rate, so both roll paths find nothing, the

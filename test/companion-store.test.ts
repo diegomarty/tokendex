@@ -8,9 +8,12 @@ import { buyItem } from '../src/core/companion/shop.js'
 import {
   PokemonBalance,
   currentSpeciesID,
+  freshCompanionState,
+  freshSpeciesProgress,
   makeEvoLine,
   type EvoNode,
 } from '../src/core/companion/model.js'
+import { encodeCompanionState } from '../src/core/companion/persistence.js'
 import type { BaseSpecies, PokeProviding } from '../src/core/pokeapi.js'
 import { BACKUP_FILE_PREFIX } from '../src/core/companion/saveTransfer.js'
 import {
@@ -45,8 +48,23 @@ function stubProvider(over: Partial<PokeProviding> = {}): PokeProviding {
   }
 }
 
-function tempFile(): string {
+/** A save with nothing in it: a brand-new game, waiting for its starter. */
+function freshFile(): string {
   return join(mkdtempSync(join(tmpdir(), 'ptb-store-')), 'companion-state.json')
+}
+
+/**
+ * A game that has begun — something obtained before (#999, out of every stub's way) — so usage
+ * goes to an egg on stage. The default: most of the store is about what happens after the start.
+ */
+function tempFile(): string {
+  const path = freshFile()
+  const begun = {
+    ...freshCompanionState('en'),
+    species: { 999: { ...freshSpeciesProgress(), unlocked: true } },
+  }
+  writeFileSync(path, encodeCompanionState(begun), 'utf8')
+  return path
 }
 
 const store = (over: Partial<ConstructorParameters<typeof CompanionStore>[0]> = {}) =>
@@ -302,11 +320,16 @@ describe('update flow', () => {
     await s.update(obs(huge))
 
     const after = s.snapshot()
-    expect(after.active).toBeUndefined() // graduated, a new egg is waiting
+    // The companion stays on its final form, registered; no egg takes its place.
+    expect(after.active?.pathIDs).toEqual([1, 2])
+    expect(after.species[2]?.registered).toBe(true)
     expect(after.dex).toHaveLength(1)
     expect(after.collectedFinals).toHaveLength(1)
-    expect(after.eggUsage).toBe(0)
     expect(s.drainEvents().map((e) => e.kind)).toContain('graduated')
+    // [trigger branch] Once: the next refresh at the full bar neither graduates nor files again.
+    await s.update(obs(huge + 1_000))
+    expect(s.snapshot().dex).toHaveLength(1)
+    expect(s.drainEvents().map((e) => e.kind)).not.toContain('graduated')
   })
 
   it('stores per-species names at graduation so the dex works offline', async () => {
@@ -374,7 +397,7 @@ describe('Ditto reveal', () => {
 
     await s.update(obs(PokemonBalance.eggHatchThreshold + graduationTotal))
     const after = s.snapshot()
-    expect(after.active).toBeUndefined()
+    expect(after.active?.baseID).toBe(132) // stays, registered
     expect(after.dex[0]?.finalID).toBe(132)
     // The impersonated line was never actually raised, so it must not bias future branches.
     expect(after.collectedFinals).toEqual(['132:132'])
@@ -1453,5 +1476,135 @@ describe('the registry in the store', () => {
     const wild = s.snapshot().wild[0]!
     expect(s.snapshot().species[wild.speciesID]?.seen).toBe(true)
     expect(s.snapshot().species[wild.speciesID]?.unlocked ?? false).toBe(false)
+  })
+})
+
+describe('companion choice, starters and the egg stock', () => {
+  const hatched = async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    return s
+  }
+
+  it('grants one egg per day of real usage, up to three', async () => {
+    const s = store()
+    await s.update(obs(0, '2026-08-19'))
+    expect(s.snapshot().eggStock.count).toBe(0) // the baseline fold credits nothing
+    await s.update(obs(1_000, '2026-08-19'))
+    await s.update(obs(2_000, '2026-08-19'))
+    expect(s.snapshot().eggStock).toEqual({ count: 1, lastGrantDay: '2026-08-19' })
+    for (const day of ['2026-08-20', '2026-08-21', '2026-08-22']) await s.update(obs(1_000, day))
+    expect(s.snapshot().eggStock.count).toBe(3)
+  })
+
+  it('refuses a species that is not unlocked, and rebuilds an unlocked one at its stage', async () => {
+    const s = await hatched()
+    const base = s.snapshot().active!.baseID
+    expect(await s.setCompanion(base + 1)).toBe('locked')
+    // Evolve, then go back to the base form: it comes back at stage 0 with its bar as it was.
+    await s.update(
+      obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0) + 5),
+    )
+    expect(s.snapshot().active?.stageIndex).toBe(1)
+    expect(await s.setCompanion(base)).toBe('set')
+    const back = s.snapshot().active!
+    expect(back.pathIDs).toEqual([base])
+    expect(back.stageIndex).toBe(0)
+    expect(back.usedAtStage).toBe(PokemonBalance.phaseThreshold('common', 2, 0)) // registered: full
+    expect(await s.setCompanion(base + 1)).toBe('set')
+    expect(s.snapshot().active?.usedAtStage).toBe(5)
+  })
+
+  it('offers a starter only to a fresh game', async () => {
+    const s = store({ filePath: freshFile() })
+    await s.update(obs(0))
+    expect(await s.chooseStarter(999)).toBe('locked')
+    expect(await s.chooseStarter(1)).toBe('set')
+    expect(s.snapshot().active?.baseID).toBe(1)
+    expect(s.snapshot().species[1]?.unlocked).toBe(true)
+    // Not twice: the registry is no longer empty.
+    expect(await s.chooseStarter(4)).toBe('locked')
+  })
+
+  // [trigger branch] Real usage lands before the player has even opened the panel. On a new
+  // game it is currency only: the starter screen stays, and no random egg hatches in its place.
+  it('keeps a new game waiting for its starter while usage arrives', async () => {
+    const s = store({ filePath: freshFile() })
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold * 3))
+    expect(s.snapshot().eggUsage).toBe(0)
+    expect(s.snapshot().active).toBeUndefined()
+    expect(s.snapshot().usedSinceInstall).toBe(PokemonBalance.eggHatchThreshold * 3)
+    expect(await s.chooseStarter(4)).toBe('set')
+  })
+
+  // [trigger branch] The unlock and the companion are one hold: offline, nothing is written and
+  // the game is still new, so the starter can be chosen once the network is back.
+  it('leaves a new game as it was when the starter cannot be fetched', async () => {
+    const path = freshFile()
+    const offline = store({
+      filePath: path,
+      provider: stubProvider({
+        line: async () => {
+          throw new Error('offline')
+        },
+      }),
+    })
+    await offline.update(obs(0))
+    expect(await offline.chooseStarter(1)).toBe('offline')
+    expect(offline.snapshot().species).toEqual({})
+    const online = store({ filePath: path })
+    expect(await online.chooseStarter(1)).toBe('set')
+  })
+
+  // [trigger branch] Started from the stock, set aside before it earned a token: the egg goes
+  // back to the stock instead of vanishing.
+  it('returns an egg set aside with no progress to the stock', async () => {
+    const s = await hatched()
+    const companion = s.snapshot().active!.baseID
+    expect(await s.incubateEgg()).toBe('started')
+    expect(s.snapshot().eggStock.count).toBe(0)
+    expect(await s.setCompanion(companion)).toBe('set')
+    expect(s.snapshot().eggStock.count).toBe(1)
+    expect(await s.incubateEgg()).toBe('started')
+  })
+
+  // [trigger branch] Switching away and back is free: the same nature (a Mint's included) and
+  // the same shininess come back, not a fresh roll.
+  it('brings a companion back with the nature and shininess it left with', async () => {
+    const s = await hatched()
+    const base = s.snapshot().active!.baseID
+    await s.mutate((tx) =>
+      tx.commit({ ...tx.state, active: { ...tx.state.active!, isShiny: true, nature: 'bold' } }),
+    )
+    await s.update(
+      obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0) + 5),
+    )
+    expect(s.snapshot().active?.stageIndex).toBe(1)
+    expect(await s.setCompanion(base)).toBe('set')
+    expect(await s.setCompanion(base + 1)).toBe('set')
+    expect(s.snapshot().active).toMatchObject({ isShiny: true, nature: 'bold' })
+  })
+
+  it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
+    const s = await hatched()
+    const companion = s.snapshot().active!.baseID
+    expect(s.snapshot().eggStock.count).toBe(1) // the hatch day was a day of usage
+    expect(await s.incubateEgg()).toBe('started')
+    expect(s.snapshot().active).toBeUndefined()
+    expect(s.snapshot().eggStock.count).toBe(0)
+    // Some incubation, then the companion comes back: the egg keeps what it had.
+    await s.update(obs(PokemonBalance.eggHatchThreshold + 1_000))
+    expect(s.snapshot().eggUsage).toBe(1_000)
+    expect(await s.setCompanion(companion)).toBe('set')
+    expect(s.snapshot().eggUsage).toBe(1_000)
+    expect(await s.incubateEgg()).toBe('resumed')
+    expect(s.snapshot().eggUsage).toBe(1_000)
+    expect(s.snapshot().eggStock.count).toBe(0)
+    // It hatches; with the stock empty and nothing paused, there is nothing to incubate.
+    await s.update(obs(PokemonBalance.eggHatchThreshold * 2 + 1_000))
+    expect(s.snapshot().active).toBeDefined()
+    expect(await s.incubateEgg()).toBe('noEggs')
   })
 })

@@ -36,6 +36,7 @@ import {
   RareCandy,
   ShinyCharm,
   freshCompanionState,
+  freshSpeciesProgress,
   isBerryKind,
   itemShopPrice,
   shopEntryPrice,
@@ -62,9 +63,19 @@ function state(over: Partial<CompanionState> = {}): CompanionState {
 const rich = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, active: mon() })
 
 describe('shop listing', () => {
-  it('offers eggs only while there is a Pokémon to discard', () => {
-    expect(shopEntries(state()).some((e) => e.kind === 'egg')).toBe(false)
-    expect(shopEntries(state({ active: mon() })).some((e) => e.kind === 'egg')).toBe(true)
+  // Eggs arrive one a day for free; the shop sells the guarantee on the one incubating.
+  it('offers egg guarantees only while an egg is incubating', () => {
+    const begun = state({ species: { 1: { ...freshSpeciesProgress(), unlocked: true } } })
+    expect(shopEntries(begun).some((e) => e.kind === 'egg')).toBe(true)
+    expect(shopEntries(state({ active: mon() })).some((e) => e.kind === 'egg')).toBe(false)
+  })
+
+  // [trigger branch] No companion, but no egg either: a new game before its starter. A
+  // guarantee bought here would sit on an egg that never existed.
+  it('sells no egg guarantee before the starter', () => {
+    const fresh = state({ usedSinceInstall: 10_000_000_000 })
+    expect(shopEntries(fresh).some((e) => e.kind === 'egg')).toBe(false)
+    expect(canBuyEgg(fresh, 'rare')).toBe(false)
   })
 
   it('sorts by price', () => {
@@ -130,7 +141,7 @@ describe('purchaseNeedsConfirmation', () => {
     expect(purchaseNeedsConfirmation({ kind: 'item', item: 'shinyCharm' })).toBe(true)
   })
 
-  it('always confirms an egg, which sends the current Pokémon off', () => {
+  it('always confirms an egg guarantee, the dearest thing in the shop', () => {
     expect(purchaseNeedsConfirmation({ kind: 'egg', tier: undefined })).toBe(true)
     expect(purchaseNeedsConfirmation({ kind: 'egg', tier: 'rare' })).toBe(true)
   })
@@ -205,36 +216,33 @@ describe('buying items', () => {
   })
 })
 
+const incubating = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, eggUsage: 1_000_000 })
+
 describe('buying eggs', () => {
-  it('requires a Pokémon to discard', () => {
-    expect(canBuyEgg(state({ usedSinceInstall: 10_000_000_000 }), undefined)).toBe(false)
-    expect(canBuyEgg(rich(), undefined)).toBe(true)
+  it('requires an egg on the stage, not a Pokémon', () => {
+    expect(canBuyEgg(incubating(), undefined)).toBe(true)
+    expect(canBuyEgg(rich(), undefined)).toBe(false)
+    expect(canBuyEgg(state({ usedSinceInstall: 10, eggUsage: 1 }), undefined)).toBe(false)
   })
 
   // Buying an unsatisfiable guarantee would leave both roll paths with zero candidates: the
   // egg never hatches, the guarantee is never consumed, and another egg cannot be bought.
   // The tokens would simply be gone.
   it('refuses a tier that is not sold, so tokens cannot vanish', () => {
-    expect(canBuyEgg(rich(), 'legendary')).toBe(false)
-    expect(buyEgg(rich(), 'legendary')).toBeUndefined()
+    expect(canBuyEgg(incubating(), 'legendary')).toBe(false)
+    expect(buyEgg(incubating(), 'legendary')).toBeUndefined()
   })
 
-  it('discards the Pokémon without touching the dex or the odds', () => {
-    const before = rich()
-    before.dex = [
-      { id: 'x', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false },
-    ]
-    before.collectedFinals = ['1:3']
-    const after = buyEgg(before, undefined)!
-    expect(after.active).toBeUndefined()
-    expect(after.eggUsage).toBe(0) // incubates from scratch
-    expect(after.dex).toHaveLength(1) // as if never drawn
-    expect(after.collectedFinals).toEqual(['1:3'])
+  // [trigger branch] Buying used to discard the companion and restart the egg; now it only
+  // writes the guarantee, so the incubation keeps what it has.
+  it('keeps the incubation’s progress and discards nothing', () => {
+    const after = buyEgg(incubating(), undefined)!
+    expect(after.eggUsage).toBe(1_000_000)
     expect(after.spentTokens).toBe(FreshEgg.price)
   })
 
   it('records the guarantee so an offline roll can honour it later', () => {
-    const after = buyEgg(rich(), 'rare')!
+    const after = buyEgg({ ...incubating(), pendingHatchID: 7 }, 'rare')!
     expect(after.eggTier).toBe('rare')
     expect(after.pendingHatchID).toBeUndefined() // rerolled under the new guarantee
     expect(after.spentTokens).toBe(FreshEgg.price_('rare'))

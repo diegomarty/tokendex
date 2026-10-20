@@ -3,9 +3,12 @@ import { REFRESH_PRESETS, buildPanelState } from '../src/core/panel/build.js'
 import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
+  ANIMATED_SPECIES_MAX,
+  EGG_STOCK_MAX,
   RareCandy,
   freshCompanionState,
   makeEvoLine,
+  type SpeciesProgress,
   shopEntryPrice,
   type CompanionState,
   type MonState,
@@ -14,6 +17,7 @@ import {
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
 import { candyFullHint } from '../src/core/i18n/dispatch.js'
 import { progressOf } from '../src/core/companion/registry.js'
+import { STARTERS } from '../src/core/companion/starters.js'
 import {
   StreakBalance,
   attackPermille,
@@ -598,5 +602,136 @@ describe('the streak row', () => {
   it('has an accessible name and follows the panel language', () => {
     expect(streak({}).label).toBe("This week's streak")
     expect(build({ state: state({ language: 'es' }) }).wild.streak.text).toBe('0 de 3 días')
+  })
+})
+
+// Phase 2: the registry on the panel — every Pokédex cell's state and bar, who can be chosen,
+// the first-run starter screen and the egg stock.
+describe('companion choice', () => {
+  const progress = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...progressOf(state(), 0),
+    ...over,
+  })
+
+  it('gives every Pokédex cell its state, its bar and whether it can be chosen', () => {
+    const panel = build({
+      state: state({
+        active: activeMon,
+        species: {
+          4: progress({ seen: true }),
+          7: progress({ unlocked: true, xp: 4_000_000, threshold: 8_000_000 }),
+          25: progress({ unlocked: true }),
+          26: progress({ unlocked: true, registered: true }),
+        },
+      }),
+    })
+    const cell = (id: number) => panel.dexSpecies.find((sp) => sp.id === id)!
+    expect(cell(4)).toMatchObject({ status: 'seen', canChoose: false, isCompanion: false, percent: 0 })
+    expect(cell(7)).toMatchObject({
+      status: 'unlocked',
+      canChoose: true,
+      percent: 50,
+      percentText: '50% registered',
+    })
+    // [trigger branch] Unlocked, but already on stage: choosing it again would do nothing.
+    expect(cell(25)).toMatchObject({ canChoose: false, isCompanion: true })
+    expect(cell(26)).toMatchObject({
+      status: 'registered',
+      percent: 100,
+      percentText: 'Registered',
+      canChoose: true,
+    })
+  })
+
+  it('offers the starters on a brand-new save only', () => {
+    const fresh = build({ state: state() })
+    expect(fresh.starters?.map((s) => s.id)).toEqual([...STARTERS])
+    expect(fresh.starters?.[1]?.types).toEqual(['fire'])
+    expect(fresh.starters?.[1]?.name).toBe('Charmander')
+    // [trigger branch] Each condition alone closes the screen.
+    expect(build({ state: state({ active: activeMon }) }).starters).toBeUndefined()
+    expect(build({ state: state({ eggUsage: 1 }) }).starters).toBeUndefined()
+    expect(build({ state: state({ pendingHatchID: 4 }) }).starters).toBeUndefined()
+    expect(build({ state: state({ eggTier: 'rare' }) }).starters).toBeUndefined()
+    expect(
+      build({ state: state({ species: { 1: progress({ unlocked: true }) } }) }).starters,
+    ).toBeUndefined()
+    // Seen in the wild is not obtained: encounters spawn on a new game too.
+    expect(build({ state: state({ species: { 16: progress({ seen: true }) } }) }).starters).toBeDefined()
+  })
+
+  it('shows the egg stock and offers to incubate only with a companion on stage', () => {
+    const none = build({ state: state({ active: activeMon }) }).eggs
+    expect(none).toMatchObject({ count: 0, max: EGG_STOCK_MAX, paused: false })
+    expect(none.incubateText).toBeUndefined()
+
+    const stocked = build({ state: state({ active: activeMon, eggStock: { count: 2 } }) }).eggs
+    expect(stocked).toMatchObject({
+      count: 2,
+      stockText: '2 eggs in stock',
+      incubateText: 'Incubate an egg',
+    })
+    // Incubating already, there is nothing to offer: the egg is on stage.
+    expect(
+      build({ state: state({ eggStock: { count: 2 }, eggUsage: 1 }) }).eggs.incubateText,
+    ).toBeUndefined()
+  })
+
+  // [trigger branch] A companion chosen mid-incubation leaves the egg waiting, with no stock.
+  it('offers to resume a paused egg even with an empty stock', () => {
+    const paused = build({ state: state({ active: activeMon, eggUsage: 2_000_000 }) }).eggs
+    expect(paused).toMatchObject({ paused: true, incubateText: 'Resume the egg' })
+    const hatching = build({ state: state({ active: activeMon, pendingHatchID: 4 }) }).eggs
+    expect(hatching).toMatchObject({ paused: true, incubateText: 'Resume the egg' })
+    // A paid guarantee alone is progress: with no Resume, the tokens spent on it would be lost.
+    const guaranteed = build({ state: state({ active: activeMon, eggTier: 'rare' }) }).eggs
+    expect(guaranteed).toMatchObject({ paused: true, incubateText: 'Resume the egg' })
+  })
+
+  it('puts the companion species registration on the player plate', () => {
+    const panel = build({
+      state: state({
+        active: activeMon,
+        species: { 25: progress({ unlocked: true, xp: 2_000_000, threshold: 8_000_000 }) },
+      }),
+      usage: usage(view()),
+    })
+    expect(panel.companion?.registrationPercent).toBe(25)
+  })
+})
+
+describe('the Pokédex summary', () => {
+  // [trigger branch] A seen species is in the list but owned by nobody: counting the list would
+  // put it in the collection.
+  it('sends the counts already formatted, seen species left out of the collection', () => {
+    const panel = build({
+      state: state({
+        species: {
+          1: { ...progressOf(state(), 1), seen: true },
+          2: { ...progressOf(state(), 2), unlocked: true },
+          3: { ...progressOf(state(), 3), unlocked: true, registered: true },
+        },
+      }),
+    })
+    expect(panel.dexSummary).toEqual({
+      owned: 2,
+      registered: 1,
+      total: ANIMATED_SPECIES_MAX,
+      percent: 0,
+      progressText: `1 / ${ANIMATED_SPECIES_MAX}`,
+      speciesSegmentText: `${panel.strings.segmentSpecies} (2)`,
+      logSegmentText: `${panel.strings.segmentLog} (0)`,
+    })
+  })
+
+  // Four of 649 is 0.62%: rounded, the bar shows a sliver; floored, it would read empty.
+  it('rounds the completion bar rather than flooring it', () => {
+    const species = Object.fromEntries(
+      Array.from({ length: 4 }, (_, i) => [
+        i + 1,
+        { ...progressOf(state(), i + 1), unlocked: true, registered: true },
+      ]),
+    )
+    expect(build({ state: state({ species }) }).dexSummary.percent).toBe(1)
   })
 })

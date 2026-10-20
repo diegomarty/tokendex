@@ -10,6 +10,8 @@
 import {
   APP_LANGUAGES,
   COMPANION_STATE_SCHEMA,
+  EGG_STOCK_MAX,
+  type EggStock,
   type AppLanguage,
   type CompanionState,
   type DexEntry,
@@ -296,6 +298,12 @@ export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefin
   }
   const threshold = lenientOptional(value, 'threshold', isInt)
   if (threshold !== undefined && threshold > 0) progress.threshold = threshold
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  if (baseID !== undefined && baseID > 0) progress.baseID = baseID
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  if (stageIndex !== undefined && stageIndex >= 0) progress.stageIndex = stageIndex
+  const totalForms = lenientOptional(value, 'totalForms', isInt)
+  if (totalForms !== undefined && totalForms > 0) progress.totalForms = totalForms
   const lineRarity = lenientOptional(value, 'lineRarity', isRarity)
   if (lineRarity !== undefined) progress.lineRarity = lineRarity
   const pendingShare = lenientOptional(value, 'pendingShare', isShare)
@@ -304,9 +312,22 @@ export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefin
   if (shinyXP !== undefined && shinyXP > 0) progress.shinyXP = shinyXP
   if (value['shinyUnlocked'] === true) progress.shinyUnlocked = true
   if (value['shinyRegistered'] === true) progress.shinyRegistered = true
+  const nature = lenientOptional(value, 'nature', isNature)
+  if (nature !== undefined) progress.nature = nature
   // An entry that says nothing is dropped: it would only make the map grow.
   const empty = Object.entries(progress).every(([key, v]) => v === fresh[key as keyof SpeciesProgress])
   return empty ? undefined : progress
+}
+
+/** Clamped to the stock's capacity; a day that is not day-shaped never matches, so it re-grants. */
+export function decodeEggStock(value: unknown): EggStock {
+  if (!isObject(value)) return { count: 0 }
+  const stock: EggStock = {
+    count: Math.min(EGG_STOCK_MAX, Math.max(0, lenient(value, 'count', isInt, 0))),
+  }
+  const lastGrantDay = lenientOptional(value, 'lastGrantDay', isDayKey)
+  if (lastGrantDay !== undefined) stock.lastGrantDay = lastGrantDay
+  return stock
 }
 
 /**
@@ -388,6 +409,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     // Absent means armed: a save from before the notice existed may announce its next fill.
     queueFullArmed: lenient(value, 'queueFullArmed', isBool, true),
     species: decodeSpeciesMap(value['species']),
+    eggStock: decodeEggStock(value['eggStock']),
   }
   state.finds = state.finds.slice(0, Math.max(0, EncounterBalance.maxQueue - state.wild.length))
 

@@ -9,6 +9,7 @@
 
 import { type CompanionState, currentSpeciesID } from './model.js'
 import { creditSpeciesXP } from './registry.js'
+import { isFreshGame } from './eggs.js'
 import { MilestoneBalance, StreakBalance, grantLegendaryEncounter } from './encounters.js'
 
 export interface LedgerObservation {
@@ -306,10 +307,14 @@ function daysSinceStreakAward(lastAward: string | undefined, today: string): num
 /**
  * Routes an accrued delta into either egg incubation or the active Pokémon's growth meter.
  * Growth itself (evolution, graduation) is handled separately in `growth.ts`.
+ *
+ * Before the starter is chosen there is neither: the delta is currency only. Crediting the egg
+ * would end the new game behind the player's back and hatch a random species in its place.
  */
 export function creditDelta(state: CompanionState, delta: number): CompanionState {
   if (delta <= 0) return state
   const next: CompanionState = { ...state, usedSinceInstall: state.usedSinceInstall + delta }
+  if (isFreshGame(state)) return next
   if (next.active === undefined) {
     next.eggUsage = next.eggUsage + delta
     return next

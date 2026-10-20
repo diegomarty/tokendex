@@ -55,6 +55,8 @@ let dexLogFilter = 'all'
 let wildResult: { text: string; encounterID: string } | undefined
 /** Which level of the battle menu is open, and for which encounter. View state only. */
 let wildMenu: 'main' | 'bag' = 'main'
+/** The starter picked on the first-run screen, before it is confirmed. View state only. */
+let starterSelected: number | undefined
 /** The bag's open pocket and selected item. View state only. */
 let bagPocket: 'balls' | 'berries' | 'items' | undefined
 let bagSelected: string | undefined
@@ -120,7 +122,8 @@ function companionInfo(state: PanelState): string {
     .map(escapeHTML)
     .join(' · ')
 
-  const percent = Math.round(c.progress * 100)
+  // The registration bar is the figure; a still-hatching egg has none and keeps the stage progress.
+  const percent = c.registrationPercent ?? Math.round(c.progress * 100)
 
   return `
       <h1 class="hero-name">${escapeHTML(name)}${c.isShiny ? ' <span class="shiny-mark" title="shiny">✨</span>' : ''}</h1>
@@ -251,7 +254,16 @@ function renderHome(state: PanelState): string {
   const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.buy)} →</button>`
 
   const compact = document.body.classList.contains('compact')
-  const game = compact ? renderCompanion(state) + renderWildStrip(state) : renderGame(state)
+  // A brand-new game asks for a starter before anything else; the card is a glance, so it only
+  // says so and opens the panel.
+  const game =
+    state.starters !== undefined
+      ? compact
+        ? `<button class="wild-strip" data-open-panel>${escapeHTML(state.strings.starterTitle)}</button>`
+        : renderStarters(state, state.starters)
+      : compact
+        ? renderCompanion(state) + renderWildStrip(state)
+        : renderGame(state) + renderEggs(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -305,6 +317,55 @@ function renderHome(state: PanelState): string {
     </div>
     ${renderLimits(state)}
     ${breakdown}`
+}
+
+// MARK: - Starters and the egg stock
+
+/**
+ * The first-run screen: the fifteen starters, a generation to a row, each on the colour of its
+ * type. Picking one only selects it; the button under the grid confirms — a starter is the one
+ * choice of the game made before there is anything to compare it with.
+ */
+function renderStarters(state: PanelState, starters: NonNullable<PanelState['starters']>): string {
+  const picked = starters.find((s) => s.id === starterSelected)
+  const cells = starters
+    .map(
+      (s) => `<button class="starter type-${escapeHTML(s.types[0] ?? 'normal')}" data-starter="${s.id}"
+          aria-pressed="${s.id === starterSelected}" aria-label="${escapeHTML(s.name)}">
+        <img src="${spriteURL(s.id, false, true)}" alt="" data-fallback="${spriteURL(s.id, false, false)}">
+        <span class="starter-name">${escapeHTML(s.name)}</span>
+      </button>`,
+    )
+    .join('')
+  return `<section class="starters">
+      <h2 class="starters-title">${escapeHTML(state.strings.starterTitle)}</h2>
+      <p class="starters-prompt">${escapeHTML(state.strings.starterPrompt)}</p>
+      <div class="starter-grid" role="group" aria-label="${escapeHTML(state.strings.starterTitle)}">${cells}</div>
+      <button class="action starter-confirm" data-choose-starter="${picked?.id ?? ''}" ${picked === undefined ? 'disabled' : ''}>
+        ${escapeHTML(picked === undefined ? state.strings.chooseCompanion : `${state.strings.chooseCompanion} · ${picked.name}`)}
+      </button>
+    </section>`
+}
+
+/**
+ * The egg stock under the scene: one slot per egg the stock can hold, filled for each one held,
+ * and the button that incubates one (or resumes the one set aside). Nothing to show without a
+ * companion on stage — then the egg is the scene.
+ */
+function renderEggs(state: PanelState): string {
+  const eggs = state.eggs
+  if (state.companion?.speciesID === undefined) return ''
+  if (eggs.count === 0 && eggs.incubateText === undefined) return ''
+  const slots = Array.from(
+    { length: eggs.max },
+    (_, i) =>
+      `<span class="egg-slot${i < eggs.count ? ' full' : ''}">${i < eggs.count ? `<img class="egg-sprite" src="${itemSpriteURL('egg')}" alt="">` : ''}</span>`,
+  ).join('')
+  return `<div class="egg-stock${eggs.paused ? ' paused' : ''}">
+      <span class="egg-slots" role="img" aria-label="${escapeHTML(eggs.stockText)}">${slots}</span>
+      <span class="egg-text">${escapeHTML(eggs.stockText)}</span>
+      ${eggs.incubateText === undefined ? '' : `<button class="action egg-incubate" data-incubate>${escapeHTML(eggs.incubateText)}</button>`}
+    </div>`
 }
 
 // MARK: - Wild encounters
@@ -617,7 +678,8 @@ const RISK_ICONS: Record<PanelWildEncounter['risk']['items'][number]['key'], str
 function playerPlate(state: PanelState): string {
   const c = state.companion
   if (c === undefined) return ''
-  const percent = Math.round(c.progress * 100)
+  // The registration bar is the figure; a still-hatching egg has none and keeps the stage progress.
+  const percent = c.registrationPercent ?? Math.round(c.progress * 100)
   const meta = [c.stageText, c.rarityText, c.natureText].filter(
     (part): part is string => part !== undefined && part !== '',
   )
@@ -972,7 +1034,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
   if (dexSelected === undefined) return ''
   const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
 
-  if (sp === undefined) {
+  if (sp === undefined || sp.status === 'seen') {
     return `
     <div class="dex-detail locked">
       <div class="dex-entry-head">
@@ -1006,7 +1068,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
     <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
       <div class="dex-entry-head">
         <span class="num">${dexNumber(sp.id)}</span>
-        <span class="dex-entry-name">${escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
+        <span class="dex-entry-name">${sp.name === `#${sp.id}` ? '' : escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
         ${close}
       </div>
       <div class="dex-entry-body">
@@ -1016,8 +1078,18 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
         </div>
         <div class="body">
           <span class="rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
-          ${sp.isRaising ? `<div class="desc">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
+          <div class="reg-line">
+            <div class="reg-bar${sp.status === 'registered' ? ' full' : ''}"><i data-fill="${sp.percent}"></i></div>
+            <span class="desc">${escapeHTML(sp.percentText)}</span>
+          </div>
           ${entries}
+          ${
+            sp.isCompanion
+              ? `<div class="companion-tag">${escapeHTML(state.strings.companionBadge)}</div>`
+              : sp.canChoose
+                ? `<button class="action dex-choose" data-companion="${sp.id}">${escapeHTML(state.strings.chooseCompanion)}</button>`
+                : ''
+          }
         </div>
       </div>
     </div>`
@@ -1027,10 +1099,10 @@ function renderDex(state: PanelState): string {
   const segments = `
     <div class="segments">
       <button class="seg" data-seg="species" aria-selected="${dexSegment === 'species'}">
-        ${escapeHTML(state.strings.segmentSpecies)} (${state.dexSpecies.length})
+        ${escapeHTML(state.dexSummary.speciesSegmentText)}
       </button>
       <button class="seg" data-seg="log" aria-selected="${dexSegment === 'log'}">
-        ${escapeHTML(state.strings.segmentLog)} (${state.dexLog.length})
+        ${escapeHTML(state.dexSummary.logSegmentText)}
       </button>
     </div>`
 
@@ -1038,15 +1110,16 @@ function renderDex(state: PanelState): string {
     // The whole huntable pool, silhouettes included: an all-caught-species list reads as an
     // archive, but 625 dark shapes read as a goal. Locked cells carry only the silhouette and
     // the number — what is behind them stays a surprise, the same rule the wild queue follows.
-    const done = state.dexSpecies.length
+    // The core counts: the completion is registered species, the collection what is owned.
+    const summary = state.dexSummary
     const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
     const completion = `
       <div class="dex-progress">
-        <span class="desc">${done} / ${ANIMATED_SPRITE_MAX}</span>
-        <div class="bar"><i data-fill="${Math.min(100, Math.round((100 * done) / ANIMATED_SPRITE_MAX))}"></i></div>
+        <span class="desc">${escapeHTML(summary.progressText)}</span>
+        <div class="bar"><i data-fill="${summary.percent}"></i></div>
       </div>`
     const hint =
-      done === 0
+      summary.owned === 0
         ? `<p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
       <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
         : ''
@@ -1058,7 +1131,7 @@ function renderDex(state: PanelState): string {
     const query = dexQuery.trim().toLowerCase()
     const numeric = /^#?\d+$/.test(query) ? String(Number(query.replace('#', ''))) : undefined
     const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
-      if (dexOwnedOnly && sp === undefined) return false
+      if (dexOwnedOnly && (sp === undefined || sp.status === 'seen')) return false
       if (query === '') return true
       if (numeric !== undefined) return String(id).includes(numeric)
       return sp !== undefined && sp.name.toLowerCase().includes(query)
@@ -1082,21 +1155,27 @@ function renderDex(state: PanelState): string {
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
       const tabIndex = ` tabindex="${id === (dexSelected ?? 1) ? 0 : -1}"`
-      if (sp === undefined) {
+      if (sp === undefined || sp.status === 'seen') {
+        // Seen is still a silhouette — met, not owned — but lit, so the grid shows where the wild
+        // has already been.
         cells.push(`
-        <button class="cell locked${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
+        <button class="cell locked${sp === undefined ? '' : ' seen'}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
           <img src="${spriteURL(id, false, false)}" alt="" loading="lazy">
           <div class="num">${dexNumber(id)}</div>
         </button>`)
       } else {
+        const shiny = sp.shiny === 'registered' || sp.isShiny
+        // A species whose line never loaded has no name yet, only the core's `#N` fallback —
+        // and the number is already on the cell.
         cells.push(`
-        <button class="cell owned rarity-${escapeHTML(sp.rarity)}${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
-                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.rarityText)}">
-          ${sp.isShiny ? '<span class="star" title="shiny">★</span>' : ''}
-          <img src="${spriteURL(sp.id, sp.isShiny, false)}" alt="" loading="lazy">
+        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
+                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.percentText)}">
+          ${shiny ? '<span class="star" title="shiny">★</span>' : sp.shiny === 'unlocked' ? '<span class="star open" title="shiny">☆</span>' : ''}
+          <img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy">
           <div class="num">${dexNumber(id)}</div>
-          <div class="name">${escapeHTML(sp.name)}</div>
-          ${sp.isRaising ? `<div class="badge">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
+          ${sp.name === `#${id}` ? '' : `<div class="name">${escapeHTML(sp.name)}</div>`}
+          <div class="reg-bar${sp.status === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.percent}"></i></div>
+          ${sp.isCompanion ? `<div class="badge">${escapeHTML(state.strings.companionBadge)}</div>` : ''}
         </button>`)
       }
     }
@@ -1573,6 +1652,30 @@ document.addEventListener('click', (event) => {
     dexLogFilter = (logChip as HTMLElement).dataset['dexFilter'] ?? 'all'
     invalidate('dex')
     render()
+    return
+  }
+  const starterCell = target.closest('[data-starter]')
+  if (starterCell !== null) {
+    const id = Number((starterCell as HTMLElement).dataset['starter'])
+    starterSelected = Number.isInteger(id) ? id : undefined
+    invalidate('home')
+    render()
+    return
+  }
+  const confirmStarter = target.closest('[data-choose-starter]')
+  if (confirmStarter !== null) {
+    const id = Number((confirmStarter as HTMLElement).dataset['chooseStarter'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'chooseStarter', speciesID: id })
+    return
+  }
+  const companionButton = target.closest('[data-companion]')
+  if (companionButton !== null) {
+    const id = Number((companionButton as HTMLElement).dataset['companion'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'setCompanion', speciesID: id })
+    return
+  }
+  if (target.closest('[data-incubate]') !== null) {
+    vscode.postMessage({ type: 'incubateEgg' })
     return
   }
   const dexCell = target.closest('[data-dex]')

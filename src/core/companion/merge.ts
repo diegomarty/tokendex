@@ -121,12 +121,20 @@ function mergeRegistries(
     // Fixed from the line, so either side's reading is the reading.
     const threshold = a?.threshold ?? b?.threshold
     if (threshold !== undefined) merged.threshold = threshold
+    const baseID = a?.baseID ?? b?.baseID
+    if (baseID !== undefined) merged.baseID = baseID
+    const stageIndex = a?.stageIndex ?? b?.stageIndex
+    if (stageIndex !== undefined) merged.stageIndex = stageIndex
+    const totalForms = a?.totalForms ?? b?.totalForms
+    if (totalForms !== undefined) merged.totalForms = totalForms
     const lineRarity = a?.lineRarity ?? b?.lineRarity
     if (lineRarity !== undefined) merged.lineRarity = lineRarity
     const pendingShare = Math.max(a?.pendingShare ?? 0, b?.pendingShare ?? 0)
     if (pendingShare > 0) merged.pendingShare = pendingShare
     if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
     if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
+    const nature = a?.nature ?? b?.nature
+    if (nature !== undefined) merged.nature = nature
     out[id] = merged
   }
   return out
@@ -200,6 +208,11 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   // the winner; what the loser put into a species the winner never had is lost with the rest of
   // its history, and that species is simply unlocked at zero.
   state.earnedTokens = base.earnedTokens
+  // Fail-closed: the winner's count (a maximum would resurrect eggs already incubated) and the
+  // most recent grant day, so two machines never both grant today's egg.
+  const grantDays = [base.eggStock.lastGrantDay, other.eggStock.lastGrantDay].filter(isDayKey).sort()
+  const lastGrantDay = grantDays[grantDays.length - 1]
+  state.eggStock = { count: base.eggStock.count, ...(lastGrantDay === undefined ? {} : { lastGrantDay }) }
   // From `state`, not `base`: the credit above already moved the companion's bar.
   state.species = mergeRegistries(state.species, other.species)
   state.encountersSeen = Math.max(base.encountersSeen, other.encountersSeen)

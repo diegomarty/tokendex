@@ -31,6 +31,9 @@ export type PanelRequestKind =
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setRefreshInterval'; seconds: number }
+  | { kind: 'setCompanion'; speciesID: number }
+  | { kind: 'chooseStarter'; speciesID: number }
+  | { kind: 'incubateEgg' }
   | { kind: 'openPanel' }
 
 /** Every live surface, so a refresh reaches the sidebar and the editor tab in one call. */
@@ -163,6 +166,17 @@ export class PanelSurface {
         break
       case 'setRefreshInterval':
         this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })
+        break
+      // The species id is forwarded as sent; the host guards it (an integer in range) and the
+      // core refuses anything not unlocked, so a stale or hostile webview cannot pick a companion.
+      case 'setCompanion':
+        this.onRequest({ kind: 'setCompanion', speciesID: message.speciesID })
+        break
+      case 'chooseStarter':
+        this.onRequest({ kind: 'chooseStarter', speciesID: message.speciesID })
+        break
+      case 'incubateEgg':
+        this.onRequest({ kind: 'incubateEgg' })
         break
       case 'openPanel':
         this.onRequest({ kind: 'openPanel' })

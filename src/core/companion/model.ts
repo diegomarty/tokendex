@@ -780,15 +780,37 @@ export interface SpeciesProgress {
   candiesUsed: number
   /** `registerXP` of this species, fixed once its line was seen. */
   threshold?: number
+  /**
+   * Where the species sits in its line, fixed with `threshold`: the base to ask the line for and
+   * the stage that prices it. What lets the species be chosen as the companion without guessing.
+   */
+  baseID?: number
+  stageIndex?: number
+  totalForms?: number
   /** Rarity of the *line*, which prices registration; the encounter's own rarity is separate. */
   lineRarity?: Rarity
   /** A share of registration owed (a catch before the line loaded), applied with `threshold`. */
   pendingShare?: number
   /** Experience toward the shiny form, fed only once registered. */
   shinyXP?: number
+  /** The shiny form was obtained — hatched, or raised from a shiny — even before its bar fills. */
   shinyUnlocked?: boolean
   shinyRegistered?: boolean
+  /**
+   * The nature it had when it last left the stage, so choosing it again brings back the same
+   * Pokémon — a Mint bought for it is not rolled away by a switch.
+   */
+  nature?: PokemonNature
 }
+
+export interface EggStock {
+  count: number
+  /** `yyyy-MM-dd` of the last grant; absent before the first. */
+  lastGrantDay?: string
+}
+
+/** Eggs the stock holds at most. */
+export const EGG_STOCK_MAX = 3
 
 export function freshSpeciesProgress(): SpeciesProgress {
   return { xp: 0, unlocked: false, seen: false, registered: false, caught: 0, candiesUsed: 0 }
@@ -1084,6 +1106,11 @@ export interface CompanionState {
    */
   queueFullArmed: boolean
   /**
+   * Free eggs: one a day, up to `EGG_STOCK_MAX`. Granted on a day with real usage, beside the
+   * accrual day; `lastGrantDay` is that day, so a second refresh the same day grants nothing.
+   */
+  eggStock: EggStock
+  /**
    * Registration per species, keyed by species id. Absent on a save from before it existed:
    * decoding seeds every species the save already had as unlocked at 0% (`seedRegistry`).
    */
@@ -1118,6 +1145,7 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     finds: [],
     legendaryTrail: [],
     queueFullArmed: true,
+    eggStock: { count: 0 },
     species: {},
   }
 }

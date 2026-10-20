@@ -27,14 +27,18 @@ import {
   type ItemKind,
   type MonState,
   Pokeball,
+  PokemonBalance,
   type Rarity,
+  type SpeciesProgress,
   type PokemonType,
   type WildEncounter,
   currentSpeciesID,
   freshCompanionState,
+  freshSpeciesProgress,
   resolveName,
 } from '../../src/core/companion/model.js'
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
+import { registerXP } from '../../src/core/companion/registry.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { buildPanelState } from '../../src/core/panel/build.js'
 import { todayKey } from '../../src/core/usage/entry.js'
@@ -278,6 +282,43 @@ interface SceneOptions extends UsageOptions {
   streakDaysAgo?: number[]
   /** Days back from the fixture clock on which this window's legendary was earned. */
   awardDaysAgo?: number
+  /**
+   * The registry. Absent: derived from what the fixture shows — every graduated line
+   * registered, the companion's earlier forms registered and its current one at the view's
+   * progress. Pass it to draw specific states (seen, partial, shiny).
+   */
+  species?: CompanionState['species']
+  eggStock?: CompanionState['eggStock']
+  /** Usage already in an egg. Defaults to the view's progress when there is no companion. */
+  eggUsage?: number
+  /** A brand-new save: nothing at all, so the panel asks for a starter. */
+  fresh?: boolean
+}
+
+/** The registry a fixture implies, with the bar of the form on stage at `progress`. */
+function impliedSpecies(state: CompanionState, progress: number): CompanionState['species'] {
+  const species: CompanionState['species'] = {}
+  const set = (id: number, over: Partial<SpeciesProgress>) => {
+    species[id] = { ...(species[id] ?? freshSpeciesProgress()), unlocked: true, ...over }
+  }
+  for (const entry of state.dex) {
+    for (const id of entry.chainOrder) set(id, { registered: true, lineRarity: entry.rarity })
+  }
+  const active = state.active
+  if (active !== undefined) {
+    active.pathIDs.forEach((id, stage) => {
+      const threshold = registerXP(active.rarity, active.totalForms, stage)
+      const reached = stage < active.stageIndex
+      if (species[id]?.registered === true) return
+      set(id, {
+        threshold,
+        lineRarity: active.rarity,
+        registered: reached,
+        xp: reached ? threshold : Math.round(progress * threshold),
+      })
+    })
+  }
+  return species
 }
 
 /** Enough balls to throw and one candy to spend — the default a fixture rarely needs to change. */
@@ -310,6 +351,16 @@ function scene(options: SceneOptions = {}): PanelState {
     state.lastStreakAwardDate = todayKey(EPOCH - options.awardDaysAgo * DAY)
   }
   if (options.mon !== undefined) state.active = options.mon
+  if (options.eggStock !== undefined) state.eggStock = options.eggStock
+  if (options.fresh !== true) {
+    state.species = options.species ?? impliedSpecies(state, options.companion?.progress ?? 0.5)
+    // An egg fixture is an egg under way, not a new game: give it the usage its bar shows.
+    state.eggUsage =
+      options.eggUsage ??
+      (options.mon === undefined
+        ? Math.max(1, Math.round((options.companion?.progress ?? 0) * PokemonBalance.eggHatchThreshold))
+        : 0)
+  }
 
   const over = options.companion
   let view: CompanionView | undefined
@@ -592,6 +643,60 @@ export const FIXTURES: Fixture[] = [
         caught([133, 134], 33),
         caught([10], 41),
       ],
+    }),
+  },
+  {
+    id: 'starter',
+    label: 'First run: pick a starter',
+    state: scene({ fresh: true, inventory: {} }),
+  },
+  {
+    id: 'registry-states',
+    label: 'Pokédex: seen, unlocked at a share, registered, shiny unlocked and registered',
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      dex: [caught([1, 2, 3], 9), caught([129, 130], 4, { isShiny: true })],
+      species: {
+        1: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+        2: { ...freshSpeciesProgress(), unlocked: true, registered: true, shinyUnlocked: true },
+        3: { ...freshSpeciesProgress(), unlocked: true, xp: 6_000_000, threshold: 25_000_000 },
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+        5: { ...freshSpeciesProgress(), unlocked: true, xp: 5_950_000, threshold: 17_000_000 },
+        7: { ...freshSpeciesProgress(), unlocked: true, xp: 2_000_000, threshold: 8_000_000 },
+        16: { ...freshSpeciesProgress(), seen: true },
+        19: { ...freshSpeciesProgress(), seen: true },
+        25: { ...freshSpeciesProgress(), seen: true },
+        129: {
+          ...freshSpeciesProgress(),
+          unlocked: true,
+          registered: true,
+          shinyUnlocked: true,
+          shinyRegistered: true,
+        },
+        130: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+      },
+    }),
+  },
+  {
+    id: 'eggs-stock',
+    label: 'Home: two eggs in stock, a companion on stage',
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      eggStock: { count: 2 },
+    }),
+  },
+  {
+    id: 'egg-paused',
+    label: 'Home: an egg set aside for a companion, none in stock',
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      eggUsage: 2_400_000,
     }),
   },
   {

@@ -69,7 +69,13 @@ import {
   rollShiny,
   type BurnTier,
 } from './display.js'
-import { applyUsage, makeEvolutionPlan, normalizedEvolutionState, type RNG } from './growth.js'
+import {
+  applyUsage,
+  makeEvolutionPlan,
+  normalizedEvolutionState,
+  pathToSpecies,
+  type RNG,
+} from './growth.js'
 import {
   applyLegendaryTriggers,
   applyProviderLedger,
@@ -87,6 +93,7 @@ import {
   type EvoLine,
   type MonState,
   NATURES,
+  evoNodeWithID,
   type Rarity,
   type WildEncounter,
   type WildFind,
@@ -103,7 +110,18 @@ import { decodeCompanionState, encodeCompanionState } from './persistence.js'
 import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
 import { deviceIdentity } from './device.js'
 import { withRevision } from './merge.js'
-import { creditSpeciesXP, markSeen, rareCandyXP, unlockSpecies, unlockedSpecies } from './registry.js'
+import {
+  creditSpeciesXP,
+  markSeen,
+  rareCandyXP,
+  retireCompanion,
+  unlockSpecies,
+  unlockedSpecies,
+} from './registry.js'
+import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
+import { isStarterID } from './starters.js'
+
+export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
 
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
@@ -594,6 +612,8 @@ export class CompanionStore {
       // Before crediting, so the day is recorded from the same fact the growth meter moves on:
       // real accrual. A refresh that contributes nothing is not a day of work.
       this.state = noteAccrualDay(this.state, observation.todayDate)
+      // Same fact, same place: a day of real work is a day with a free egg.
+      this.state = grantDailyEgg(this.state, observation.todayDate)
       this.state = creditDelta(this.state, delta)
       // Attributed here and not inside `creditDelta`, because a merge credits through that same
       // function tokens that another device accrued.
@@ -856,6 +876,110 @@ export class CompanionStore {
     return this.turn(encounterID, { kind: 'feed', berry })
   }
 
+  /**
+   * Puts an unlocked species on the stage as the companion, rebuilt from its line: the path
+   * down to it, a plan for the branches below, its registration so far as stage progress.
+   * Free and unlimited — the experience only ever goes to one, which is cost enough.
+   *
+   * The line is network and is fetched *before* the lock, like a hatch; the lock then checks
+   * that the species is still unlocked in the file as it is now.
+   *
+   * Who steps off is kept: the outgoing companion's nature and shininess go to its registry
+   * entry and come back with it, and an egg on stage is set aside (`setEggAside`).
+   */
+  async setCompanion(speciesID: number): Promise<SetCompanionOutcome> {
+    await this.load()
+    const progress = this.state.species[speciesID]
+    if (progress?.unlocked !== true) return 'locked'
+    return this.putOnStage(speciesID, progress.baseID, false)
+  }
+
+  /**
+   * The shared half of `setCompanion` and `chooseStarter`. With `starter`, the unlock happens in
+   * the same lock hold as the companion, and only on a game still fresh — so a failure (offline,
+   * a tree without the species) leaves the new game exactly as it was, starter screen and all.
+   */
+  private async putOnStage(
+    speciesID: number,
+    knownBaseID: number | undefined,
+    starter: boolean,
+  ): Promise<SetCompanionOutcome> {
+    const baseID = knownBaseID ?? this.baseFromHistory(speciesID) ?? speciesID
+    let line: EvoLine
+    try {
+      line = await this.options.provider.line(baseID)
+    } catch {
+      this.noteNetworkFailure()
+      return 'offline'
+    }
+    this.noteNetworkSuccess()
+
+    const result = await this.transact((): SetCompanionOutcome => {
+      if (starter && !isFreshGame(this.state)) return 'locked'
+      const path = pathToSpecies(line.tree, speciesID)
+      const node = evoNodeWithID(line.tree, speciesID)
+      if (path === undefined || node === undefined) return 'unknown'
+      const active = this.state.active
+      if (active !== undefined && currentSpeciesID(active) === speciesID) return 'set'
+
+      const base = starter ? unlockSpecies(this.state, speciesID) : this.state
+      const current = base.species[speciesID]
+      if (current?.unlocked !== true) return 'locked'
+      const stepping = setEggAside(retireCompanion(base))
+
+      const plan = [...path, ...makeEvolutionPlan(node, unlockedSpecies(stepping), this.rng).slice(1)]
+      const stageIndex = path.length - 1
+      const totalForms = plan.length
+      const threshold = PokemonBalance.phaseThreshold(line.rarity, totalForms, stageIndex)
+      const mon: MonState = {
+        baseID,
+        pathIDs: path,
+        plannedPathIDs: plan,
+        stageIndex,
+        usedAtStage: Math.min(current.xp, threshold),
+        rarity: line.rarity,
+        totalForms,
+        isShiny: current.shinyUnlocked === true || current.shinyRegistered === true,
+        nature: current.nature ?? NATURES[this.rng() % NATURES.length]!,
+        dittoRevealed: false,
+      }
+      this.state = { ...stepping, active: mon }
+      this.line = line
+      this.eventUntil = 0
+      return 'set'
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /** The base of a species the registry has no position for yet: its Pokédex entry, if any. */
+  private baseFromHistory(speciesID: number): number | undefined {
+    return this.state.dex.find((e) => e.chainOrder.includes(speciesID))?.baseID
+  }
+
+  /**
+   * The first choice of a new game. Only while nothing has been obtained: once the registry has
+   * anything, or an egg is in progress, the starter screen is over.
+   */
+  async chooseStarter(speciesID: number): Promise<SetCompanionOutcome> {
+    await this.load()
+    if (!isStarterID(speciesID) || !isFreshGame(this.state)) return 'locked'
+    return this.putOnStage(speciesID, speciesID, true)
+  }
+
+  /** Puts an egg on the stage: the paused one, or one from the stock. */
+  async incubateEgg(): Promise<IncubateOutcome> {
+    await this.load()
+    const result = await this.transact(() => {
+      const { state, outcome } = incubateEgg(this.state)
+      this.state = state
+      if (outcome === 'started' || outcome === 'resumed') this.line = undefined
+      return outcome
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
   private async turn(encounterID: string, action: EncounterAction): Promise<TurnOutcome> {
     await this.load()
     // Under the lock and against the re-read queue: a Pokémon another window already caught
@@ -973,11 +1097,10 @@ export class CompanionStore {
   }
 
   /**
-   * Records the line in the Pokédex and hands over a fresh egg.
+   * Records the line in the Pokédex. The companion stays on stage.
    *
-   * `eggTier` is deliberately untouched: reaching here means a Pokémon was active, so the
-   * guarantee is already absent (consumed at hatch, normalised on load). Keeping one
-   * consumption point avoids two places drifting apart.
+   * `eggTier` is deliberately untouched: a guarantee alongside a companion belongs to a paused
+   * egg (`eggIsPaused`), paid for and waiting to be resumed — never something to clean up here.
    */
   private graduate(mon: MonState): void {
     const finalID = currentSpeciesID(mon)
@@ -1007,15 +1130,13 @@ export class CompanionStore {
     const collected = new Set(this.state.collectedFinals)
     collected.add(`${mon.baseID}:${finalID}`)
 
-    const next: CompanionState = {
+    // The companion stays: a registered final form is a choice the player made, not a cycle
+    // that ends in an egg. What comes next — another species, an egg from the stock — is theirs.
+    this.state = {
       ...this.state,
       dex: [...this.state.dex, entry],
       collectedFinals: [...collected],
-      eggUsage: 0, // the new egg incubates from scratch
     }
-    delete next.active
-    this.state = next
-    this.line = undefined
     this.pendingEvents.push({ kind: 'graduated', name })
     this.eventUntil = this.now + GRADUATE_EVENT_WINDOW_MS
   }

@@ -455,3 +455,36 @@ describe('save import strings', () => {
     )
   })
 })
+
+// Phase 2's copy: every new string exists in every language, and the figures it carries come
+// from its arguments rather than being baked in.
+describe('companion choice copy', () => {
+  it.each(APP_LANGUAGES)('says how far a species is registered in %s', (lang) => {
+    expect(d.registrationText(lang, 45, false)).toContain('45')
+    expect(d.registrationText(lang, 100, true)).not.toContain('100')
+    expect(d.registrationText(lang, 100, true).trim()).not.toBe('')
+  })
+
+  it.each(APP_LANGUAGES)('counts the egg stock in %s', (lang) => {
+    expect(d.eggStockText(lang, 2)).toContain('2')
+  })
+
+  it('uses the singular for one egg', () => {
+    expect(d.eggStockText('en', 1)).toBe('1 egg in stock')
+    expect(d.eggStockText('es', 1)).toBe('1 huevo en reserva')
+  })
+
+  it.each(APP_LANGUAGES)('labels the companion controls and the starter screen in %s', (lang) => {
+    for (const text of [
+      d.incubateEggText(lang),
+      d.resumeEggText(lang),
+      d.chooseCompanionText(lang),
+      d.companionBadgeText(lang),
+      d.starterTitleText(lang),
+      d.starterPromptText(lang),
+    ]) {
+      expect(text.trim()).not.toBe('')
+    }
+    expect(d.incubateEggText(lang)).not.toBe(d.resumeEggText(lang))
+  })
+})

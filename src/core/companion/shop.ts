@@ -28,6 +28,7 @@ import {
 import type { RNG } from './growth.js'
 import { progressOf } from './registry.js'
 import { spendableBalance } from './ledger.js'
+import { eggOnStage } from './eggs.js'
 
 // MARK: - Inventory
 
@@ -67,8 +68,8 @@ export function shopEntries(state: CompanionState): ShopEntry[] {
       quantity: Pokeball.bundleSize,
     })),
   )
-  // Eggs are only offered while there is a Pokémon to discard.
-  if (state.active !== undefined) {
+  // Egg guarantees are only offered while an egg is incubating — they are bought *for* it.
+  if (eggOnStage(state)) {
     entries.push(...FreshEgg.shopTiers.map((tier) => ({ kind: 'egg' as const, tier })))
   }
   return entries.sort((a, b) => {
@@ -131,24 +132,23 @@ export function eggGuarantee(state: CompanionState): Rarity | undefined {
 }
 
 /**
- * An egg may only be bought while there is a Pokémon to discard.
+ * What the shop sells is the **guarantee** on the egg incubating now — eggs themselves arrive
+ * one a day, free. So it needs an egg on the stage (no companion) and the balance.
  *
  * The sold-tier check comes first and is deliberately enforced here rather than at the call
  * site: buying an unsatisfiable guarantee (legendary, which capture_rate cannot express)
- * leaves both roll paths with zero candidates, so the egg never hatches, the guarantee is
- * never consumed, and buying another egg is blocked by the active-Pokémon gate — the tokens
- * would be gone with no way back.
+ * leaves both roll paths with zero candidates, so the egg never hatches and the guarantee is
+ * never consumed — the tokens would be gone with no way back.
  */
 export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): boolean {
   if (!FreshEgg.shopTiers.includes(tier)) return false
-  return state.active !== undefined && spendableBalance(state) >= FreshEgg.price_(tier)
+  return eggOnStage(state) && spendableBalance(state) >= FreshEgg.price_(tier)
 }
 
 /**
- * Buys an egg: discards the active Pokémon and restarts incubation from zero.
- *
- * Mirrors only graduation's egg reset. `dex` and `collectedFinals` are untouched, so the
- * discarded Pokémon counts as never drawn — and stage growth is lost, which is the real cost.
+ * Writes the guarantee onto the egg incubating. Nothing is discarded and the incubation keeps
+ * its progress; the species pre-rolled before the purchase goes, so the guarantee can be
+ * honoured by the next roll.
  *
  * No species is rolled here. Rolling needs the network, so doing it at purchase time would
  * burn the tokens offline for nothing. Only the guarantee is written to state; the prefetch
@@ -159,11 +159,9 @@ export function buyEgg(state: CompanionState, tier: Rarity | undefined): Compani
   const next: CompanionState = {
     ...state,
     spentTokens: state.spentTokens + FreshEgg.price_(tier),
-    eggUsage: 0,
     inventory: { ...state.inventory },
   }
-  delete next.active // discarded, not graduated
-  delete next.pendingHatchID // reroll from scratch under the new guarantee
+  delete next.pendingHatchID // reroll under the new guarantee
   if (tier === undefined) delete next.eggTier
   else next.eggTier = tier
   return next

@@ -3955,3 +3955,202 @@ body.paused .wallet-badge .coin {
     border: 1px solid CanvasText;
   }
 }
+
+/* ---- the registry in the Pokédex ----
+   Two axes per cell: how far the species is (seen, unlocked with its bar, registered) and its
+   shiny form (the corner star, hollow while only unlocked). */
+.dex .cell.locked.seen {
+  border-style: dashed;
+}
+.dex .cell.locked.seen img {
+  opacity: 0.55;
+}
+.dex .cell.locked.seen .num {
+  opacity: 0.7;
+}
+/* The registration bar, thin, above the rarity edge. Full reads as registered at a glance. */
+.reg-bar {
+  height: 4px;
+  margin: 4px 8px 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+  overflow: hidden;
+}
+.reg-bar i {
+  display: block;
+  height: 100%;
+  background: var(--exp);
+  transition: width 400ms ease;
+}
+.reg-bar.full i {
+  background: var(--trust);
+}
+.dex .cell.status-registered .name {
+  font-weight: 600;
+  opacity: 1;
+}
+.dex .cell.companion {
+  border-color: var(--exp);
+  box-shadow: inset 0 0 0 1px var(--exp);
+}
+.dex .cell .star.open {
+  opacity: 0.75;
+}
+.dex-detail .reg-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+}
+.dex-detail .reg-line .reg-bar {
+  flex: 1;
+  height: 6px;
+  margin: 0;
+}
+.dex-detail .dex-choose {
+  margin-top: 8px;
+}
+.dex-detail .companion-tag {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--exp) 22%, transparent);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+/* ---- first run: the starter picker ----
+   Fifteen starters, a generation to a row, each on its type's colour — the three-across choice
+   every game opens with, five times over. */
+.starters {
+  margin-bottom: 14px;
+  padding: 14px 12px 12px;
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 0 2px 0 var(--paper-edge);
+  text-align: center;
+}
+.starters-title {
+  margin: 0 0 4px;
+  font-size: 1.15em;
+  font-weight: 800;
+}
+.starters-prompt {
+  margin: 0 0 12px;
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.starter {
+  --type: var(--vscode-foreground);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 2px 5px;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--type) 16%, transparent);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.starter.type-grass {
+  --type: #3fae5f;
+}
+.starter.type-fire {
+  --type: #e5653d;
+}
+.starter.type-water {
+  --type: #3d8bfd;
+}
+.starter img {
+  height: 56px;
+  image-rendering: pixelated;
+  object-fit: none;
+}
+.starter-name {
+  max-width: 100%;
+  font-size: 0.8em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.starter:hover,
+.starter:focus-visible {
+  background: color-mix(in srgb, var(--type) 28%, transparent);
+  outline: none;
+}
+.starter[aria-pressed='true'] {
+  border-color: var(--type);
+  background: color-mix(in srgb, var(--type) 32%, transparent);
+}
+.starter-confirm {
+  width: 100%;
+  margin-top: 12px;
+}
+
+/* ---- the egg stock, under the scene ---- */
+.egg-stock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 14px;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+}
+.egg-slots {
+  display: inline-flex;
+  gap: 3px;
+}
+.egg-slot {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 32px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+.egg-sprite {
+  width: 28px;
+  height: 30px;
+  object-view-box: inset(34px 34px 32px 34px);
+  image-rendering: pixelated;
+}
+/* Wide enough for the line to stay a line; when it is not, the button takes its own row. */
+.egg-text {
+  flex: 1 1 7em;
+  min-width: 0;
+  font-size: 0.9em;
+  opacity: 0.8;
+}
+.egg-stock .egg-incubate {
+  flex: 1 0 auto;
+}
+@media (forced-colors: active) {
+  .starters {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+  }
+  .starter[aria-pressed='true'] {
+    border-color: Highlight;
+  }
+  .reg-bar i {
+    background: CanvasText;
+  }
+}

@@ -107,6 +107,70 @@ describe('applyUsage', () => {
     expect(settled.species[2]).toMatchObject({ xp: 5 })
   })
 
+  // [trigger branch] Registered at the leaf, the companion stays: no second `graduated`, the
+  // meter pinned at the threshold, and nothing to evolve into.
+  it('keeps a registered final form on stage and graduates it only once', () => {
+    const atLast = mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: 0 })
+    const first = applyUsage(atLast, thr(2), line, new Set(), fixedRNG(0), {})
+    expect(first.graduated).toBe(true)
+    const again = applyUsage(first.mon, thr(2), line, new Set(), fixedRNG(0), first.species)
+    expect(again.graduated).toBe(false)
+    expect(again.events).toEqual([])
+    expect(again.mon.usedAtStage).toBe(thr(2))
+    expect(again.mon.pathIDs).toEqual([1, 2, 3])
+  })
+
+  it('keeps evolving a registered species while a branch below is unregistered', () => {
+    const registered = {
+      xp: thr(0),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+    }
+    const pending = applyUsage(mon(), thr(0), line, new Set(), fixedRNG(0), { 1: registered })
+    expect(pending.mon.stageIndex).toBe(1)
+    const done = { ...registered, xp: thr(1) }
+    const settled = applyUsage(mon(), thr(0), line, new Set(), fixedRNG(0), {
+      1: registered,
+      2: { ...done, registered: true },
+      3: { ...done, registered: true },
+    })
+    expect(settled.mon.stageIndex).toBe(0)
+    expect(settled.mon.usedAtStage).toBe(thr(0))
+  })
+
+  // [trigger branch] The plan points at a branch that is all registered while a sibling is not:
+  // the companion takes the sibling, not the dead end it would never leave.
+  it('steers a registered species toward the branch that still has something to register', () => {
+    const eevee = makeEvoLine(133, node(133, [node(134), node(135)]), 'rare', {})
+    const t = (stage: number) => PokemonBalance.phaseThreshold('rare', 2, stage)
+    const registered = {
+      xp: t(0),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+    }
+    const result = applyUsage(
+      mon({ baseID: 133, pathIDs: [133], plannedPathIDs: [133, 134], totalForms: 2, rarity: 'rare' }),
+      t(0),
+      eevee,
+      new Set([133, 134, 135]),
+      fixedRNG(0),
+      { 133: registered, 134: { ...registered, xp: t(1) } },
+    )
+    expect(result.mon.pathIDs).toEqual([133, 135])
+    expect(result.mon.plannedPathIDs).toEqual([133, 135])
+  })
+
+  it('records where the species sits in its line when the threshold is fixed', () => {
+    const result = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({ baseID: 1, stageIndex: 0, totalForms: 3 })
+  })
+
   it('registers the final form on graduation', () => {
     const atLast = mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: 0 })
     const result = applyUsage(atLast, thr(2), line, new Set(), fixedRNG(0), {})

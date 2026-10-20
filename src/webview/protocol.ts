@@ -45,6 +45,8 @@ export interface PanelCompanion {
   rarityText?: string
   natureText?: string
   line: PanelLineItem[]
+  /** 0..100 of this species' registration bar; 100 once registered. Absent for an egg. */
+  registrationPercent?: number
 }
 
 /** An official limit window as the panel draws it: a name, a percentage and a bar. */
@@ -129,6 +131,50 @@ export interface PanelDexSpecies {
   rarityText: string
   /** Style token (`common`…`legendary`), never shown as text — `rarityText` is the label. */
   rarity: string
+  /** The registry's state, two axes: how far the species is, and its shiny form. */
+  status: 'seen' | 'unlocked' | 'registered'
+  shiny: 'none' | 'unlocked' | 'registered'
+  /** 0..100 of the registration bar. */
+  percent: number
+  /** Localised "45% registered" / "Registered" line. */
+  percentText: string
+  /** Can be chosen as the companion (unlocked, and not already on stage). */
+  canChoose: boolean
+  isCompanion: boolean
+}
+
+/** The Pokédex's counts: owned (the collection), registered (the completion) and the total. */
+export interface PanelDexSummary {
+  owned: number
+  registered: number
+  total: number
+  /** 0..100 of the completion bar. */
+  percent: number
+  /** "5 / 649". */
+  progressText: string
+  /** The two segment labels with their counts: "Collection (8)", "Catch log (3)". */
+  speciesSegmentText: string
+  logSegmentText: string
+}
+
+/** A starter offered on first run. */
+export interface PanelStarter {
+  id: number
+  name: string
+  /** Style tokens (`fire`, `water`…), never shown as text. */
+  types: string[]
+}
+
+/** The egg stock: one free egg a day, up to three, and the one incubating if any. */
+export interface PanelEggs {
+  count: number
+  max: number
+  /** Localised "2 eggs in stock" line. */
+  stockText: string
+  /** Localised label of the incubate / resume button; absent when nothing can be incubated. */
+  incubateText?: string
+  /** An egg is paused (a companion was chosen while one incubated). */
+  paused: boolean
 }
 
 /** A row in the catch log. */
@@ -365,6 +411,13 @@ export interface PanelStrings {
   exportSave: string
   importSave: string
   incubating: string
+  /** The Pokédex detail's button that makes an unlocked species the companion. */
+  chooseCompanion: string
+  /** Badge on the species that is the companion right now. */
+  companionBadge: string
+  /** The first-run starter screen's title and the line under it. */
+  starterTitle: string
+  starterPrompt: string
   language: string
   /** The Run button in the wild scene. */
   run: string
@@ -432,6 +485,11 @@ export interface PanelState {
   totals: PanelTotals
   providers: PanelProvider[]
   companion?: PanelCompanion
+  /** Present on first run only: the game wants a starter before anything else. */
+  starters?: PanelStarter[]
+  eggs: PanelEggs
+  /** The Pokédex's counts, already formatted: the webview paints them and never counts its list. */
+  dexSummary: PanelDexSummary
   spendableText: string
   /**
    * How the spendable balance moved since the previous panel this host built — tokens earned, a
@@ -484,6 +542,11 @@ export type PanelMessage =
   | { type: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { type: 'setRefreshInterval'; seconds: number }
   | { type: 'setTrainer'; trainerID: string }
+  /** Choose an unlocked species (by id) as the companion; the core refuses anything else. */
+  | { type: 'setCompanion'; speciesID: number }
+  | { type: 'chooseStarter'; speciesID: number }
+  /** Incubate an egg from the stock, or resume the paused one. */
+  | { type: 'incubateEgg' }
   /**
    * Reveal the full panel. Sent by the compact card, which has no tab strip of its own: it can
    * show that wild Pokémon are waiting but cannot resolve them, so the row that says so has to

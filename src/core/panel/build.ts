@@ -18,6 +18,8 @@ import type {
   PanelDexEntry,
   PanelDexFilter,
   PanelDexSpecies,
+  PanelDexSummary,
+  PanelEggs,
   PanelMoodMeter,
   PanelShopAction,
   PanelShopItem,
@@ -28,11 +30,13 @@ import type {
 } from '../../webview/protocol.js'
 import type { UsageSnapshot } from '../snapshot.js'
 import {
+  ANIMATED_SPECIES_MAX,
   APP_LANGUAGES,
   type AppLanguage,
   BALL_KINDS,
   BERRY_KINDS,
   type CompanionState,
+  EGG_STOCK_MAX,
   type EvoLine,
   FreshEgg,
   type WildEncounter,
@@ -60,7 +64,14 @@ import {
   ownedItems,
 } from '../companion/shop.js'
 import { spendableBalance, streakWindow } from '../companion/ledger.js'
-import { dexCount, dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
+import {
+  dexCount,
+  dexEntriesSorted,
+  dexSpecies,
+  dexTally,
+  entryName,
+  lineItems,
+} from '../companion/dexView.js'
 import {
   EncounterBalance,
   TrailBalance,
@@ -76,6 +87,9 @@ import {
   trailPrice,
 } from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
+import { progressOf, registrationPercent } from '../companion/registry.js'
+import { STARTERS, starterName, starterType } from '../companion/starters.js'
+import { eggIsPaused, isFreshGame } from '../companion/eggs.js'
 import { todayKey } from '../usage/entry.js'
 import { compact, cost, grouped, percent } from '../tokenFormatter.js'
 import * as D from '../i18n/dispatch.js'
@@ -341,14 +355,26 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     })).filter((chip) => chip.count > 0),
   ]
 
-  const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => ({
-    id: sp.id,
-    name: sp.name,
-    isShiny: sp.isShiny,
-    isRaising: sp.isRaising,
-    rarityText: D.rarityLabel(lang, sp.rarity),
-    rarity: sp.rarity,
-  }))
+  const companionSpeciesID = state.active === undefined ? undefined : currentSpeciesID(state.active)
+  const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => {
+    const isCompanion = sp.id === companionSpeciesID
+    return {
+      id: sp.id,
+      name: sp.name,
+      isShiny: sp.isShiny,
+      isRaising: sp.isRaising,
+      rarityText: D.rarityLabel(lang, sp.rarity),
+      rarity: sp.rarity,
+      status: sp.status,
+      shiny: sp.shiny,
+      percent: sp.percent,
+      percentText: D.registrationText(lang, sp.percent, sp.status === 'registered'),
+      // Anything owned can be the companion — a seen species is not owned yet, and the one on
+      // stage is already chosen.
+      canChoose: sp.status !== 'seen' && !isCompanion,
+      isCompanion,
+    }
+  })
 
   const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
   const threshold = encounterThresholdFor(state.encountersSeen)
@@ -502,6 +528,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     shop,
     bag,
     dexSpecies: species,
+    dexSummary: dexSummary(species, dexLog.length, lang),
+    eggs: eggsPanel(state, lang),
     dexLog,
     dexLogFilters,
     wild,
@@ -533,8 +561,16 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     if (state.active !== undefined) {
       c.rarityText = D.rarityLabel(lang, state.active.rarity)
       if (state.active.nature !== undefined) c.natureText = natureName(state.active.nature, lang)
+      c.registrationPercent = registrationPercent(progressOf(state, currentSpeciesID(state.active)))
     }
     panel.companion = c
+  }
+  if (isFreshGame(state)) {
+    panel.starters = STARTERS.map((id) => ({
+      id,
+      name: starterName(id, lang),
+      types: [starterType(id)],
+    }))
   }
   if (inputs.refreshSeconds !== undefined) {
     panel.refresh = {
@@ -547,4 +583,38 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   }
   if (inputs.dev !== undefined) panel.dev = inputs.dev
   return panel
+}
+
+/**
+ * The egg stock on Home. The incubate button exists only while a companion is on stage — with
+ * none, the egg already is — and reads "Resume" for an egg set aside mid-incubation, which needs
+ * no stock.
+ */
+function eggsPanel(state: CompanionState, lang: AppLanguage): PanelEggs {
+  const count = state.eggStock.count
+  const paused = eggIsPaused(state)
+  const eggs: PanelEggs = { count, max: EGG_STOCK_MAX, stockText: D.eggStockText(lang, count), paused }
+  if (paused) eggs.incubateText = D.resumeEggText(lang)
+  else if (state.active !== undefined && count > 0) eggs.incubateText = D.incubateEggText(lang)
+  return eggs
+}
+
+/** The Pokédex's counts, formatted here so the webview paints them instead of counting. */
+function dexSummary(
+  species: readonly PanelDexSpecies[],
+  logCount: number,
+  lang: AppLanguage,
+): PanelDexSummary {
+  const { owned, registered } = dexTally(species)
+  const total = ANIMATED_SPECIES_MAX
+  const strings = panelStrings(lang)
+  return {
+    owned,
+    registered,
+    total,
+    percent: Math.min(100, Math.round((100 * registered) / total)),
+    progressText: D.dexProgressText(registered, total),
+    speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
+    logSegmentText: D.countedLabel(strings.segmentLog, logCount),
+  }
 }

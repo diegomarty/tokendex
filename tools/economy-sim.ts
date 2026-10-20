@@ -220,6 +220,20 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
           if (outcome.kind !== 'broke') break // fled, out of balls, or gone
         }
       }
+      // Phase 2: a registered final form stays on stage, so the player picks what comes next —
+      // an unlocked species still to register, else an egg from the stock.
+      {
+        const s = store.snapshot()
+        const active = s.active
+        const current =
+          active === undefined ? undefined : s.species[active.pathIDs[active.stageIndex] ?? active.baseID]
+        const finalForm = active !== undefined && active.stageIndex >= active.totalForms - 1
+        if (active !== undefined && finalForm && current?.registered === true) {
+          const next = Object.entries(s.species).find(([, p]) => p.unlocked && !p.registered)
+          if (next !== undefined) await store.setCompanion(Number(next[0]))
+          else if (s.eggStock.count > 0) await store.incubateEgg()
+        }
+      }
       if (canUseRareCandy(store.snapshot(), store.currentLine() !== undefined)) {
         await store.mutate((tx) => {
           const next = consumeRareCandy(tx.state)
