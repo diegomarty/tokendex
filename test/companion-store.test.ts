@@ -1433,3 +1433,25 @@ describe('wild area: finds, temperament and the full notice', () => {
     expect(s.snapshot().spentTokens).toBe(100_000_000)
   })
 })
+
+describe('the registry in the store', () => {
+  it('fills the companion’s species as usage is credited', async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    const id = s.snapshot().active!.baseID
+    expect(s.snapshot().species[id]).toMatchObject({ unlocked: true, xp: 0 })
+    await s.update(obs(PokemonBalance.eggHatchThreshold + 1_234))
+    expect(s.snapshot().species[id]).toMatchObject({ xp: 1_234, unlocked: true })
+    expect(s.snapshot().species[id]?.threshold).toBe(PokemonBalance.phaseThreshold('common', 2, 0))
+  })
+
+  it('marks a species as seen when it turns up in the wild', async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.update(obs(EncounterBalance.firstThreshold))
+    const wild = s.snapshot().wild[0]!
+    expect(s.snapshot().species[wild.speciesID]?.seen).toBe(true)
+    expect(s.snapshot().species[wild.speciesID]?.unlocked ?? false).toBe(false)
+  })
+})

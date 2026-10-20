@@ -32,6 +32,7 @@ import {
   queuedCount,
 } from './encounters.js'
 import { isDayKey } from './persistence.js'
+import { type SpeciesProgress, freshSpeciesProgress } from './model.js'
 import { mergedGrantTier, perKeyMax, sanitized } from './saveTransfer.js'
 
 /**
@@ -100,6 +101,37 @@ function unseenTokens(base: CompanionState, other: CompanionState): number {
   }, 0)
 }
 
+function mergeRegistries(
+  base: Record<number, SpeciesProgress>,
+  other: Record<number, SpeciesProgress>,
+): Record<number, SpeciesProgress> {
+  const out: Record<number, SpeciesProgress> = {}
+  const ids = new Set([...Object.keys(base), ...Object.keys(other)].map(Number))
+  for (const id of ids) {
+    const a = base[id]
+    const b = other[id]
+    const merged: SpeciesProgress = {
+      ...(a ?? freshSpeciesProgress()),
+      unlocked: (a?.unlocked ?? false) || (b?.unlocked ?? false),
+      seen: (a?.seen ?? false) || (b?.seen ?? false),
+      registered: (a?.registered ?? false) || (b?.registered ?? false),
+      caught: Math.max(a?.caught ?? 0, b?.caught ?? 0),
+      candiesUsed: Math.max(a?.candiesUsed ?? 0, b?.candiesUsed ?? 0),
+    }
+    // Fixed from the line, so either side's reading is the reading.
+    const threshold = a?.threshold ?? b?.threshold
+    if (threshold !== undefined) merged.threshold = threshold
+    const lineRarity = a?.lineRarity ?? b?.lineRarity
+    if (lineRarity !== undefined) merged.lineRarity = lineRarity
+    const pendingShare = Math.max(a?.pendingShare ?? 0, b?.pendingShare ?? 0)
+    if (pendingShare > 0) merged.pendingShare = pendingShare
+    if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
+    if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
+    out[id] = merged
+  }
+  return out
+}
+
 export function mergeSaves(local: CompanionState, remote: CompanionState): MergeResult {
   const localCovers = covers(local.revision, remote.revision)
   const remoteCovers = covers(remote.revision, local.revision)
@@ -161,6 +193,15 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.collectedFinals = [...new Set([...state.collectedFinals, ...other.collectedFinals])]
   state.candyGrantTier = mergedGrantTier(base.candyGrantTier, other.candyGrantTier)
   state.candyFeatureSeeded = base.candyFeatureSeeded || other.candyFeatureSeeded
+  // The registry. The Pokédex states are flags and flags only ever turn on, so they are unioned:
+  // a species the losing side registered stays registered. The experience itself is history —
+  // RNG-free, but the tokens behind it are the same tokens the credit above already paid to the
+  // winner's companion, so taking the loser's xp as well would count them twice. It comes from
+  // the winner; what the loser put into a species the winner never had is lost with the rest of
+  // its history, and that species is simply unlocked at zero.
+  state.earnedTokens = base.earnedTokens
+  // From `state`, not `base`: the credit above already moved the companion's bar.
+  state.species = mergeRegistries(state.species, other.species)
   state.encountersSeen = Math.max(base.encountersSeen, other.encountersSeen)
   state.accrualDays = [...new Set([...base.accrualDays, ...other.accrualDays])]
     .sort()

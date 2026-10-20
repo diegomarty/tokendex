@@ -71,6 +71,67 @@ describe('applyUsage', () => {
     expect(result.events).toEqual([{ kind: 'graduated' }])
   })
 
+  // The registry rides along: the same delta that moves `usedAtStage` fills the current
+  // species' bar, and evolving caps the old species at its threshold (registered) and hands the
+  // overflow to the new one — the two never disagree about where the tokens went.
+  it('fills the current species’ bar and fixes its threshold once the line is known', () => {
+    const result = applyUsage(mon(), 1_000, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({
+      xp: 1_000,
+      unlocked: true,
+      registered: false,
+      threshold: thr(0),
+      lineRarity: 'common',
+    })
+  })
+
+  // [trigger branch] Crediting the whole delta in one block would leave species 1 above its
+  // threshold and species 2 at zero.
+  it('registers the species it evolves from and carries the overflow to the next', () => {
+    const result = applyUsage(mon(), thr(0) + 777, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({ xp: thr(0), registered: true })
+    expect(result.species[2]).toMatchObject({
+      xp: 777,
+      unlocked: true,
+      threshold: thr(1),
+      registered: false,
+    })
+  })
+
+  it('accrues raw experience without a line, and settles it once there is one', () => {
+    const offline = applyUsage(mon(), thr(0) + 5, undefined, new Set(), fixedRNG(0), {})
+    expect(offline.species[1]).toMatchObject({ xp: thr(0) + 5, registered: false })
+    expect(offline.species[1]?.threshold).toBeUndefined()
+    const settled = applyUsage(offline.mon, 0, line, new Set(), fixedRNG(0), offline.species)
+    expect(settled.species[1]).toMatchObject({ xp: thr(0), registered: true })
+    expect(settled.species[2]).toMatchObject({ xp: 5 })
+  })
+
+  it('registers the final form on graduation', () => {
+    const atLast = mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: 0 })
+    const result = applyUsage(atLast, thr(2), line, new Set(), fixedRNG(0), {})
+    expect(result.species[3]).toMatchObject({ xp: thr(2), registered: true, unlocked: true })
+  })
+
+  // The reveal moves what this life earned to Ditto and nothing more: a real Bulbasaur raised
+  // earlier keeps its own bar.
+  it('moves only this life’s experience to Ditto on the reveal', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0 })
+    const prior = {
+      1: { xp: 12, unlocked: true, seen: false, registered: true, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), prior)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]).toMatchObject({ xp: 12, registered: true })
+    expect(result.species[132]).toMatchObject({ xp: thr(0), unlocked: true })
+  })
+
+  it('returns the very same registry when a zero delta settles nothing', () => {
+    const settled = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {}).species
+    const again = applyUsage(mon({ usedAtStage: 1 }), 0, line, new Set(), fixedRNG(0), settled)
+    expect(again.species).toBe(settled)
+  })
+
   // A disguised Ditto can become a leaf after asset normalisation, so the reveal must be
   // checked BEFORE terminal graduation or the disguise species enters the Pokédex.
   it('reveals the Ditto instead of graduating the species it was disguised as', () => {
@@ -167,18 +228,18 @@ describe('branch diversity', () => {
   it('prefers a branch whose finals are not collected yet', () => {
     const parent = node(1, [node(2), node(4)])
     // 4 is already owned, so 2 must be chosen regardless of the RNG value.
-    const chosen = pickPlannedChild(parent, 1, new Set(['1:4']), fixedRNG(1))
+    const chosen = pickPlannedChild(parent, new Set([4]), fixedRNG(1))
     expect(chosen.speciesID).toBe(2)
   })
 
   it('falls back to the whole set once everything is owned', () => {
     const parent = node(1, [node(2), node(4)])
-    const chosen = pickPlannedChild(parent, 1, new Set(['1:2', '1:4']), fixedRNG(1))
+    const chosen = pickPlannedChild(parent, new Set([2, 4]), fixedRNG(1))
     expect([2, 4]).toContain(chosen.speciesID)
   })
 
   it('plans a full path down to a leaf', () => {
-    expect(makeEvolutionPlan(node(1, [node(2, [node(3)])]), 1, new Set(), fixedRNG(0))).toEqual([1, 2, 3])
+    expect(makeEvolutionPlan(node(1, [node(2, [node(3)])]), new Set(), fixedRNG(0))).toEqual([1, 2, 3])
   })
 })
 

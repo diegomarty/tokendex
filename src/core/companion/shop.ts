@@ -23,8 +23,10 @@ import {
   itemIsPassive,
   itemShopPrice,
   shopEntryPrice,
+  currentSpeciesID,
 } from './model.js'
 import type { RNG } from './growth.js'
+import { progressOf } from './registry.js'
 import { spendableBalance } from './ledger.js'
 
 // MARK: - Inventory
@@ -172,19 +174,37 @@ export function buyEgg(state: CompanionState, tier: Rarity | undefined): Compani
 export type CandyUseResult = 'evolved' | 'graduated' | 'progressed' | 'unavailable'
 
 /**
- * Rare Candy needs the evolution line loaded. Without it (just after restart, or offline) the
- * XP would accrue without ever evolving, which reads as the candy having done nothing.
+ * Whether the species on stage can still take a candy: `RareCandy.maxPerSpecies` each, counted
+ * on the form itself, so evolving into the next form renews the allowance.
  */
-export function canUseRareCandy(state: CompanionState, lineLoaded: boolean): boolean {
-  return state.active !== undefined && lineLoaded && itemCount(state, 'rareCandy') > 0
+export function candyRoomLeft(state: CompanionState): boolean {
+  if (state.active === undefined) return false
+  return progressOf(state, currentSpeciesID(state.active)).candiesUsed < RareCandy.maxPerSpecies
 }
 
-/** Consumes one candy. The caller then applies `RareCandy.xp` through the growth path. */
+/**
+ * Rare Candy needs the evolution line loaded. Without it (just after restart, or offline) the
+ * XP would accrue without ever evolving, which reads as the candy having done nothing. And the
+ * species on stage must have room left under its cap.
+ */
+export function canUseRareCandy(state: CompanionState, lineLoaded: boolean): boolean {
+  return lineLoaded && itemCount(state, 'rareCandy') > 0 && candyRoomLeft(state)
+}
+
+/**
+ * Consumes one candy and counts it against the species on stage. The caller then applies
+ * `rareCandyXP` through the growth path.
+ */
 export function consumeRareCandy(state: CompanionState): CompanionState | undefined {
-  if (state.active === undefined || itemCount(state, 'rareCandy') <= 0) return undefined
+  if (state.active === undefined || itemCount(state, 'rareCandy') <= 0 || !candyRoomLeft(state))
+    return undefined
+  const speciesID = currentSpeciesID(state.active)
+  // Only the count moves; whether the species is unlocked is the growth path's business.
+  const progress = progressOf(state, speciesID)
   return {
     ...state,
     inventory: { ...state.inventory, rareCandy: itemCount(state, 'rareCandy') - 1 },
+    species: { ...state.species, [speciesID]: { ...progress, candiesUsed: progress.candiesUsed + 1 } },
   }
 }
 

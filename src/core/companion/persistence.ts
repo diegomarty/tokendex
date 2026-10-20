@@ -24,8 +24,11 @@ import {
   type WildEncounter,
   type WildFind,
   freshCompanionState,
+  freshSpeciesProgress,
   pokemonTypes,
+  type SpeciesProgress,
 } from './model.js'
+import { seedRegistry } from './registry.js'
 import {
   EncounterBalance,
   LegendaryBalance,
@@ -277,6 +280,51 @@ function decodeAccrualDays(value: unknown): string[] {
   return unique.slice(-StreakBalance.windowDays)
 }
 
+const isShare = (v: unknown): v is number => isNumber(v) && v >= 0 && v <= 1
+
+/** One species' entry, or nothing: a malformed entry is dropped, never defaulted upward. */
+export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefined {
+  if (!isObject(value)) return undefined
+  const fresh = freshSpeciesProgress()
+  const progress: SpeciesProgress = {
+    xp: Math.max(0, lenient(value, 'xp', isInt, 0)),
+    unlocked: lenient(value, 'unlocked', isBool, false),
+    seen: lenient(value, 'seen', isBool, false),
+    registered: lenient(value, 'registered', isBool, false),
+    caught: Math.max(0, lenient(value, 'caught', isInt, 0)),
+    candiesUsed: Math.max(0, lenient(value, 'candiesUsed', isInt, 0)),
+  }
+  const threshold = lenientOptional(value, 'threshold', isInt)
+  if (threshold !== undefined && threshold > 0) progress.threshold = threshold
+  const lineRarity = lenientOptional(value, 'lineRarity', isRarity)
+  if (lineRarity !== undefined) progress.lineRarity = lineRarity
+  const pendingShare = lenientOptional(value, 'pendingShare', isShare)
+  if (pendingShare !== undefined && pendingShare > 0) progress.pendingShare = pendingShare
+  const shinyXP = lenientOptional(value, 'shinyXP', isInt)
+  if (shinyXP !== undefined && shinyXP > 0) progress.shinyXP = shinyXP
+  if (value['shinyUnlocked'] === true) progress.shinyUnlocked = true
+  if (value['shinyRegistered'] === true) progress.shinyRegistered = true
+  // An entry that says nothing is dropped: it would only make the map grow.
+  const empty = Object.entries(progress).every(([key, v]) => v === fresh[key as keyof SpeciesProgress])
+  return empty ? undefined : progress
+}
+
+/**
+ * Entry by entry, so one bad species never takes the map with it — which is why this does not
+ * go through `isNumberRecord`-style validation of the whole object.
+ */
+export function decodeSpeciesMap(value: unknown): Record<number, SpeciesProgress> {
+  const out: Record<number, SpeciesProgress> = {}
+  if (!isObject(value)) return out
+  for (const [key, raw] of Object.entries(value)) {
+    const id = Number(key)
+    if (!Number.isInteger(id) || id <= 0) continue
+    const progress = decodeSpeciesProgress(raw)
+    if (progress !== undefined) out[id] = progress
+  }
+  return out
+}
+
 /**
  * Decodes the whole state. Throws only when the payload is not a JSON object at all — the
  * caller backs that file up and starts fresh.
@@ -293,6 +341,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     installBaselineSet: lenient(value, 'installBaselineSet', isBool, false),
     usedSinceInstall: lenient(value, 'usedSinceInstall', isInt, 0),
     spentTokens: lenient(value, 'spentTokens', isInt, 0),
+    earnedTokens: Math.max(0, lenient(value, 'earnedTokens', isInt, 0)),
     eggUsage: lenient(value, 'eggUsage', isInt, 0),
     lastDate: lenient(value, 'lastDate', isString, ''),
     // Per-item isolation: one corrupt entry must not take the whole Pokédex with it.
@@ -338,6 +387,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
       .slice(-TrailBalance.maxEntries),
     // Absent means armed: a save from before the notice existed may announce its next fill.
     queueFullArmed: lenient(value, 'queueFullArmed', isBool, true),
+    species: decodeSpeciesMap(value['species']),
   }
   state.finds = state.finds.slice(0, Math.max(0, EncounterBalance.maxQueue - state.wild.length))
 
@@ -390,7 +440,13 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     )
   }
 
-  return state
+  // The registry is seeded from what the save already shows — flags and zeros only — but
+  // **only when the key is absent**: a save that carries the key, even empty, has been seeded
+  // once. Same rule as `milestonesAwarded` and for the same reason: "absent" is the one thing
+  // that must not read as "none" — and a key that is present but unusable (`null`, a string) is
+  // absent for this purpose. Last, after the active Pokémon is in place, because the seed also
+  // resets its stage progress.
+  return isObject(value['species']) ? state : seedRegistry(state)
 }
 
 /** Parses raw JSON text, returning `undefined` when it is unusable. */

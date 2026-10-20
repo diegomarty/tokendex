@@ -320,3 +320,93 @@ describe('mergeSaves and owed legendaries', () => {
     expect(merged.state.owedLegendaryEncounters).toBe(1)
   })
 })
+
+describe('the registry', () => {
+  const progress = (over: Partial<CompanionState['species'][number]> = {}) => ({
+    xp: 0,
+    unlocked: true,
+    seen: false,
+    registered: false,
+    caught: 0,
+    candiesUsed: 0,
+    ...over,
+  })
+
+  // [trigger branch] A species the losing side registered must stay registered: the states are
+  // flags, and "Collections are never lost" is the merge's first promise.
+  it('never un-registers a species the losing side registered', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 5, threshold: 100 }) } },
+      { species: { 4: progress({ xp: 100, threshold: 100, registered: true }) } },
+    )
+    const here = mergeSaves(local, remote)
+    expect(here.narrative).toBeDefined()
+    expect(here.state.species[4]?.registered).toBe(true)
+    expect(mergeSaves(remote, local).state.species[4]?.registered).toBe(true)
+  })
+
+  it('takes the experience from the winner and the counters by maximum', () => {
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      species: { 4: progress({ xp: 5, caught: 1, candiesUsed: 2 }) },
+    })
+    const remote = save({
+      revision: { [A]: 2, [B]: 7 },
+      species: { 4: progress({ xp: 50, caught: 3, candiesUsed: 1 }) },
+    })
+    const result = mergeSaves(local, remote)
+    expect(result.outcome).toBe('keptLocal')
+    expect(result.state.species[4]).toMatchObject({ xp: 5, caught: 3, candiesUsed: 2 })
+  })
+
+  it('unlocks at zero a species only the losing side had, and keeps a threshold either side knew', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 5 }) } },
+      { species: { 4: progress({ threshold: 100 }), 7: progress({ xp: 999, seen: true }) } },
+    )
+    const result = mergeSaves(local, remote)
+    const winner = result.narrative === 'local' ? local : remote
+    expect(result.state.species[4]?.threshold).toBe(100)
+    const seven = result.state.species[7]!
+    expect(seven.unlocked).toBe(true)
+    expect(seven.seen).toBe(true)
+    expect(seven.xp).toBe(winner.species[7]?.xp ?? 0)
+  })
+
+  it('keeps the winner’s payouts, as it keeps its spend', () => {
+    const local = save({ revision: { [A]: 4, [B]: 7 }, earnedTokens: 30 })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, earnedTokens: 999 })
+    expect(mergeSaves(local, remote).state.earnedTokens).toBe(30)
+  })
+})
+
+describe('the registry and the merge credit', () => {
+  // [trigger branch] The credit for unseen tokens moves the companion's bar; building the merged
+  // registry from the pre-credit map threw that away and the meter and the bar diverged.
+  it('keeps the experience the merge just credited', () => {
+    const active = {
+      baseID: 4,
+      pathIDs: [4],
+      plannedPathIDs: [4, 5],
+      stageIndex: 0,
+      usedAtStage: 10,
+      rarity: 'common' as const,
+      totalForms: 2,
+      isShiny: false,
+      dittoRevealed: false,
+    }
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      usedByDevice: { [A]: 100 },
+      active,
+      species: {
+        4: { xp: 10, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+      },
+    })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, usedByDevice: { [B]: 50 } })
+    const result = mergeSaves(local, remote)
+    expect(result.creditedTokens).toBe(50)
+    expect(result.state.active?.usedAtStage).toBe(60)
+    expect(result.state.species[4]?.xp).toBe(60)
+  })
+})

@@ -7,7 +7,8 @@
  * reachable from a test.
  */
 
-import type { CompanionState } from './model.js'
+import { type CompanionState, currentSpeciesID } from './model.js'
+import { creditSpeciesXP } from './registry.js'
 import { MilestoneBalance, StreakBalance, grantLegendaryEncounter } from './encounters.js'
 
 export interface LedgerObservation {
@@ -311,13 +312,19 @@ export function creditDelta(state: CompanionState, delta: number): CompanionStat
   const next: CompanionState = { ...state, usedSinceInstall: state.usedSinceInstall + delta }
   if (next.active === undefined) {
     next.eggUsage = next.eggUsage + delta
-  } else {
-    next.active = { ...next.active, usedAtStage: next.active.usedAtStage + delta }
+    return next
   }
-  return next
+  next.active = { ...next.active, usedAtStage: next.active.usedAtStage + delta }
+  // The registry mirrors the meter here, in the one place that knows the delta went to the
+  // companion: raw, settled against the line by the next `grow`. A caller that credited the meter
+  // and forgot the bar would make the two tell different stories.
+  return creditSpeciesXP(next, currentSpeciesID(next.active), delta)
 }
 
-/** Spendable currency: what has been used, minus what has been spent in the shop. */
+/**
+ * Spendable currency: what has been used, plus what has been earned, minus what has been spent.
+ * The one definition of the wallet — the shop, the trail and an attack all read it from here.
+ */
 export function spendableBalance(state: CompanionState): number {
-  return Math.max(0, state.usedSinceInstall - state.spentTokens)
+  return Math.max(0, state.usedSinceInstall + state.earnedTokens - state.spentTokens)
 }

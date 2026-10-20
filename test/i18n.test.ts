@@ -5,6 +5,7 @@ import {
   BERRY_KINDS,
   ITEM_KINDS,
   RARITIES,
+  RareCandy,
 } from '../src/core/companion/model.js'
 import { f, s } from '../src/core/i18n/strings.js'
 import * as d from '../src/core/i18n/dispatch.js'
@@ -84,9 +85,16 @@ describe('switch-dispatched entries', () => {
     }
   })
 
-  it('derives the candy description from the balance constant', () => {
-    // Hard-coding the number here would let the copy drift from the actual XP granted.
-    expect(d.itemDescription('en', 'rareCandy')).toContain('100M')
+  // The candy is a share of the stage with a cap per species, not a fixed figure; both numbers
+  // come from the constants, so the copy cannot drift from what a candy actually does.
+  it.each(APP_LANGUAGES)('derives the candy description from the balance constants in %s', (lang) => {
+    const text = d.itemDescription(lang, 'rareCandy')
+    expect(text).toContain(`${Math.round(RareCandy.stageShare * 100)}%`)
+    expect(text).toContain(String(RareCandy.maxPerSpecies))
+  })
+
+  it.each(APP_LANGUAGES)('says when the species on stage has had its candies in %s', (lang) => {
+    expect(d.candyFullHint(lang)).toContain(String(RareCandy.maxPerSpecies))
   })
 
   it.each(APP_LANGUAGES)('names every egg tier in %s', (lang) => {

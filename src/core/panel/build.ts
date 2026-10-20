@@ -55,6 +55,7 @@ import {
   canBuyItem,
   canUseMint,
   canUseRareCandy,
+  candyRoomLeft,
   itemCount,
   ownedItems,
 } from '../companion/shop.js'
@@ -301,6 +302,9 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     }
     if (!usable && itemIsPassive(item.kind)) entry.hint = str(lang, 'shinyCharmEffectHint')
     if (isBerryKind(item.kind)) entry.hint = D.berryBagHint(lang)
+    // Candies in hand that the species on stage can no longer take: say why Use is greyed out.
+    if (item.kind === 'rareCandy' && state.active !== undefined && !candyRoomLeft(state))
+      entry.hint = D.candyFullHint(lang)
     return entry
   })
 

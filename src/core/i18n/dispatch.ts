@@ -188,17 +188,30 @@ export function ballCatchLabel(lang: AppLanguage, kind: BallKind): string | unde
   return itemDescription(lang, kind)
 }
 
+/** The bag's hint when the species on stage has had all the candies it will take. */
+export function candyFullHint(lang: AppLanguage): string {
+  const max = RareCandy.maxPerSpecies
+  return t(
+    lang,
+    `이 종은 이미 사탕을 ${max}개 먹었어요. 다음 모습은 다시 먹을 수 있어요.`,
+    `This species has had its ${max} candies; its next form can take more.`,
+    `この種はもうアメを${max}個食べました。次の姿ならまた食べられます。`,
+    `Esta especie ya tomó sus ${max} caramelos; su siguiente forma podrá tomar más.`,
+  )
+}
+
 export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
   switch (kind) {
     case 'rareCandy': {
-      // Derived from the constant so the copy cannot drift from the balance value.
-      const xp = compact(RareCandy.xp)
+      // Derived from the constants so the copy cannot drift from what a candy actually does.
+      const share = Math.round(RareCandy.stageShare * 100)
+      const max = RareCandy.maxPerSpecies
       return t(
         lang,
-        `현재 포켓몬의 경험치를 ${xp} 올려줘요.`,
-        `Raises your Pokémon's EXP by ${xp}.`,
-        `ポケモンの経験値を${xp}上げます。`,
-        `Aumenta la experiencia de tu Pokémon en ${xp}.`,
+        `현재 단계 경험치의 ${share}%만큼 올려줘요. 종마다 최대 ${max}개.`,
+        `Raises your Pokémon's EXP by ${share}% of its current stage. At most ${max} per species.`,
+        `いまの段階の経験値を${share}%ぶん上げます。1種につき${max}個まで。`,
+        `Aumenta la experiencia de tu Pokémon un ${share}% de su etapa actual. Máximo ${max} por especie.`,
       )
     }
     case 'mint':

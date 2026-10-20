@@ -20,6 +20,7 @@ import {
   freshCompanionState,
   type CompanionState,
   type MonState,
+  RareCandy,
 } from '../src/core/companion/model.js'
 import { decodeCompanionState } from '../src/core/companion/persistence.js'
 import { EncounterBalance } from '../src/core/companion/encounters.js'
@@ -334,5 +335,35 @@ describe('expiredBackups', () => {
   it('never touches a file that is not one of our backups', () => {
     const names = ['companion-state.json', 'usage-cache.json.gz', 'base-index.json', 'dev-state.json']
     expect(expiredBackups([...names, ...stamps.map(backup)], 0)).toEqual(stamps.map(backup))
+  })
+})
+
+describe('the registry in sanitized', () => {
+  it('clamps every counter and keeps the candy count at its cap', () => {
+    const s = sanitized(
+      state({
+        earnedTokens: -5,
+        species: {
+          4: {
+            xp: -1,
+            unlocked: true,
+            seen: false,
+            registered: false,
+            caught: -2,
+            candiesUsed: 99,
+            pendingShare: 7,
+            threshold: 0,
+          },
+        },
+      }),
+    )
+    expect(s.earnedTokens).toBe(0)
+    expect(s.species[4]).toMatchObject({
+      xp: 0,
+      caught: 0,
+      candiesUsed: RareCandy.maxPerSpecies,
+      pendingShare: 1,
+      threshold: 1,
+    })
   })
 })

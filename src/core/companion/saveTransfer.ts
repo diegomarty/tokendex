@@ -11,7 +11,7 @@
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
+import { type CompanionState, RareCandy, captureRateCeiling, freshCompanionState } from './model.js'
 import {
   EncounterBalance,
   LegendaryBalance,
@@ -353,6 +353,20 @@ export function sanitized(state: CompanionState): CompanionState {
     active.stageIndex = Math.min(Math.max(0, active.stageIndex), Math.max(0, active.pathIDs.length - 1))
     next.active = active
   }
+
+  // The registry: integers clamped like every other counter, shares kept to 0..1, and the
+  // candy count to its cap — an imported `candiesUsed: -1e9` would otherwise be a candy faucet.
+  next.earnedTokens = clamp(state.earnedTokens ?? 0)
+  next.species = Object.fromEntries(
+    Object.entries(state.species ?? {}).map(([id, p]) => {
+      const clean = { ...p, xp: clamp(p.xp), caught: Math.min(clamp(p.caught), 1_000_000) }
+      clean.candiesUsed = Math.min(Math.max(0, p.candiesUsed), RareCandy.maxPerSpecies)
+      if (p.threshold !== undefined) clean.threshold = Math.max(1, clamp(p.threshold))
+      if (p.pendingShare !== undefined) clean.pendingShare = Math.min(1, Math.max(0, p.pendingShare))
+      if (p.shinyXP !== undefined) clean.shinyXP = clamp(p.shinyXP)
+      return [id, clean]
+    }),
+  )
   return next
 }
 

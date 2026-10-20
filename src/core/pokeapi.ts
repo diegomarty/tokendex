@@ -481,7 +481,7 @@ export type RNG = () => number
 export function chooseBaseFromIndex(
   index: BaseSpecies[],
   tier: Rarity | undefined,
-  collectedFinals: ReadonlySet<string>,
+  unlocked: ReadonlySet<number>,
   rng: RNG,
 ): number | undefined {
   const pool =
@@ -491,7 +491,7 @@ export function chooseBaseFromIndex(
   if (pool.length === 0) return undefined
 
   const weights = pool.map((e) => {
-    const seen = [...collectedFinals].some((k) => k.startsWith(`${e.id}:`))
+    const seen = unlocked.has(e.id)
     return Math.max(1, seen ? Math.floor(e.captureRate / 2) : e.captureRate)
   })
   const total = weights.reduce((a, b) => a + b, 0)

@@ -12,9 +12,11 @@ import {
   type MonState,
   PokemonBalance,
   PokemonOdds,
+  type SpeciesProgress,
   currentSpeciesID,
   evoFinalIDs,
   evoNodeWithID,
+  freshSpeciesProgress,
 } from './model.js'
 
 /** Injectable randomness. Returns a non-negative integer. */
@@ -36,35 +38,25 @@ export interface GrowthResult {
   /** Set when the line graduated: the caller records it in the Pokédex and starts a new egg. */
   graduated: boolean
   notes: string[]
+  /** The registry after this delta: the current species filled, evolved-from species registered. */
+  species: Record<number, SpeciesProgress>
 }
 
 /**
- * Prefers a branch leading to a final form not yet collected, so repeat lines diversify.
+ * Prefers a branch leading to a final form not yet unlocked, so repeat lines diversify.
  * Falls back to the whole set once everything downstream is already owned.
  */
-export function pickPlannedChild(
-  node: EvoNode,
-  baseID: number,
-  collectedFinals: ReadonlySet<string>,
-  rng: RNG,
-): EvoNode {
-  const fresh = node.children.filter((child) =>
-    evoFinalIDs(child).some((id) => !collectedFinals.has(`${baseID}:${id}`)),
-  )
+export function pickPlannedChild(node: EvoNode, unlocked: ReadonlySet<number>, rng: RNG): EvoNode {
+  const fresh = node.children.filter((child) => evoFinalIDs(child).some((id) => !unlocked.has(id)))
   const pool = fresh.length > 0 ? fresh : node.children
   return pool[rng() % pool.length]!
 }
 
-export function makeEvolutionPlan(
-  root: EvoNode,
-  baseID: number,
-  collectedFinals: ReadonlySet<string>,
-  rng: RNG,
-): number[] {
+export function makeEvolutionPlan(root: EvoNode, unlocked: ReadonlySet<number>, rng: RNG): number[] {
   const plan = [root.speciesID]
   let node = root
   while (node.children.length > 0) {
-    const next = pickPlannedChild(node, baseID, collectedFinals, rng)
+    const next = pickPlannedChild(node, unlocked, rng)
     plan.push(next.speciesID)
     node = next
   }
@@ -109,7 +101,7 @@ export function longestValidPath(ids: number[], root: EvoNode): { path: number[]
 export function normalizedEvolutionState(
   saved: MonState,
   root: EvoNode,
-  collectedFinals: ReadonlySet<string>,
+  unlocked: ReadonlySet<number>,
   rng: RNG,
 ): MonState {
   const realized = longestValidPath(saved.pathIDs, root)
@@ -124,10 +116,7 @@ export function normalizedEvolutionState(
 
   const plan = canReusePlan
     ? candidate.path
-    : [
-        ...realized.path,
-        ...makeEvolutionPlan(realized.lastNode, saved.baseID, collectedFinals, rng).slice(1),
-      ]
+    : [...realized.path, ...makeEvolutionPlan(realized.lastNode, unlocked, rng).slice(1)]
 
   return {
     ...saved,
@@ -182,14 +171,45 @@ export function applyUsage(
   mon: MonState,
   delta: number,
   line: EvoLine | undefined,
-  collectedFinals: ReadonlySet<string>,
+  unlocked: ReadonlySet<number>,
   rng: RNG,
+  speciesIn: Record<number, SpeciesProgress> = {},
 ): GrowthResult {
   let current: MonState = { ...mon, usedAtStage: mon.usedAtStage + delta }
   const events: GrowthEvent[] = []
   const notes: string[] = []
 
-  if (line === undefined) return { mon: current, events, graduated: false, notes }
+  // The registry mirrors the meter: the same delta fills the current species' bar, raw. Only
+  // once the line is known does the bar get its threshold (below), and an evolution settles the
+  // split — the species evolved from is capped at its threshold and registered, the overflow
+  // goes to the species evolved into. Both numbers are therefore always one story.
+  // Copied on first write only: the fold settles with a zero delta on every refresh, and a
+  // registry of hundreds of species must not be spread for nothing.
+  let species = speciesIn
+  const entry = (id: number): SpeciesProgress => species[id] ?? freshSpeciesProgress()
+  const put = (id: number, next: SpeciesProgress): void => {
+    if (species === speciesIn) species = { ...speciesIn }
+    species[id] = next
+  }
+  const credit = (id: number, amount: number): void => {
+    if (amount <= 0 && entry(id).unlocked) return
+    const p = entry(id)
+    put(id, { ...p, xp: p.xp + Math.max(0, amount), unlocked: true })
+  }
+  const fix = (id: number, of: MonState): void => {
+    const p = entry(id)
+    const threshold = PokemonBalance.phaseThreshold(of.rarity, of.totalForms, of.stageIndex)
+    if (p.unlocked && p.threshold === threshold && p.lineRarity === of.rarity) return
+    put(id, { ...p, unlocked: true, threshold, lineRarity: of.rarity })
+  }
+  const register = (id: number, threshold: number, overflow: number): void => {
+    const p = entry(id)
+    put(id, { ...p, xp: Math.max(threshold, p.xp - overflow), registered: true, unlocked: true })
+  }
+  credit(currentSpeciesID(mon), delta)
+
+  if (line === undefined) return { mon: current, events, graduated: false, notes, species }
+  fix(currentSpeciesID(current), current)
 
   for (let steps = 0; steps < MAX_EVOLUTION_STEPS; steps++) {
     const threshold = PokemonBalance.phaseThreshold(
@@ -206,7 +226,15 @@ export function applyUsage(
     // would stall it here for ever.
     if (current.dittoDisguise !== undefined && !current.dittoRevealed) {
       const disguisedAsSpeciesID = currentSpeciesID(current)
+      // What *this life* earned was Ditto's all along: exactly `usedAtStage` of it, which is
+      // what the meter accrued since the hatch. It moves to Ditto; whatever the disguise species
+      // had from a real life of its own stays where it was.
+      const moved = Math.min(entry(disguisedAsSpeciesID).xp, current.usedAtStage)
+      const prior = entry(disguisedAsSpeciesID)
+      put(disguisedAsSpeciesID, { ...prior, xp: prior.xp - moved })
       current = revealedDitto(current)
+      credit(PokemonOdds.dittoSpeciesID, moved)
+      fix(PokemonOdds.dittoSpeciesID, current)
       events.push({ kind: 'dittoRevealed', disguisedAsSpeciesID })
       // One reveal per pass: `line` still describes the disguise, so there is nothing here
       // that could legitimately evolve or graduate a Ditto. Growth resumes once the caller
@@ -218,8 +246,9 @@ export function applyUsage(
     if (node === undefined) break
 
     if (node.children.length === 0) {
+      register(currentSpeciesID(current), threshold, current.usedAtStage - threshold)
       events.push({ kind: 'graduated' })
-      return { mon: current, events, graduated: true, notes }
+      return { mon: current, events, graduated: true, notes, species }
     }
 
     const nextIndex = current.stageIndex + 1
@@ -231,27 +260,28 @@ export function applyUsage(
     if (planned !== undefined) {
       next = planned
     } else {
-      next = pickPlannedChild(node, current.baseID, collectedFinals, rng)
-      const fallbackRoute = [
-        node.speciesID,
-        ...makeEvolutionPlan(next, current.baseID, collectedFinals, rng),
-      ]
+      next = pickPlannedChild(node, unlocked, rng)
+      const fallbackRoute = [node.speciesID, ...makeEvolutionPlan(next, unlocked, rng)]
       const repaired = repairedPlan(current.pathIDs, current.stageIndex, fallbackRoute)
       current = { ...current, plannedPathIDs: repaired, totalForms: repaired.length }
       notes.push(`evolve: repaired invalid planned path for base ${current.baseID}`)
     }
 
+    const overflow = current.usedAtStage - threshold
+    register(currentSpeciesID(current), threshold, overflow)
     current = {
       ...current,
       pathIDs: [...current.pathIDs.slice(0, current.stageIndex + 1), next.speciesID],
       stageIndex: current.stageIndex + 1,
       // Overflow carries into the new form rather than being discarded.
-      usedAtStage: current.usedAtStage - threshold,
+      usedAtStage: overflow,
     }
+    credit(next.speciesID, overflow)
+    fix(next.speciesID, current)
     events.push({ kind: 'evolved', toSpeciesID: next.speciesID })
   }
 
-  return { mon: current, events, graduated: false, notes }
+  return { mon: current, events, graduated: false, notes, species }
 }
 
 /** Tokens still needed to reach the next threshold. */

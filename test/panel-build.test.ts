@@ -3,13 +3,17 @@ import { REFRESH_PRESETS, buildPanelState } from '../src/core/panel/build.js'
 import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
+  RareCandy,
   freshCompanionState,
+  makeEvoLine,
   shopEntryPrice,
   type CompanionState,
   type MonState,
   type WildEncounter,
 } from '../src/core/companion/model.js'
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
+import { candyFullHint } from '../src/core/i18n/dispatch.js'
+import { progressOf } from '../src/core/companion/registry.js'
 import {
   StreakBalance,
   attackPermille,
@@ -226,6 +230,31 @@ describe('the bag', () => {
     expect(pocketOf('item:rareCandy')).toBe('items')
     expect(pocketOf('item:mint')).toBe('items')
   })
+
+  // [trigger branch] Candies in hand, the line loaded, and still unusable: the species on stage
+  // has had its share. Without the hint the greyed-out Use button reads as a bug.
+  it('explains a candy the species on stage can no longer take', () => {
+    const candy = (candiesUsed: number) =>
+      build({
+        state: state({
+          active: activeMon,
+          inventory: { rareCandy: 1 },
+          species: { 25: { ...progressOf(state(), 25), unlocked: true, candiesUsed } },
+        }),
+        line: makeEvoLine(
+          25,
+          { speciesID: 25, children: [{ speciesID: 26, children: [] }] },
+          'common',
+          {},
+        ),
+      }).bag.find((item) => item.id === 'item:rareCandy')!
+    const full = candy(RareCandy.maxPerSpecies)
+    expect(full.usable).toBe(false)
+    expect(full.hint).toBe(candyFullHint('en'))
+    const room = candy(RareCandy.maxPerSpecies - 1)
+    expect(room.usable).toBe(true)
+    expect(room.hint).toBeUndefined()
+  })
 })
 
 describe('wild rows', () => {
@@ -337,7 +366,7 @@ describe('the shop', () => {
     expect(rowFor('item:masterBall')!.stat).toBeUndefined()
     expect(rowFor('item:masterBall')!.description).toContain('legendary')
     // Items were never the problem: their descriptions are the whole reason to buy them.
-    expect(rowFor('item:rareCandy')!.description).toContain('100M')
+    expect(rowFor('item:rareCandy')!.description).toContain(`${Math.round(RareCandy.stageShare * 100)}%`)
     expect(rowFor('item:mint')!.description?.trim()).toBeTruthy()
   })
 

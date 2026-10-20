@@ -308,6 +308,25 @@ bug.
       additional scan folders, Copilot included), #238 (Kiro 2.20 JSONL) and #289 (estimated vs
       unavailable cost). None is needed for issue #2; all three are unported.
 
+### Species registry (phase 1 of `docs/plans/00-master.md`)
+
+`CompanionState.species` holds one `SpeciesProgress` per species (`registry.ts`). Three rules that
+are easy to break later:
+
+- **The threshold is lazy.** `registerXP` needs the evolution line, so `threshold`/`lineRarity`
+  are fixed the first time the species gains xp with its line loaded; before that xp accrues raw,
+  `registrationPercent` clamps, and nothing is marked registered. `applyUsage` settles an
+  evolution by capping the species evolved from at its threshold (`registered`) and crediting the
+  overflow to the species evolved into — the meter and the registry never tell two stories.
+- **The states are flags**, never derived from xp, and the merge unions them. The xp itself comes
+  from the winner: the merge already credits the loser's unseen tokens through `creditDelta` +
+  `creditSpeciesXP`, so a per-key max would count them twice.
+- **The seed runs last and only when the key is absent.** `seedRegistry` unlocks at 0% every
+  species a save already shows and resets `usedAtStage`; it must run after `active` is decoded
+  (it did not, once, and the real save graduated on the first fold).
+
+The wallet is `usedSinceInstall + earnedTokens − spentTokens`, defined once in `spendableBalance`.
+
 ### Wild encounter overhaul — open items
 
 Mood (anger, nerves, trust), temperaments from base stats and nature, berries, attacks that

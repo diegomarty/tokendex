@@ -41,6 +41,8 @@ import {
   sortRank,
 } from './model.js'
 import type { RNG } from './growth.js'
+import { spendableBalance } from './ledger.js'
+import { progressOf, unlockSpecies } from './registry.js'
 
 // MARK: - Balance
 
@@ -583,7 +585,7 @@ export const StealBalance = {
 /** Tokens an attack by this encounter would take right now. */
 export function stealAmount(state: CompanionState, encounter: WildEncounter): number {
   const amount = StealBalance.amount[encounter.rarity]
-  const wallet = Math.max(0, state.usedSinceInstall - state.spentTokens)
+  const wallet = spendableBalance(state)
   const left = amount * StealBalance.perEncounter - (encounter.stolen ?? 0)
   return Math.max(0, Math.min(amount, wallet, left))
 }
@@ -657,7 +659,7 @@ export function trackLegendary(
   if (trailIsCold(entry, now)) return { state, outcome: 'expired' }
   if (queuedCount(state) >= EncounterBalance.maxQueue) return { state, outcome: 'noRoom' }
   const price = trailPrice(entry)
-  if (state.usedSinceInstall - state.spentTokens < price) return { state, outcome: 'cantAfford' }
+  if (spendableBalance(state) < price) return { state, outcome: 'cantAfford' }
 
   const trackedCount = entry.trackedCount + 1
   const encounter: WildEncounter = {
@@ -823,6 +825,13 @@ export interface TurnResult {
   outcome: TurnOutcome
 }
 
+/** A catch obtains the species and counts: the registry's `unlocked` and `caught`. */
+function caughtSpecies(state: CompanionState, speciesID: number): CompanionState {
+  const unlocked = unlockSpecies(state, speciesID)
+  const p = progressOf(unlocked, speciesID)
+  return { ...unlocked, species: { ...unlocked.species, [speciesID]: { ...p, caught: p.caught + 1 } } }
+}
+
 /** The Pokédex entry a wild catch files: one species, not a raised line. See rule 2 in the header. */
 function wildDexEntry(encounter: WildEncounter, now: number): DexEntry {
   const entry: DexEntry = {
@@ -924,12 +933,15 @@ export function takeTurn(
     if (roll.caught) {
       const refunded = Math.min(encounter.stolen ?? 0, spent.spentTokens)
       return {
-        state: {
-          ...spent,
-          spentTokens: spent.spentTokens - refunded,
-          wild: spent.wild.filter((_, i) => i !== index),
-          dex: [...spent.dex, wildDexEntry(encounter, now)],
-        },
+        state: caughtSpecies(
+          {
+            ...spent,
+            spentTokens: spent.spentTokens - refunded,
+            wild: spent.wild.filter((_, i) => i !== index),
+            dex: [...spent.dex, wildDexEntry(encounter, now)],
+          },
+          encounter.speciesID,
+        ),
         outcome: { kind: 'caught', shakes: roll.shakes, refunded },
       }
     }

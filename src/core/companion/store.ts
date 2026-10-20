@@ -103,6 +103,7 @@ import { decodeCompanionState, encodeCompanionState } from './persistence.js'
 import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
 import { deviceIdentity } from './device.js'
 import { withRevision } from './merge.js'
+import { creditSpeciesXP, markSeen, rareCandyXP, unlockSpecies, unlockedSpecies } from './registry.js'
 
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
@@ -525,7 +526,7 @@ export class CompanionStore {
   /** Injects one Rare Candy's XP through the ordinary growth path (carry, evolve, graduate). */
   private applyCandy(): void {
     if (this.state.active === undefined || this.line === undefined) return
-    this.grow(RareCandy.xp)
+    this.grow(rareCandyXP(this.state.active))
   }
 
   // MARK: - Update
@@ -737,6 +738,7 @@ export class CompanionStore {
         owedLegendaryEncounters: this.state.owedLegendaryEncounters - 1,
         wild: enqueueEncounter(this.state.wild, reward),
       }
+      this.state = markSeen(this.state, reward.speciesID)
       this.noteEncounterAppeared(reward)
       room -= 1
     }
@@ -751,6 +753,7 @@ export class CompanionStore {
         this.state = { ...this.state, ...paid, finds: [...this.state.finds, spawn.find] }
       } else {
         this.state = { ...this.state, ...paid, wild: enqueueEncounter(this.state.wild, spawn.encounter) }
+        this.state = markSeen(this.state, spawn.encounter.speciesID)
         this.noteEncounterAppeared(spawn.encounter)
       }
       room -= 1
@@ -795,11 +798,11 @@ export class CompanionStore {
     // halve-if-seen bias is fed a *local* set instead: the real collection, plus every species
     // already caught wild, plus everything already waiting in the queue — computed per roll and
     // never persisted, so the evolution rules cannot see it.
-    const seen = new Set(this.state.collectedFinals)
+    const seen = unlockedSpecies(this.state)
     for (const entry of this.state.dex) {
-      if (entry.source === 'wild') seen.add(`${entry.finalID}:${entry.finalID}`)
+      if (entry.source === 'wild') seen.add(entry.finalID)
     }
-    for (const queued of this.state.wild) seen.add(`${queued.speciesID}:${queued.speciesID}`)
+    for (const queued of this.state.wild) seen.add(queued.speciesID)
 
     // `tier` is a floor, and the granted-legendary reward is the only caller that passes one.
     // Reusing the ordinary roll rather than a parallel path is what keeps the reward an
@@ -931,8 +934,15 @@ export class CompanionStore {
     const active = this.state.active
     if (active === undefined) return
 
-    const result = applyUsage(active, delta, this.line, new Set(this.state.collectedFinals), this.rng)
-    this.state = { ...this.state, active: result.mon }
+    const result = applyUsage(
+      active,
+      delta,
+      this.line,
+      unlockedSpecies(this.state),
+      this.rng,
+      this.state.species,
+    )
+    this.state = { ...this.state, active: result.mon, species: result.species }
 
     for (const event of result.events) {
       if (event.kind === 'evolved') {
@@ -1088,12 +1098,7 @@ export class CompanionStore {
       // the plan is still complete — otherwise a restart would silently reroll the branch.
       this.state = {
         ...this.state,
-        active: normalizedEvolutionState(
-          current,
-          line.tree,
-          new Set(this.state.collectedFinals),
-          this.rng,
-        ),
+        active: normalizedEvolutionState(current, line.tree, unlockedSpecies(this.state), this.rng),
       }
       // A threshold may already have been passed while the line was unavailable.
       this.grow(0)
@@ -1164,7 +1169,7 @@ export class CompanionStore {
     if (this.state.active !== undefined || !eggReadyToHatch(this.state)) return
 
     const forms = totalForms(line)
-    const plan = makeEvolutionPlan(line.tree, baseID, new Set(this.state.collectedFinals), this.rng)
+    const plan = makeEvolutionPlan(line.tree, unlockedSpecies(this.state), this.rng)
 
     const isShiny = rollShiny(this.state, this.rng)
     // Fixed at hatch, like shininess. The Mint exists precisely to reroll it later, so
@@ -1190,7 +1195,9 @@ export class CompanionStore {
     }
     if (disguised) mon.dittoDisguise = PokemonOdds.dittoSpeciesID
 
-    const next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
+    let next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
+    // The hatchling is obtained, and whatever the egg carried over is its experience already.
+    next = creditSpeciesXP(unlockSpecies(next, baseID), baseID, mon.usedAtStage)
     // The guarantee is consumed here — the single consumption point.
     delete next.eggTier
     delete next.pendingHatchID
@@ -1225,7 +1232,7 @@ export class CompanionStore {
    * for, which is why this is kept distinct from the REST fallback below.
    */
   private pickFromIndex(index: BaseSpecies[]): number | undefined {
-    return chooseBaseFromIndex(index, this.state.eggTier, new Set(this.state.collectedFinals), this.rng)
+    return chooseBaseFromIndex(index, this.state.eggTier, unlockedSpecies(this.state), this.rng)
   }
 
   /** Weighted pick, falling back to REST rejection sampling when the index is unavailable. */

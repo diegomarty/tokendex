@@ -16,6 +16,7 @@ import {
   shopEntries,
   useMint,
 } from '../src/core/companion/shop.js'
+import { progressOf } from '../src/core/companion/registry.js'
 import {
   burnTierFor,
   computeDisplayState,
@@ -252,6 +253,40 @@ describe('using items', () => {
   it('consumes exactly one candy', () => {
     const after = consumeRareCandy(state({ active: mon(), inventory: { rareCandy: 2 } }))!
     expect(itemCount(after, 'rareCandy')).toBe(1)
+  })
+
+  // The cap is per species and counted where the species lives: the form on stage, not the line.
+  it('counts each candy against the species on stage', () => {
+    const active = mon({ baseID: 1, pathIDs: [1, 2, 3], stageIndex: 1, totalForms: 3 })
+    const once = consumeRareCandy(state({ active, inventory: { rareCandy: 3 } }))!
+    expect(once.species[2]?.candiesUsed).toBe(1)
+    expect(once.species[1]?.candiesUsed ?? 0).toBe(0)
+    const twice = consumeRareCandy(once)!
+    expect(twice.species[2]?.candiesUsed).toBe(2)
+  })
+
+  // [trigger branch] One below the cap still takes a candy; at the cap, none — `<`, not `<=`.
+  it('stops at RareCandy.maxPerSpecies for that species', () => {
+    const active = mon({ baseID: 1, pathIDs: [1], stageIndex: 0 })
+    const fed = (candiesUsed: number) =>
+      state({
+        active,
+        inventory: { rareCandy: 5 },
+        species: { 1: { ...progressOf(state(), 1), unlocked: true, candiesUsed } },
+      })
+    expect(canUseRareCandy(fed(RareCandy.maxPerSpecies - 1), true)).toBe(true)
+    expect(canUseRareCandy(fed(RareCandy.maxPerSpecies), true)).toBe(false)
+    expect(consumeRareCandy(fed(RareCandy.maxPerSpecies))).toBeUndefined()
+  })
+
+  // The next form is a new species with its own two: evolving renews the allowance.
+  it('renews the allowance for the next form', () => {
+    const atCap = state({
+      active: mon({ baseID: 1, pathIDs: [1, 2], stageIndex: 1, totalForms: 2 }),
+      inventory: { rareCandy: 1 },
+      species: { 1: { ...progressOf(state(), 1), unlocked: true, candiesUsed: RareCandy.maxPerSpecies } },
+    })
+    expect(canUseRareCandy(atCap, true)).toBe(true)
   })
 
   // Mint touches only the nature, so unlike the candy it works offline and after a restart.

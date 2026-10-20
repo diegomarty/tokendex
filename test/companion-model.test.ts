@@ -103,9 +103,10 @@ describe('balance', () => {
     expect(last).toBeGreaterThan(first)
   })
 
-  it('keeps one candy below the cheapest evolution threshold', () => {
-    // Otherwise a single candy could chain evolutions or force a graduation.
-    expect(RareCandy.xp).toBeLessThan(PokemonBalance.phaseThreshold('common', 1, 0))
+  it('keeps one candy below any stage threshold', () => {
+    // A candy is a share of the stage it is fed to, so it can never chain evolutions or force
+    // a graduation on its own — and two of them (the cap) cover at most half a stage.
+    expect(RareCandy.stageShare * RareCandy.maxPerSpecies).toBeLessThanOrEqual(0.5)
   })
 
   // Pricing eggs by probability ratio would make two uncommon eggs beat one rare egg on every
@@ -120,7 +121,9 @@ describe('balance', () => {
   })
 
   it('prices the shiny charm as a premium permanent upgrade', () => {
-    expect(ShinyCharm.price).toBe(PokemonBalance.graduationTotal('rare'))
+    // Shop prices are wallet tokens and did not move with the registration scale: the charm
+    // still costs more than any line's registration, including a legendary's.
+    expect(ShinyCharm.price).toBeGreaterThan(PokemonBalance.graduationTotal('legendary'))
     expect(ShinyCharm.shinyDenominator).toBeLessThan(64) // strictly better odds than the base
   })
 
@@ -236,6 +239,102 @@ describe('MonState', () => {
 })
 
 describe('CompanionState decoding', () => {
+  // [trigger branch] "absent" is the one value that must not read as "none": a save from before
+  // the registry is seeded from what it shows; a save that carries the key — even empty — has
+  // been seeded once and is honoured verbatim.
+  it('seeds the registry only when the key is absent', () => {
+    const legacy = {
+      dex: [
+        {
+          id: 'w1',
+          baseID: 10,
+          finalID: 10,
+          chainOrder: [10],
+          rarity: 'common',
+          isShiny: false,
+          source: 'wild',
+        },
+      ],
+      collectedFinals: ['1:3'],
+      active: {
+        baseID: 129,
+        pathIDs: [129, 130],
+        stageIndex: 1,
+        usedAtStage: 378_478_170,
+        rarity: 'common',
+        totalForms: 2,
+      },
+    }
+    const seeded = decodeCompanionState(legacy)
+    expect(
+      Object.keys(seeded.species)
+        .map(Number)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 3, 10, 129, 130])
+    expect(seeded.species[10]).toMatchObject({ unlocked: true, xp: 0 })
+    // [trigger branch] The seed runs last: decoded after it, the companion brought its old-scale
+    // progress back (378M against a 33M threshold) and graduated on the first fold. Found on
+    // the real save, not by the suite — hence this line.
+    expect(seeded.active?.usedAtStage).toBe(0)
+    expect(decodeCompanionState({ ...legacy, species: {} }).species).toEqual({})
+  })
+
+  it('reads the registry entry by entry and drops what it cannot read', () => {
+    const state = decodeCompanionState({
+      species: {
+        '4': { xp: 12, unlocked: true, threshold: 8_333_333, lineRarity: 'common', pendingShare: 0.05 },
+        '5': { xp: 1.5, unlocked: 'yes' },
+        '0': { xp: 1, unlocked: true },
+        abc: { xp: 1, unlocked: true },
+        '7': 'nope',
+      },
+    })
+    expect(state.species[4]).toMatchObject({
+      xp: 12,
+      unlocked: true,
+      threshold: 8_333_333,
+      lineRarity: 'common',
+      pendingShare: 0.05,
+    })
+    // A float xp reads as 0 and a non-boolean flag as false — and an entry left with nothing
+    // to say is dropped rather than kept as a blank.
+    expect(state.species[5]).toBeUndefined()
+    expect(state.species[0]).toBeUndefined()
+    expect(state.species[7]).toBeUndefined()
+    expect(Object.keys(state.species)).toHaveLength(1)
+  })
+
+  it('drops an empty entry and keeps one that only owes a share', () => {
+    const state = decodeCompanionState({ species: { 9: {}, 4: { pendingShare: 0.5 } } })
+    expect(state.species[9]).toBeUndefined()
+    expect(state.species[4]).toMatchObject({ pendingShare: 0.5 })
+  })
+
+  // [trigger branch] A key that is present but unusable must count as absent, or a corrupt
+  // `"species": null` would skip the seed and read a full Pokédex as never obtained.
+  it('seeds when the registry key is present but unusable', () => {
+    const legacy = {
+      dex: [
+        {
+          id: 'w1',
+          baseID: 10,
+          finalID: 10,
+          chainOrder: [10],
+          rarity: 'common',
+          isShiny: false,
+          source: 'wild',
+        },
+      ],
+    }
+    expect(decodeCompanionState({ ...legacy, species: null }).species[10]?.unlocked).toBe(true)
+    expect(decodeCompanionState({ ...legacy, species: 'x' }).species[10]?.unlocked).toBe(true)
+  })
+
+  it('never reads a negative payout', () => {
+    expect(decodeCompanionState({ earnedTokens: -5 }).earnedTokens).toBe(0)
+    expect(decodeCompanionState({ earnedTokens: 5 }).earnedTokens).toBe(5)
+  })
+
   it('round-trips', () => {
     const state = decodeCompanionState({
       installBaselineSet: true,

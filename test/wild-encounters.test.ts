@@ -25,6 +25,7 @@ import {
   queueFullEdge,
   rollFind,
   spawnKind,
+  stealAmount,
   takeTurn,
   temperamentFrom,
   trackLegendary,
@@ -113,9 +114,9 @@ describe('accrual', () => {
     expect(owedEncounters(EncounterBalance.threshold * 3, 1)).toBe(3)
   })
 
-  // [trigger branch] Without the ceiling a dev scenario granting 1.5B owes ~600 encounters and
-  // keeps minting them out of one injection; the queue only holds 12, so banking more is
-  // meaningless as well as unbounded.
+  // [trigger branch] Without the ceiling a dev scenario granting 1.5B owes hundreds of encounters
+  // and keeps minting them out of one injection; the queue only holds `EncounterBalance.maxQueue`,
+  // so banking more is meaningless as well as unbounded.
   it('bounds a single absurd delta rather than banking encounters for ever', () => {
     const usage = addEncounterUsage(0, 1_500_000_000)
     expect(owedEncounters(usage, 1)).toBeLessThanOrEqual(EncounterBalance.maxQueue)
@@ -753,6 +754,29 @@ describe('the legendary trail', () => {
       NOW,
     )
 
+  // A catch obtains the species: the registry says so from this moment, as the seed says it for
+  // a catch made before the registry existed. The 5% of registration is phase 3's.
+  it('a catch unlocks the species and counts it', () => {
+    const target = wild()
+    const caught = takeTurn(
+      state({ inventory: { masterBall: 1 }, wild: [target] }),
+      'w1',
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+    expect(caught.outcome.kind).toBe('caught')
+    expect(caught.state.species[target.speciesID]).toMatchObject({ unlocked: true, caught: 1 })
+    const again = takeTurn(
+      { ...caught.state, inventory: { masterBall: 1 }, wild: [wild({ id: 'w2' })] },
+      'w2',
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+    expect(again.state.species[target.speciesID]?.caught).toBe(2)
+  })
+
   it('a legendary that flees leaves tracks; a common does not', () => {
     const gone = flee(legendary())
     expect(gone.outcome).toMatchObject({ kind: 'fled', trailed: true })
@@ -1062,5 +1086,42 @@ describe('runFromEncounter', () => {
   it('is a no-op for an unknown id', () => {
     const before = state({ wild: [wild({ id: 'a' })] })
     expect(runFromEncounter(before, 'nope')).toBe(before)
+  })
+})
+
+// The wallet is `spendableBalance` and nothing else: what was used, plus what was earned, minus
+// what was spent. Two encounter paths once read `usedSinceInstall − spentTokens` inline, which
+// silently ignored `earnedTokens` — a wallet the shop accepted but a trail refused.
+describe('the wallet encounters spend from', () => {
+  const lost: TrailEntry = {
+    id: 'mew',
+    speciesID: 150,
+    captureRate: 3,
+    isShiny: false,
+    nature: 'timid',
+    temperament: { aggression: 50, skittishness: 50, appetite: 50 },
+    types: ['psychic'],
+    trackedCount: 0,
+    lostAt: NOW,
+  }
+
+  // [trigger branch] Usage alone could not pay; only the earned tokens make the price.
+  it('lets earned tokens pay for a trail', () => {
+    const before = state({
+      legendaryTrail: [lost],
+      usedSinceInstall: 0,
+      earnedTokens: TrailBalance.basePrice,
+    })
+    const result = trackLegendary(before, 'mew', NOW)
+    expect(result.outcome).toBe('tracked')
+    expect(result.state.spentTokens).toBe(TrailBalance.basePrice)
+  })
+
+  // [trigger branch] Spent beyond usage, still solvent through earnings: the attack takes what
+  // the wallet holds — not zero, as usage minus spent would say, and not the full amount.
+  it('lets an attack take exactly the wallet, earnings included', () => {
+    const wallet = 300_000
+    const before = state({ usedSinceInstall: 1_000_000, spentTokens: 1_200_000, earnedTokens: 500_000 })
+    expect(stealAmount(before, wild({ rarity: 'rare' }))).toBe(wallet)
   })
 })

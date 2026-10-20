@@ -51,7 +51,7 @@ describe('chooseBaseFromIndex', () => {
       { id: 1, captureRate: 100 },
       { id: 2, captureRate: 100 },
     ]
-    const collected = new Set(['1:3'])
+    const collected = new Set([1])
     // Weights become 50 and 100, total 150: r<50 picks 1, r>=50 picks 2.
     expect(chooseBaseFromIndex(two, undefined, collected, rng(49))).toBe(1)
     expect(chooseBaseFromIndex(two, undefined, collected, rng(50))).toBe(2)
@@ -61,7 +61,7 @@ describe('chooseBaseFromIndex', () => {
 
   it('never weighs an entry at zero', () => {
     const tiny: BaseSpecies[] = [{ id: 7, captureRate: 1 }]
-    expect(chooseBaseFromIndex(tiny, undefined, new Set(['7:7']), rng(0))).toBe(7)
+    expect(chooseBaseFromIndex(tiny, undefined, new Set([7]), rng(0))).toBe(7)
   })
 })
 
