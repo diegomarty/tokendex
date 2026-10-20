@@ -358,25 +358,37 @@ async function readCorpus(locale: string | undefined): Promise<ScanObservation> 
     }
   }
 
-  const [claude, codex, gemini, grok, cursor, copilot, opencode, hermes, kiro, antigravity] =
-    await Promise.all([
-      read('Claude', () => cache.claudeEntries(since)),
-      read('Codex', () => cache.codexEntries(since)),
-      read('Gemini', () => cache.geminiEntries(since)),
-      read('Grok', () => cache.grokEntries(since)),
-      read('Cursor', () => cache.cursorEntries(since)),
-      read('Copilot', () => cache.copilotEntries(since)),
-      read('OpenCode', () => cache.openCodeEntries(since)),
-      read('Hermes', () => cache.hermesEntries(since)),
-      read('Kiro', () => cache.kiroEntries(since)),
-      read('Antigravity', async () => {
-        // Its diagnostics ride along with the entries: an unreadable conversation store makes
-        // the total quietly low, which is exactly the kind of silence worth breaking.
-        const scan = await cache.antigravityScan(since)
-        errors.push(...scan.notes)
-        return scan.entries
-      }),
-    ])
+  const [
+    claude,
+    codex,
+    gemini,
+    grok,
+    cursor,
+    copilot,
+    copilotVSCode,
+    opencode,
+    hermes,
+    kiro,
+    antigravity,
+  ] = await Promise.all([
+    read('Claude', () => cache.claudeEntries(since)),
+    read('Codex', () => cache.codexEntries(since)),
+    read('Gemini', () => cache.geminiEntries(since)),
+    read('Grok', () => cache.grokEntries(since)),
+    read('Cursor', () => cache.cursorEntries(since)),
+    read('Copilot', () => cache.copilotEntries(since)),
+    read('Copilot (VS Code)', () => cache.copilotVSCodeEntries(since)),
+    read('OpenCode', () => cache.openCodeEntries(since)),
+    read('Hermes', () => cache.hermesEntries(since)),
+    read('Kiro', () => cache.kiroEntries(since)),
+    read('Antigravity', async () => {
+      // Its diagnostics ride along with the entries: an unreadable conversation store makes
+      // the total quietly low, which is exactly the kind of silence worth breaking.
+      const scan = await cache.antigravityScan(since)
+      errors.push(...scan.notes)
+      return scan.entries
+    }),
+  ])
 
   // Providers with nothing to report are dropped: a permanent row of zeros for a tool the
   // user does not have is noise, and the panel is read at a glance.
@@ -387,6 +399,7 @@ async function readCorpus(locale: string | undefined): Promise<ScanObservation> 
     { providerID: 'grok', displayName: 'Grok', entries: grok },
     { providerID: 'cursor', displayName: 'Cursor', entries: cursor },
     { providerID: 'copilot', displayName: 'Copilot', entries: copilot },
+    { providerID: 'copilot_vscode', displayName: 'Copilot (VS Code)', entries: copilotVSCode },
     { providerID: 'opencode', displayName: 'OpenCode', entries: opencode },
     { providerID: 'hermes', displayName: 'Hermes', entries: hermes },
     { providerID: 'kiro', displayName: 'Kiro', entries: kiro },

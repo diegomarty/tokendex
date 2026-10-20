@@ -82,18 +82,28 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
 
 Local log files only — providers you do not use never appear:
 
-| Provider    | Location                                                         |
-| ----------- | ---------------------------------------------------------------- |
-| Claude Code | `~/.claude/projects` (plus `CLAUDE_CONFIG_DIR`, comma-separated) |
-| Codex       | `~/.codex/sessions`                                              |
-| Gemini      | `~/.gemini/tmp`                                                  |
-| Grok        | `~/.grok/sessions` (plus `GROK_HOME`)                            |
-| Antigravity | `~/.gemini/antigravity-cli/conversations`                        |
-| Cursor      | the editor's `state.vscdb`                                       |
-| Copilot     | the CLI's history store (plus `COPILOT_HOME`)                    |
-| OpenCode    | `~/.local/share/opencode` (plus `OPENCODE_DATA_DIR`)             |
-| Hermes      | the CLI's home (plus `HERMES_HOME`)                              |
-| Kiro        | the CLI's data directory                                         |
+| Provider           | Location                                                           |
+| ------------------ | ------------------------------------------------------------------ |
+| Claude Code        | `~/.claude/projects` (plus `CLAUDE_CONFIG_DIR`, comma-separated)   |
+| Codex              | `~/.codex/sessions`                                                |
+| Gemini             | `~/.gemini/tmp`                                                    |
+| Grok               | `~/.grok/sessions` (plus `GROK_HOME`)                              |
+| Antigravity        | `~/.gemini/antigravity-cli/conversations`                          |
+| Cursor             | the editor's `state.vscdb`                                         |
+| Copilot            | the CLI's history store (plus `COPILOT_HOME`)                      |
+| Copilot in VS Code | the Copilot Chat extension's `agent-traces.db` — opt-in, see below |
+| OpenCode           | `~/.local/share/opencode` (plus `OPENCODE_DATA_DIR`)               |
+| Hermes             | the CLI's home (plus `HERMES_HOME`)                                |
+| Kiro               | the CLI's data directory                                           |
+
+**Copilot in VS Code** (Chat and agent mode in the editor, on any plan — Individual,
+Business or Enterprise) keeps no token counts on disk by default, so there is nothing local to
+read. Turn on `github.copilot.chat.otel.dbSpanExporter.enabled` in VS Code's settings and
+reload the window: the extension then records each model call in its own database, and
+Tokendex picks it up as **Copilot (VS Code)**. Usage from before you enabled it cannot be
+recovered. The extension keeps only seven days there, so Tokendex holds on to what it has
+already read. Copilot CLI sessions started from the editor are counted once, under
+**Copilot**.
 
 One `.vsix` for every platform: SQLite-backed providers are read through
 [sql.js](https://sql.js.org) (WebAssembly), so there are no native modules to compile.
