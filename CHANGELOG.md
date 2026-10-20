@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
 ### Added
 
 - **Wild Pokémon have a mood, and berries to change it.** Every encounter now carries a
