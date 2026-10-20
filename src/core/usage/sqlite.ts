@@ -9,11 +9,15 @@
  * it is why `MAX_DATABASE_BYTES` exists — a Cursor `state.vscdb` can grow to hundreds of
  * megabytes, and loading that on a 2-minute refresh would be worse than not reporting Cursor
  * at all.
+ *
+ * A byte array also has no `-wal` beside it, so `wal.ts` folds the log in before opening —
+ * without that, a store in WAL mode reads as of its last checkpoint.
  */
 
 import { promises as fs } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Database, SqlJsStatic } from 'sql.js'
+import { applyWriteAheadLog } from './wal.js'
 
 /**
  * Databases larger than this are skipped rather than loaded.
@@ -45,6 +49,52 @@ function sqlRuntime(): Promise<SqlJsStatic> {
   return runtime
 }
 
+/** Attempts at a consistent main-file + WAL pair before giving up as "unknown". */
+const SNAPSHOT_ATTEMPTS = 3
+
+async function readOptional(path: string): Promise<Buffer | undefined> {
+  try {
+    return await fs.readFile(path)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The database as a reader would see it: the main file with its `-wal` folded in.
+ *
+ * Two files cannot be read atomically, so the WAL is read on both sides of the main file and
+ * the pair is used only when the WAL did not move in between. A checkpoint copies frames the
+ * first read already holds, so re-applying them is harmless; what is not harmless is a log
+ * that grew or restarted mid-read, pairing pages from two different moments.
+ */
+async function readDatabaseImage(path: string, limit: number): Promise<Uint8Array | undefined> {
+  // Sized from `stat` *before* anything is read: the ceiling exists so a huge store costs
+  // nothing, and checking it after the read would pay for the whole file on every refresh.
+  try {
+    const stat = await fs.stat(path)
+    if (!stat.isFile()) return undefined
+    const wal = await fs.stat(`${path}-wal`).catch(() => undefined)
+    if (stat.size + (wal?.size ?? 0) > limit) return undefined
+  } catch {
+    return undefined
+  }
+
+  for (let attempt = 0; attempt < SNAPSHOT_ATTEMPTS; attempt++) {
+    const walBefore = await readOptional(`${path}-wal`)
+    const main = await readOptional(path)
+    if (main === undefined) return undefined
+    // Re-checked on what was actually read: the files can grow between the stat and the read.
+    if (main.byteLength + (walBefore?.byteLength ?? 0) > limit) return undefined
+    if (walBefore === undefined || walBefore.byteLength === 0) return main
+
+    const walAfter = await readOptional(`${path}-wal`)
+    if (walAfter !== undefined && walAfter.equals(walBefore)) return applyWriteAheadLog(main, walBefore)
+  }
+  // Still moving after every attempt. Unknown, not empty: a watermark must not advance on it.
+  return undefined
+}
+
 /** One row, as a map from column name to value. */
 export type Row = Record<string, unknown>
 
@@ -52,18 +102,16 @@ export type Row = Record<string, unknown>
  * Opens a database read-only, runs `work`, and always closes.
  *
  * Returns `undefined` when the database cannot be read at all — missing, too large, locked by
- * the writer, or corrupt. Callers must treat that as "unknown", **not** as "empty": collapsing
+ * the writer, still being written through every snapshot attempt, or corrupt. Callers must treat that as "unknown", **not** as "empty": collapsing
  * the two is what erases a watermark and replays a month of rows.
  */
-export async function withDatabase<T>(path: string, work: (db: Database) => T): Promise<T | undefined> {
-  let bytes: Buffer
-  try {
-    const stat = await fs.stat(path)
-    if (!stat.isFile() || stat.size > MAX_DATABASE_BYTES) return undefined
-    bytes = await fs.readFile(path)
-  } catch {
-    return undefined
-  }
+export async function withDatabase<T>(
+  path: string,
+  work: (db: Database) => T,
+  limit: number = MAX_DATABASE_BYTES,
+): Promise<T | undefined> {
+  const bytes = await readDatabaseImage(path, limit)
+  if (bytes === undefined) return undefined
 
   let db: Database | undefined
   try {

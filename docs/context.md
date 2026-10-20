@@ -194,6 +194,16 @@ capture_rate, so both roll paths find zero candidates, the guarantee is never co
 buying another egg is gated behind having an active Pokémon. `sanitized()` drops it on load,
 and `canBuyEgg` refuses to sell it.
 
+**`sql.js` cannot see a `-wal`.** It opens a byte array, so a store in WAL mode read as of its
+last checkpoint — and a writer that stays connected checkpoints only every ~1000 pages. On the
+development machine, Copilot Chat's `session-store.db` was 4 KB of empty schema beside a 152 KB
+WAL holding every row. This hit every SQLite provider, not just one: upstream links the native
+`sqlite3`, which reads the WAL for free, so the gap exists only in the port. `wal.ts` folds the
+log in (salt and checksum per frame, committed transactions only) and `withDatabase` reads the
+WAL on both sides of the main file, using the pair only if the log did not move in between.
+`test/usage-sqlite-wal.test.ts` builds a real uncheckpointed WAL with `node:sqlite` — `sql.js`
+cannot produce one — and each of its guards was confirmed by removing it.
+
 ---
 
 ## 7. How to work on it
