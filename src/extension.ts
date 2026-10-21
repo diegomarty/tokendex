@@ -574,6 +574,7 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'run',
   'setTrainer',
   'setKeepCompleted',
+  'boostShiny',
   'setCompanion',
   'chooseStarter',
   'incubateEgg',
@@ -717,6 +718,26 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     case 'setKeepCompleted': {
       if (typeof request.keep !== 'boolean') return
       response = await requestAction({ action: 'setKeepCompleted', keep: request.keep }, true)
+      break
+    }
+
+    // Spends the wallet, so it asks like a purchase: a native modal the user approves, labelled
+    // with the core's text (length-capped, as `buy` does). The amount is only shape-checked here;
+    // the worker re-checks it against the room in the same hold that charges it.
+    case 'boostShiny': {
+      if (!isSpeciesID(request.speciesID)) return
+      if (!Number.isSafeInteger(request.amount) || request.amount <= 0) return
+      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
+      const confirm = await vscode.window.showWarningMessage(
+        `${String(request.title).slice(0, 80)} — ${String(request.priceText).slice(0, 20)}`,
+        { modal: true },
+        confirmLabel,
+      )
+      if (confirm !== confirmLabel) return
+      response = await requestAction(
+        { action: 'boostShiny', speciesID: request.speciesID, amount: request.amount },
+        true,
+      )
       break
     }
 

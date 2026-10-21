@@ -25,9 +25,10 @@ import {
   EGG_STOCK_MAX,
   PokemonBalance,
   PokemonOdds,
+  currentSpeciesID,
 } from '../companion/model.js'
 import { creditDelta } from '../companion/ledger.js'
-import { markSeen } from '../companion/registry.js'
+import { markSeen, registerShiny } from '../companion/registry.js'
 import {
   appendTrail,
   enqueueEncounter,
@@ -267,6 +268,13 @@ export function registerNow(state: CompanionState): CompanionState {
   const threshold = PokemonBalance.phaseThreshold(active.rarity, active.totalForms, active.stageIndex)
   const missing = Math.max(0, threshold - active.usedAtStage)
   return creditDelta(state, missing)
+}
+
+/** Registers the shiny of the species on stage, as catching or hatching one does (`obtainShiny`). */
+export function registerShinyNow(state: CompanionState): CompanionState {
+  const active = state.active
+  if (active === undefined) return state
+  return registerShiny(state, currentSpeciesID(active))
 }
 
 export function markSeenDev(state: CompanionState, speciesID: number): CompanionState {

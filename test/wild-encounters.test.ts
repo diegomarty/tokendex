@@ -1199,6 +1199,37 @@ describe('catching registers', () => {
     expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyUnlocked).toBe(true)
     expect(catchOne(state()).state.species[10]?.shinyUnlocked).toBeUndefined()
   })
+
+  // [trigger branch] Caught a shiny of the companion's own species: the companion wears it, as
+  // it does when the bar fills by playing or by a boost.
+  it('dresses the companion when a shiny of its species is caught', () => {
+    const active = {
+      baseID: 10,
+      pathIDs: [10],
+      plannedPathIDs: [10],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'common' as const,
+      totalForms: 1,
+      isShiny: false,
+      dittoRevealed: false,
+    }
+    const owned = known({ unlocked: true, lineRarity: 'common' })
+    const result = catchOne(state({ active, species: { 10: owned } }), wild({ isShiny: true }))
+    expect(result.state.active?.isShiny).toBe(true)
+  })
+
+  // [trigger branch] A shiny caught completes its shiny bar at once (C5): the draw still pays,
+  // duplicate or not, with the bar full when the line's rarity is known.
+  it('completes the shiny bar of a shiny caught', () => {
+    const owned = known({ unlocked: true, lineRarity: 'common' })
+    const result = catchOne(state({ species: { 10: owned } }), wild({ isShiny: true }))
+    expect(result.state.species[10]).toMatchObject({
+      shinyRegistered: true,
+      shinyXP: 8 * PokemonBalance.graduationTotal('common'),
+    })
+    expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyRegistered).toBe(true)
+  })
 })
 
 describe('catching an evolved form', () => {

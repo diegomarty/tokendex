@@ -17,10 +17,23 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CompanionStore } from '../src/core/companion/store.js'
-import { PokemonBalance, type BallKind, type Rarity, rarityFrom } from '../src/core/companion/model.js'
-import type { BaseSpecies, EvoLine, PokeProviding, WildSpecies } from '../src/core/pokeapi.js'
+import {
+  PokemonBalance,
+  type BallKind,
+  type EvoLine,
+  type Rarity,
+  currentSpeciesID,
+  rarityFrom,
+} from '../src/core/companion/model.js'
+import type { BaseSpecies, PokeProviding, WildSpecies } from '../src/core/pokeapi.js'
 import { makeEvoLine } from '../src/core/companion/model.js'
-import { buyItem, canBuyItem, canUseRareCandy, consumeRareCandy } from '../src/core/companion/shop.js'
+import {
+  buyItem,
+  canBuyItem,
+  canUseRareCandy,
+  consumeRareCandy,
+  shinyBoostRoom,
+} from '../src/core/companion/shop.js'
 import { spendableBalance } from '../src/core/companion/ledger.js'
 import { registrationPercent } from '../src/core/companion/registry.js'
 import { compact } from '../src/core/tokenFormatter.js'
@@ -49,6 +62,8 @@ const REFRESHES_PER_DAY = 12
 /** How often the player looks at the queue: one encounter in eight gets a throw. */
 const ATTEMPT_ONE_IN = 8
 const MAX_THROWS = 5
+/** What the player keeps in the wallet before boosting a shiny bar with the rest. */
+const SHINY_RESERVE = 1_000_000_000
 const WORKDAY_MS = 8 * 3_600_000
 const DAY_MS = 24 * 3_600_000
 
@@ -167,6 +182,7 @@ interface Outcome {
   firstRegisteredDay: number | undefined
   firstLineDay: number | undefined
   registered: number
+  shinies: number
   unlocked: number
   seen: number
   encounters: number
@@ -199,6 +215,7 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
     firstRegisteredDay: undefined,
     firstLineDay: undefined,
     registered: 0,
+    shinies: 0,
     unlocked: 0,
     seen: 0,
     encounters: 0,
@@ -241,7 +258,10 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
           let s = store.snapshot()
           if ((s.inventory[ball] ?? 0) === 0) {
             if (!canBuyItem(s, ball, 10)) break
-            await store.mutate((tx) => tx.commit(buyItem(tx.state, ball, 10)))
+            await store.mutate((tx) => {
+              const bought = buyItem(tx.state, ball, 10)
+              if (bought !== undefined) tx.commit(bought)
+            })
             s = store.snapshot()
           }
           const outcome = await store.throwBallAt(head.id, ball)
@@ -264,6 +284,26 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
           const next = Object.entries(s.species).find(([, p]) => p.unlocked && !p.registered)
           if (next !== undefined) await store.setCompanion(Number(next[0]))
           else if (s.eggStock.count > 0) await store.incubateEgg()
+        }
+      }
+      // Phase 5: with nothing left to register, keep the companion for its shiny bar, and spend
+      // what the wallet holds past a reserve on boosts — the sink the heavy profile was missing.
+      {
+        const s = store.snapshot()
+        const nothingToRegister = !Object.values(s.species).some((p) => p.unlocked && !p.registered)
+        if (nothingToRegister && s.keepCompletedCompanion !== true)
+          await store.setKeepCompletedCompanion(true)
+        if (!nothingToRegister && s.keepCompletedCompanion === true)
+          await store.setKeepCompletedCompanion(false)
+        const spare = spendableBalance(s) - SHINY_RESERVE
+        if (spare > 0) {
+          const companion = s.active === undefined ? undefined : currentSpeciesID(s.active)
+          const ids = Object.keys(s.species).map(Number)
+          const target = [companion, ...ids].find((id) => id !== undefined && shinyBoostRoom(s, id) > 0)
+          if (target !== undefined) {
+            const amount = Math.min(spare, shinyBoostRoom(s, target))
+            if (amount > 0) await store.boostShiny(target, amount)
+          }
         }
       }
       if (canUseRareCandy(store.snapshot(), store.currentLine() !== undefined)) {
@@ -289,6 +329,7 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
 
   const final = store.snapshot()
   out.registered = Object.values(final.species).filter((p) => p.registered).length
+  out.shinies = Object.values(final.species).filter((p) => p.shinyRegistered === true).length
   out.unlocked = Object.values(final.species).filter((p) => p.unlocked).length
   out.seen = Object.values(final.species).filter((p) => p.seen).length
   out.encounters = final.encountersSeen
@@ -319,6 +360,7 @@ function row(o: Outcome): string {
     days(o.firstRegisteredDay).padStart(6),
     days(o.firstLineDay).padStart(6),
     String(o.registered).padStart(5),
+    String(o.shinies).padStart(6),
     String(o.unlocked).padStart(5),
     `${o.caught}/${o.encounters}`.padStart(9),
     compact(o.walletEnd).padStart(7),
@@ -340,6 +382,7 @@ console.log(
     '1st reg',
     '1st line',
     'regd',
+    'shiny',
     'unlkd',
     'caught',
     'wallet',
@@ -348,12 +391,16 @@ console.log(
     'fulldex',
   ].join('  '),
 )
-for (const name of selected) {
-  const tokens = PROFILES[name]
-  if (tokens === undefined) {
-    console.error(`unknown profile ${name}; one of ${Object.keys(PROFILES).join(', ')}`)
-    process.exit(2)
+async function main(): Promise<void> {
+  for (const name of selected) {
+    const tokens = PROFILES[name]
+    if (tokens === undefined) {
+      console.error(`unknown profile ${name}; one of ${Object.keys(PROFILES).join(', ')}`)
+      process.exit(2)
+    }
+    console.log(row(await simulate(name, tokens)))
   }
-  console.log(row(await simulate(name, tokens)))
+  console.log(`full Pokédex = ${compact(fullDexTokens)} of registration (analytic, 328 lines)`)
 }
-console.log(`full Pokédex = ${compact(fullDexTokens)} of registration (analytic, 328 lines)`)
+
+void main()

@@ -3368,7 +3368,7 @@ body.compact .row-stat .label {
 
 /* Price tags: paper and ink, filled in when pointed at. The verb and the price read as one
    object, which is what a tag on a shelf is. */
-#shop button.action {
+:is(#shop, .shiny-boosts) button.action {
   background: var(--paper);
   color: var(--ink);
   border: 2px solid var(--ink);
@@ -3379,17 +3379,17 @@ body.compact .row-stat .label {
     background 120ms ease,
     color 120ms ease;
 }
-#shop button.action:hover:not(:disabled),
-#shop button.action:focus-visible {
+:is(#shop, .shiny-boosts) button.action:hover:not(:disabled),
+:is(#shop, .shiny-boosts) button.action:focus-visible {
   background: var(--ink);
   color: var(--paper);
   outline: none;
 }
-#shop button.action:disabled {
+:is(#shop, .shiny-boosts) button.action:disabled {
   opacity: 0.35;
   cursor: default;
 }
-#shop button.action.priced .save {
+:is(#shop, .shiny-boosts) button.action.priced .save {
   background: var(--rarity-uncommon);
   color: #fff;
 }
@@ -3410,7 +3410,7 @@ body.compact .row-stat .label {
     0 2px 0 var(--paper-edge);
 }
 .shop-wallet::after,
-#shop button.action.priced::before {
+:is(#shop, .shiny-boosts) button.action.priced::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -3477,7 +3477,7 @@ body.compact .row-stat .label {
 /* A price tag is the wallet's screen from edge to edge: dark glass, scanlines, the quantity in
    pale ink and the price in phosphor green. Pointed at, the glass lights up rather than
    inverting, so the price stays readable under the cursor. */
-#shop button.action.priced {
+:is(#shop, .shiny-boosts) button.action.priced {
   position: relative;
   display: flex;
   align-items: center;
@@ -3490,21 +3490,21 @@ body.compact .row-stat .label {
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 5px rgb(0 0 0 / 0.55);
 }
-#shop button.action.priced:hover:not(:disabled),
-#shop button.action.priced:focus-visible {
+:is(#shop, .shiny-boosts) button.action.priced:hover:not(:disabled),
+:is(#shop, .shiny-boosts) button.action.priced:focus-visible {
   background: radial-gradient(120% 160% at 25% 0%, #265d67 0%, #11303a 70%);
   color: #f2fff6;
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.45),
     0 0 8px rgb(141 255 176 / 0.35);
 }
-#shop button.action.priced .price-tag {
+:is(#shop, .shiny-boosts) button.action.priced .price-tag {
   position: relative;
   display: flex;
   margin-left: auto;
 }
 /* The price on the wallet's screen, inside the tag that pays it. */
-#shop .cost {
+:is(#shop, .shiny-boosts) .cost {
   display: inline-flex;
   align-items: center;
   gap: 1px;
@@ -3519,7 +3519,7 @@ body.compact .row-stat .label {
    nugget drawn in its middle 14px, so the box is that 14px and `object-fit: none` shows the
    middle of the sheet at native size — every pixel whole, and nothing left for the chip's
    height to crop (negative margins did, wherever the editor's font made the chip shorter). */
-#shop .cost .coin {
+:is(#shop, .shiny-boosts) .cost .coin {
   flex: none;
   width: 14px;
   height: 14px;
@@ -3529,18 +3529,18 @@ body.compact .row-stat .label {
   image-rendering: pixelated;
 }
 /* Unaffordable: the screen's digits dim and lean, never struck through. */
-#shop .cost.cant {
+:is(#shop, .shiny-boosts) .cost.cant {
   color: color-mix(in srgb, #8dffb0 45%, #0d2228);
   font-style: italic;
   text-shadow: none;
   opacity: 1;
 }
-#shop button.action.priced:disabled {
+:is(#shop, .shiny-boosts) button.action.priced:disabled {
   opacity: 0.55;
 }
 /* The pack's saving, small on the top-right corner of the price it discounts. Without it,
    grouping the ×1 and the ×10 onto one row would hide the only reason to prefer the pack. */
-#shop button.action.priced .save {
+:is(#shop, .shiny-boosts) button.action.priced .save {
   position: absolute;
   top: -11px;
   right: -5px;
@@ -3570,37 +3570,37 @@ body.compact .row-stat .label {
     /* The ×10 tag carries the saving as well as a longer price, so it takes the larger share. */
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
-  #shop button.action.priced {
+  :is(#shop, .shiny-boosts) button.action.priced {
     min-width: 0;
     padding-left: 6px;
   }
   /* The wallet above carries the Nugget; at this width the price tags give it up for digits. */
-  #shop .cost .coin {
+  :is(#shop, .shiny-boosts) .cost .coin {
     display: none;
   }
-  #shop .cost {
+  :is(#shop, .shiny-boosts) .cost {
     padding-left: 6px;
   }
 }
 /* A tag that is only a price: the screen fills it, centred. */
-#shop button.action.priced:not(:has(.verb)) {
+:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) {
   justify-content: center;
   padding: 3px;
 }
-#shop button.action.priced:not(:has(.verb)) .price-tag {
+:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) .price-tag {
   margin-left: 0;
   flex: 1;
 }
-#shop button.action.priced:not(:has(.verb)) .cost {
+:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) .cost {
   flex: 1;
   justify-content: center;
 }
 @media (forced-colors: active) {
-  #shop .cost,
+  :is(#shop, .shiny-boosts) .cost,
   .shop-wallet .value {
     text-shadow: none;
   }
-  #shop button.action.priced::before,
+  :is(#shop, .shiny-boosts) button.action.priced::before,
   .shop-wallet::after {
     content: none;
   }
@@ -3629,9 +3629,10 @@ body.compact .row-stat .label {
   color: var(--ink);
   font: inherit;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Three segments since the Shinydex: in a narrow sidebar a label wraps onto a second line
+     rather than being cut to "Collecti…". */
+  line-height: 1.2;
+  overflow-wrap: anywhere;
   cursor: pointer;
   opacity: 0.6;
 }
@@ -4612,4 +4613,86 @@ body.paused .wallet-badge .coin {
   .toggle-setting input[type='checkbox']:checked {
     background: Highlight;
   }
+}
+
+/* ---- the game meter (plan 08: one bar for the game) ----
+   A dark bordered track with a glyph at its left and the fill in the meter's tone: the EXP bar's
+   own look, as a piece. The shiny bar is its first user; EXP and registration move onto it. */
+.game-meter {
+  --meter-tone: var(--exp);
+  --meter-tone-light: #8cc4ff;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.game-meter.on-device {
+  padding: 2px 3px 2px 2px;
+  border: 1.5px solid #10151d;
+  border-radius: 6px;
+  background: #2a313c;
+}
+.game-meter.tone-shiny {
+  --meter-tone: #e0a91c;
+  --meter-tone-light: #ffe58a;
+}
+.game-meter-glyph {
+  flex: none;
+  padding: 0 3px;
+  color: var(--meter-tone-light);
+  font-size: 10px;
+  line-height: 1;
+}
+.game-meter .bar.game-meter-track {
+  flex: 1;
+  height: 7px;
+  border: none;
+  border-radius: 3px;
+  background: #11161e;
+  overflow: hidden;
+}
+.game-meter .bar.game-meter-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
+  transition: width 500ms ease;
+}
+
+/* ---- the shiny road in the Pokédex detail ---- */
+.shiny-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+}
+.shiny-text {
+  font-variant-numeric: tabular-nums;
+}
+.shiny-boosts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.shiny-hint {
+  font-style: italic;
+}
+/* The Shinydex cell's bar: the same thin bar, in gold. */
+.reg-bar.shiny i {
+  background: #e0a91c;
+}
+.reg-bar.shiny.full i {
+  background: linear-gradient(90deg, #e0a91c, #ffe58a, #e0a91c);
+}
+@media (forced-colors: active) {
+  .game-meter.on-device {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+}
+/* The Shinydex completion, on the casing like the Pokédex's, in gold. */
+.dex-head .dex-progress .bar.shiny i {
+  background: linear-gradient(90deg, #ffe58a, #e0a91c);
 }

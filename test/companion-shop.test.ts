@@ -15,8 +15,12 @@ import {
   purchaseNeedsConfirmation,
   shopEntries,
   useMint,
+  boostShiny,
+  shinyBoostOffers,
+  shinyBoostRoom,
 } from '../src/core/companion/shop.js'
 import { progressOf } from '../src/core/companion/registry.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
 import {
   burnTierFor,
   computeDisplayState,
@@ -37,6 +41,7 @@ import {
   ShinyCharm,
   freshCompanionState,
   freshSpeciesProgress,
+  type SpeciesProgress,
   isBerryKind,
   itemShopPrice,
   shopEntryPrice,
@@ -476,5 +481,59 @@ describe('burnTierFor', () => {
   // window. Without the floor that reads as work, and the companion never sleeps.
   it('treats a trailing trickle as idle', () => {
     expect(burnTierFor(600)).toBe('idle')
+  })
+})
+
+describe('the shiny boost', () => {
+  const target = 8 * PokemonBalance.graduationTotal('common')
+  const cap = EconomyBalance.shinyBoostShare * target
+  const registered = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    unlocked: true,
+    registered: true,
+    threshold: 1_000,
+    xp: 1_000,
+    lineRarity: 'common',
+    ...over,
+  })
+  const wallet = (species: SpeciesProgress, tokens = 10_000_000_000) =>
+    state({ usedSinceInstall: tokens, species: { 7: species } })
+
+  // [trigger branch] Up to half the bar is for sale, never more: the rest is played (C5).
+  it('sells at most half the bar, one token for one point', () => {
+    expect(shinyBoostRoom(wallet(registered()), 7)).toBe(cap)
+    const after = boostShiny(wallet(registered()), 7, cap)!
+    expect(after.species[7]).toMatchObject({ shinyXP: cap, shinyBoosted: cap })
+    expect(after.spentTokens).toBe(cap)
+    expect(shinyBoostRoom(after, 7)).toBe(0)
+    expect(boostShiny(after, 7, 1)).toBeUndefined()
+  })
+
+  it('sells no more than what is left of the bar, nor than the wallet holds', () => {
+    expect(shinyBoostRoom(wallet(registered({ shinyXP: target - 10 })), 7)).toBe(10)
+    expect(shinyBoostRoom(wallet(registered(), 1_234), 7)).toBe(1_234)
+  })
+
+  // [trigger branch] Bought past what was played: a boost that fills the bar registers the shiny.
+  it('registers the shiny when the boost fills the bar', () => {
+    const after = boostShiny(wallet(registered({ shinyXP: target - 100 })), 7, 100)!
+    expect(after.species[7]).toMatchObject({ shinyRegistered: true, shinyUnlocked: true })
+  })
+
+  it('refuses a species not registered, without its rarity, or already shiny', () => {
+    expect(shinyBoostRoom(wallet(registered({ registered: false })), 7)).toBe(0)
+    const noRarity = registered()
+    delete noRarity.lineRarity
+    expect(shinyBoostRoom(wallet(noRarity), 7)).toBe(0)
+    expect(shinyBoostRoom(wallet(registered({ shinyRegistered: true })), 7)).toBe(0)
+    expect(boostShiny(wallet(registered()), 7, 0)).toBeUndefined()
+    expect(boostShiny(wallet(registered()), 7, -5)).toBeUndefined()
+  })
+
+  // Two buttons: a tenth of the bar, and all that can be bought — one when they coincide.
+  it('offers a tenth of the bar and the most it can buy', () => {
+    expect(shinyBoostOffers(wallet(registered()), 7)).toEqual([target / 10, cap])
+    expect(shinyBoostOffers(wallet(registered(), target / 20), 7)).toEqual([target / 20])
+    expect(shinyBoostOffers(wallet(registered({ registered: false })), 7)).toEqual([])
   })
 })

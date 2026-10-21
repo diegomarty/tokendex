@@ -15,6 +15,6 @@
     "outDir": "out",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "tools/economy-sim.ts"],
   "exclude": ["src/webview/**/*.ts"]
 }

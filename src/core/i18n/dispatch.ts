@@ -1087,6 +1087,7 @@ export type CelebrationEvent =
   | { kind: 'evolved'; name: string }
   | { kind: 'graduated'; name: string }
   | { kind: 'companionSwitched'; from: string; to?: string }
+  | { kind: 'shinyRegistered'; name: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
@@ -1136,6 +1137,14 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `${event.name} graduated into the Pokédex!`,
         `${event.name}がずかんにとうろくされた！`,
         `¡${event.name} se ha graduado a la Pokédex!`,
+      )
+    case 'shinyRegistered':
+      return t(
+        lang,
+        `✨ ${event.name}의 색이 다른 모습이 도감에 등록되었어요!`,
+        `✨ Shiny ${event.name} registered in the Pokédex!`,
+        `✨ いろちがいの ${event.name}が ずかんに とうろくされた!`,
+        `✨ ¡${event.name} shiny registrado en la Pokédex!`,
       )
     case 'companionSwitched':
       return event.to === undefined
@@ -1474,5 +1483,83 @@ export function keepCompletedHint(lang: AppLanguage): string {
     'Off: when its last form’s bar is full, it switches to one of yours still unregistered. On: it stays, and its tokens wait for the shiny.',
     'オフ: さいごの しんかの バーが いっぱいに なると、まだ とうろくしていない ポケモンに かわる。オン: そのまま のこり、トークンは いろちがいの ために たまる。',
     'Desactivado: cuando su última forma llena la barra, cambia a uno tuyo aún sin registrar. Activado: se queda, y sus tokens esperan al shiny.',
+  )
+}
+
+// MARK: - The shiny bar (phase 5)
+
+/** A registered species' shiny bar: "Shiny 12% · 192M / 1.6B". */
+export function shinyBarText(lang: AppLanguage, percent: number, done: string, total: string): string {
+  return t(
+    lang,
+    `색이 다른 모습 ${percent}% · ${done} / ${total}`,
+    `Shiny ${percent}% · ${done} / ${total}`,
+    `いろちがい ${percent}% · ${done} / ${total}`,
+    `Shiny ${percent}% · ${done} / ${total}`,
+  )
+}
+
+/** The shiny bar once full. */
+export function shinyRegisteredText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '색이 다른 모습 등록 완료',
+    'Shiny registered',
+    'いろちがい とうろくずみ',
+    'Shiny registrado',
+  )
+}
+
+/** A boost button's accessible name. */
+export function shinyBoostLabel(lang: AppLanguage, name: string, amount: string): string {
+  return t(
+    lang,
+    `${name}의 색이 다른 모습에 토큰 ${amount} 쓰기`,
+    `Boost shiny ${name} by ${amount} tokens`,
+    `いろちがいの ${name}に トークン${amount}を つかう`,
+    `Impulsar ${name} shiny con ${amount} tokens`,
+  )
+}
+
+/** A boost's native confirmation title: "Shiny Charizard". */
+export function shinyBoostTitle(lang: AppLanguage, name: string): string {
+  return t(lang, `색이 다른 ${name}`, `Shiny ${name}`, `いろちがいの ${name}`, `${name} shiny`)
+}
+
+/** Nothing to buy: the wallet is empty. */
+export function shinyBoostNoFundsText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '토큰이 부족해요.',
+    'Not enough tokens to boost.',
+    'トークンが たりない。',
+    'No tienes tokens para impulsarla.',
+  )
+}
+
+/** Nothing to buy: the boost cap (`percent` of the bar) was bought, the rest is played. */
+export function shinyBoostCappedText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `막대의 ${percent}%까지 샀어요. 나머지는 함께하며 채워요.`,
+    `${percent}% of the bar was bought; the rest is earned as your companion.`,
+    `バーの ${percent}%まで かった。のこりは いっしょに ためよう。`,
+    `Ya compraste el ${percent}% de la barra; el resto se gana como compañero.`,
+  )
+}
+
+/** The Shinydex segment's label. */
+export function shinydexLabel(lang: AppLanguage): string {
+  return t(lang, '색이 다른 도감', 'Shinydex', 'いろちがいずかん', 'Shinydex')
+}
+
+/** A boost that no longer fits: the wallet moved, or another window bought first. */
+export function shinyBoostFailedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 그만큼 쓸 수 없어요. 다시 확인해 주세요.',
+    'That boost no longer fits. Nothing was charged.',
+    'いまは それだけ つかえない。なにも はらっていない。',
+    'Ese impulso ya no cabe. No se ha cobrado nada.',
   )
 }

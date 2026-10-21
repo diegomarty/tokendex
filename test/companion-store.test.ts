@@ -1762,6 +1762,61 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.snapshot().active).toMatchObject({ baseID: 1, pathIDs: [1, 2] })
   })
 
+  // [trigger branch] A shiny Ditto hatched in disguise registers nothing for the species it
+  // shows: the Shinydex would leak the disguise, and the shiny is Ditto's.
+  it('registers no shiny for the species a shiny Ditto disguises as', async () => {
+    const s = store({ rng: () => 0, dittoEnabled: true })
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    const active = s.snapshot().active!
+    if (active.dittoDisguise !== undefined) {
+      expect(s.snapshot().species[active.baseID]?.shinyRegistered ?? false).toBe(false)
+    }
+  })
+
+  // [trigger branch] A shiny hatched completes its species' shiny bar, as a shiny caught does.
+  it('registers the shiny of a species that hatches shiny', async () => {
+    const s = store({ rng: () => 0 })
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    const active = s.snapshot().active!
+    expect(active.isShiny).toBe(true)
+    expect(s.snapshot().species[active.baseID]).toMatchObject({
+      shinyUnlocked: true,
+      shinyRegistered: true,
+    })
+  })
+
+  // [trigger branch] The boost through the store: one hold, charged exactly what it adds, and
+  // refused past the room (half the bar) rather than clamped.
+  it('boosts a registered species’ shiny bar, charging exactly what it adds', async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        usedSinceInstall: 10_000_000_000,
+        species: {
+          ...tx.state.species,
+          7: {
+            ...freshSpeciesProgress(),
+            unlocked: true,
+            registered: true,
+            threshold: 1,
+            xp: 1,
+            lineRarity: 'common',
+          },
+        },
+      }),
+    )
+    const half = 4 * PokemonBalance.graduationTotal('common')
+    expect(await s.boostShiny(7, half + 1)).toBe(false)
+    expect(s.snapshot().spentTokens).toBe(0)
+    expect(await s.boostShiny(7, half)).toBe(true)
+    expect(s.snapshot().spentTokens).toBe(half)
+    expect(s.snapshot().species[7]).toMatchObject({ shinyXP: half, shinyBoosted: half })
+  })
+
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
     const s = await hatched()
     const companion = s.snapshot().active!.baseID

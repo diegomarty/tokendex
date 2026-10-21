@@ -147,6 +147,36 @@ export interface PanelDexSpecies {
   /** Can be chosen as the companion (unlocked, and not already on stage). */
   canChoose: boolean
   isCompanion: boolean
+  /**
+   * The shiny bar, once the species is registered (before that there is none to fill). Absent
+   * for a species not registered.
+   */
+  shinyBar?: PanelShinyBar
+}
+
+/** A registered species' shiny bar: how full, the sentence, and what the wallet can buy. */
+export interface PanelShinyBar {
+  /** 0..100. */
+  percent: number
+  /** "Shiny 12% · 192M / 1.6B" or "Shiny registered". */
+  text: string
+  /** Boost buttons: a tenth of the bar, and the most that can be bought. Empty = none to sell. */
+  boosts: PanelShinyBoost[]
+  /** Why there is nothing to buy, when `boosts` is empty and the shiny is not registered. */
+  boostHint?: string
+}
+
+/** One boost button. Everything decided and formatted in the core. */
+export interface PanelShinyBoost {
+  /** Tokens it buys, 1:1 into the bar. Echoed back; the host re-checks it against the room. */
+  amount: number
+  /** Visible text: "+160M". */
+  text: string
+  /** Accessible name: "Boost shiny Charizard by 160M tokens". */
+  label: string
+  /** Native modal title and price: "Shiny Charizard — 160M". */
+  confirmTitle: string
+  priceText: string
 }
 
 /** The Pokédex's counts: owned (the collection), registered (the completion) and the total. */
@@ -161,6 +191,12 @@ export interface PanelDexSummary {
   /** The two segment labels with their counts: "Collection (8)", "Catch log (3)". */
   speciesSegmentText: string
   logSegmentText: string
+  /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
+  shinyRegistered: number
+  /** 0..100 of the Shinydex, rounded as `percent` is. */
+  shinyPercent: number
+  shinyProgressText: string
+  shinySegmentText: string
 }
 
 /** A starter offered on first run. */
@@ -576,6 +612,15 @@ export type PanelMessage =
   | { type: 'setRefreshInterval'; seconds: number }
   | { type: 'setTrainer'; trainerID: string }
   | { type: 'setKeepCompleted'; keep: boolean }
+  /** `title`/`priceText`/`confirmLabel` only label the native confirmation modal. */
+  | {
+      type: 'boostShiny'
+      speciesID: number
+      amount: number
+      title: string
+      priceText: string
+      confirmLabel?: string
+    }
   /** Choose an unlocked species (by id) as the companion; the core refuses anything else. */
   | { type: 'setCompanion'; speciesID: number }
   | { type: 'chooseStarter'; speciesID: number }

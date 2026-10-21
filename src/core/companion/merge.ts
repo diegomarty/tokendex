@@ -134,6 +134,11 @@ function mergeRegistries(
     // other side's over would apply the same catch twice.
     const pendingShare = Math.max(a?.pendingShare ?? 0, b?.pendingShare ?? 0)
     if (pendingShare > 0 && threshold === undefined) merged.pendingShare = pendingShare
+    // Counters like the catches: the furthest of either side, never the losing side's wipe.
+    const shinyXP = Math.max(a?.shinyXP ?? 0, b?.shinyXP ?? 0)
+    if (shinyXP > 0) merged.shinyXP = shinyXP
+    const shinyBoosted = Math.max(a?.shinyBoosted ?? 0, b?.shinyBoosted ?? 0)
+    if (shinyBoosted > 0) merged.shinyBoosted = shinyBoosted
     if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
     if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
     if (a?.companionShiny || b?.companionShiny) merged.companionShiny = true

@@ -372,6 +372,7 @@ export function sanitized(state: CompanionState): CompanionState {
         clean.totalForms = Math.min(12, Math.max(1, Math.floor(p.totalForms)))
       if (p.pendingShare !== undefined) clean.pendingShare = Math.min(1, Math.max(0, p.pendingShare))
       if (p.shinyXP !== undefined) clean.shinyXP = clamp(p.shinyXP)
+      if (p.shinyBoosted !== undefined) clean.shinyBoosted = clamp(p.shinyBoosted)
       return [id, clean]
     }),
   )

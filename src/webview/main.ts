@@ -12,6 +12,7 @@ import type {
   PanelShopAction,
   PanelState,
   PanelEncounterResult,
+  PanelDexSpecies,
   PanelMoodMeter,
   PanelWildEncounter,
   PanelWalletChange,
@@ -36,7 +37,8 @@ const vscode = acquireVsCodeApi()
 
 /** One list for the skeleton, the renderers and the restore guard — shell.ts owns it. */
 type TabID = PanelTabID
-type DexSegment = 'species' | 'log'
+type DexSegment = 'species' | 'shiny' | 'log'
+const DEX_SEGMENTS: readonly DexSegment[] = ['species', 'shiny', 'log']
 let current: PanelState | undefined
 let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
@@ -1176,6 +1178,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
             <span class="desc">${escapeHTML(sp.percentText)}</span>
           </div>
           ${entries}
+          ${sp.shinyBar === undefined ? '' : shinySection(sp.id, sp.shinyBar)}
           ${
             sp.isCompanion
               ? `<div class="companion-tag">${escapeHTML(state.strings.companionBadge)}</div>`
@@ -1188,25 +1191,64 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
     </div>`
 }
 
+/**
+ * A registered species' road to its shiny: the gold bar on the device's track, its sentence,
+ * and what the wallet can buy of it — the shop's own price tags, because it is the same act of
+ * paying tokens for something. Every figure and word is the core's.
+ */
+function shinySection(speciesID: number, bar: NonNullable<PanelDexSpecies['shinyBar']>): string {
+  const boosts = bar.boosts
+    .map(
+      (b) => `<button class="action priced" data-boost="${speciesID}" data-amount="${b.amount}"
+          data-title="${escapeHTML(b.confirmTitle)}" data-price="${escapeHTML(b.priceText)}"
+          aria-label="${escapeHTML(b.label)}">
+          <span class="verb">${escapeHTML(b.text)}</span>
+          <span class="price-tag"><span class="cost">${escapeHTML(b.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span></span>
+        </button>`,
+    )
+    .join('')
+  return `<div class="shiny-section">
+      <div class="game-meter on-device tone-shiny">
+        <span class="game-meter-glyph" aria-hidden="true">★</span>
+        <div class="bar game-meter-track" aria-label="${escapeHTML(bar.text)}"><i data-fill="${bar.percent}"></i></div>
+      </div>
+      <div class="desc shiny-text">${escapeHTML(bar.text)}</div>
+      ${boosts === '' ? '' : `<div class="shiny-boosts">${boosts}</div>`}
+      ${bar.boostHint === undefined ? '' : `<div class="desc shiny-hint">${escapeHTML(bar.boostHint)}</div>`}
+    </div>`
+}
+
 function renderDex(state: PanelState): string {
   const segments = `
     <div class="segments">
       <button class="seg" data-seg="species" aria-selected="${dexSegment === 'species'}">
         ${escapeHTML(state.dexSummary.speciesSegmentText)}
       </button>
+      <button class="seg" data-seg="shiny" aria-selected="${dexSegment === 'shiny'}">
+        ${escapeHTML(state.dexSummary.shinySegmentText)}
+      </button>
       <button class="seg" data-seg="log" aria-selected="${dexSegment === 'log'}">
         ${escapeHTML(state.dexSummary.logSegmentText)}
       </button>
     </div>`
 
-  if (dexSegment === 'species') {
+  if (dexSegment === 'species' || dexSegment === 'shiny') {
+    // The Shinydex is the same grid seen through the shiny axis: a shiny registered is lit in
+    // gold, a registered species shows its shiny bar, anything else is a silhouette.
+    const shinydex = dexSegment === 'shiny'
     // The whole huntable pool, silhouettes included: an all-caught-species list reads as an
     // archive, but 625 dark shapes read as a goal. Locked cells carry only the silhouette and
     // the number — what is behind them stays a surprise, the same rule the wild queue follows.
     // The core counts: the completion is registered species, the collection what is owned.
     const summary = state.dexSummary
     const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
-    const completion = `
+    const completion = shinydex
+      ? `
+      <div class="dex-progress">
+        <span class="desc">${escapeHTML(summary.shinyProgressText)}</span>
+        <div class="bar shiny"><i data-fill="${summary.shinyPercent}"></i></div>
+      </div>`
+      : `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(summary.progressText)}</span>
         <div class="bar"><i data-fill="${summary.percent}"></i></div>
@@ -1225,6 +1267,7 @@ function renderDex(state: PanelState): string {
     const numeric = /^#?\d+$/.test(query) ? String(Number(query.replace('#', ''))) : undefined
     const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
       if (dexOwnedOnly && (sp === undefined || sp.status === 'seen')) return false
+      if (dexOwnedOnly && shinydex && sp?.shiny !== 'registered') return false
       if (query === '') return true
       if (numeric !== undefined) return String(id).includes(numeric)
       return sp !== undefined && sp.name.toLowerCase().includes(query)
@@ -1248,16 +1291,18 @@ function renderDex(state: PanelState): string {
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
       const tabIndex = ` tabindex="${id === (dexSelected ?? 1) ? 0 : -1}"`
-      if (sp === undefined || sp.status === 'seen') {
+      const shinyOff =
+        shinydex && sp !== undefined && sp.status !== 'registered' && sp.shiny !== 'registered'
+      if (sp === undefined || sp.status === 'seen' || shinyOff) {
         // Seen is still a silhouette — met, not owned — but lit, so the grid shows where the wild
         // has already been.
         cells.push(`
-        <button class="cell locked${sp === undefined ? '' : ' seen'}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
+        <button class="cell locked${sp?.status === 'seen' ? ' seen' : ''}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
           <img src="${spriteURL(id, false, false)}" alt="" loading="lazy">
           <div class="num">${dexNumber(id)}</div>
         </button>`)
       } else {
-        const shiny = sp.shiny === 'registered' || sp.isShiny
+        const shiny = sp.shiny === 'registered' || (!shinydex && sp.isShiny)
         // A species whose line never loaded has no name yet, only the core's `#N` fallback —
         // and the number is already on the cell.
         cells.push(`
@@ -1267,7 +1312,11 @@ function renderDex(state: PanelState): string {
           <img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy">
           <div class="num">${dexNumber(id)}</div>
           ${sp.name === `#${id}` ? '' : `<div class="name">${escapeHTML(sp.name)}</div>`}
-          <div class="reg-bar${sp.status === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.percent}"></i></div>
+          ${
+            shinydex
+              ? `<div class="reg-bar shiny${sp.shiny === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.shinyBar?.percent ?? 0}"></i></div>`
+              : `<div class="reg-bar${sp.status === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.percent}"></i></div>`
+          }
           ${sp.isCompanion ? `<div class="badge">${escapeHTML(state.strings.companionBadge)}</div>` : ''}
         </button>`)
       }
@@ -1802,6 +1851,24 @@ document.addEventListener('click', (event) => {
     render()
     return
   }
+  const boost = target.closest('[data-boost]')
+  if (boost !== null) {
+    const el = boost as HTMLElement
+    const speciesID = Number(el.dataset['boost'])
+    const amount = Number(el.dataset['amount'])
+    // The confirmation is the host's native modal, as for a purchase; it re-checks the amount.
+    if (Number.isInteger(speciesID) && Number.isFinite(amount) && amount > 0 && current !== undefined) {
+      vscode.postMessage({
+        type: 'boostShiny',
+        speciesID,
+        amount,
+        title: el.dataset['title'] ?? '',
+        priceText: el.dataset['price'] ?? '',
+        confirmLabel: current.strings.buy,
+      })
+    }
+    return
+  }
   const buy = target.closest('[data-buy]')
   if (buy !== null) {
     const el = buy as HTMLElement
@@ -2156,7 +2223,9 @@ const saved = vscode.getState() as
 if (saved?.tab !== undefined && (PANEL_TABS as readonly string[]).includes(saved.tab)) {
   tab = saved.tab as TabID
 }
-if (saved?.dexSegment !== undefined) dexSegment = saved.dexSegment
+// Validated like the tab: a segment from an older build (or a removed one) must not restore.
+if (saved?.dexSegment !== undefined && DEX_SEGMENTS.includes(saved.dexSegment))
+  dexSegment = saved.dexSegment
 if (
   typeof saved?.dexSelected === 'number' &&
   Number.isInteger(saved.dexSelected) &&

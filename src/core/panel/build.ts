@@ -22,6 +22,7 @@ import type {
   PanelEggs,
   PanelEncounterResult,
   PanelMoodMeter,
+  PanelShinyBar,
   PanelShopAction,
   PanelShopItem,
   PanelState,
@@ -67,6 +68,8 @@ import {
   candyRoomLeft,
   itemCount,
   ownedItems,
+  shinyBoostCapLeft,
+  shinyBoostOffers,
 } from '../companion/shop.js'
 import { spendableBalance, streakWindow } from '../companion/ledger.js'
 import {
@@ -92,7 +95,8 @@ import {
   trailPrice,
 } from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
-import { progressOf, registrationPercent } from '../companion/registry.js'
+import { progressOf, registrationPercent, shinyTarget } from '../companion/registry.js'
+import { EconomyBalance } from '../companion/economy.js'
 import { STARTERS, starterName, starterType } from '../companion/starters.js'
 import { eggIsPaused, eggOnStage, isFreshGame } from '../companion/eggs.js'
 import { todayKey } from '../usage/entry.js'
@@ -380,6 +384,9 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       // stage is already chosen.
       canChoose: sp.status !== 'seen' && !isCompanion,
       isCompanion,
+      ...(sp.status === 'registered' || sp.shiny === 'registered'
+        ? { shinyBar: shinyBarFor(state, sp.id, sp.name, lang) }
+        : {}),
     }
   })
 
@@ -646,7 +653,7 @@ function dexSummary(
   logCount: number,
   lang: AppLanguage,
 ): PanelDexSummary {
-  const { owned, registered } = dexTally(species)
+  const { owned, registered, shinyRegistered } = dexTally(species)
   const total = ANIMATED_SPECIES_MAX
   const strings = panelStrings(lang)
   return {
@@ -657,7 +664,50 @@ function dexSummary(
     progressText: D.dexProgressText(registered, total),
     speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
     logSegmentText: D.countedLabel(strings.segmentLog, logCount),
+    shinyRegistered,
+    shinyPercent: Math.min(100, Math.round((100 * shinyRegistered) / total)),
+    shinyProgressText: D.dexProgressText(shinyRegistered, total),
+    shinySegmentText: D.countedLabel(D.shinydexLabel(lang), shinyRegistered),
   }
+}
+
+/**
+ * A registered species' shiny bar: how full, the sentence, and the boosts the wallet can buy
+ * (`shinyBoostOffers`) — or why it cannot. Every figure formatted here.
+ */
+function shinyBarFor(
+  state: CompanionState,
+  speciesID: number,
+  name: string,
+  lang: AppLanguage,
+): PanelShinyBar {
+  const p = progressOf(state, speciesID)
+  if (p.shinyRegistered === true) return { percent: 100, text: D.shinyRegisteredText(lang), boosts: [] }
+  const target = p.lineRarity === undefined ? undefined : shinyTarget(p.lineRarity)
+  const done = p.shinyXP ?? 0
+  const percent = target === undefined ? 0 : Math.min(100, Math.floor((100 * done) / target))
+  const bar: PanelShinyBar = {
+    percent,
+    text: D.shinyBarText(lang, percent, compact(done), target === undefined ? '?' : compact(target)),
+    boosts: shinyBoostOffers(state, speciesID).map((amount) => {
+      const priceText = compact(amount)
+      return {
+        amount,
+        text: `+${priceText}`,
+        label: D.shinyBoostLabel(lang, name, priceText),
+        confirmTitle: D.shinyBoostTitle(lang, name),
+        priceText,
+      }
+    }),
+  }
+  if (bar.boosts.length === 0 && target !== undefined) {
+    bar.boostHint =
+      shinyBoostCapLeft(state, speciesID) <= 0
+        ? D.shinyBoostCappedText(lang, Math.round(100 * EconomyBalance.shinyBoostShare))
+        : D.shinyBoostNoFundsText(lang)
+  }
+
+  return bar
 }
 
 /**

@@ -43,7 +43,7 @@ import {
 } from './model.js'
 import type { RNG } from './growth.js'
 import { spendableBalance } from './ledger.js'
-import { progressOf, registerXP, registrationPercent, shareXP } from './registry.js'
+import { progressOf, registerShiny, registerXP, registrationPercent, shareXP } from './registry.js'
 import { EconomyBalance } from './economy.js'
 
 // MARK: - Balance
@@ -844,15 +844,17 @@ function caughtSpecies(
   const id = encounter.speciesID
   const before = progressOf(state, id)
   const p: SpeciesProgress = { ...before, unlocked: true, caught: before.caught + 1 }
-  if (encounter.isShiny) p.shinyUnlocked = true
+  // A shiny caught registers its shiny through the one path, which also dresses the companion
+  // when it is this species.
+  const shiny = (s: CompanionState) => (encounter.isShiny ? registerShiny(s, id) : s)
   if (before.unlocked) {
     const reward = EconomyBalance.duplicateReward[encounter.line?.rarity ?? encounter.rarity]
     return {
-      state: {
+      state: shiny({
         ...state,
         earnedTokens: state.earnedTokens + reward,
         species: { ...state.species, [id]: p },
-      },
+      }),
       reward,
     }
   }
@@ -872,7 +874,7 @@ function caughtSpecies(
     p.pendingShare = Math.min(1, (p.pendingShare ?? 0) + EconomyBalance.catchShare)
   }
   return {
-    state: { ...state, species: { ...state.species, [id]: p } },
+    state: shiny({ ...state, species: { ...state.species, [id]: p } }),
     registeredPercent: registrationPercent(p),
   }
 }

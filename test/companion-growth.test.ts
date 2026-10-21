@@ -220,6 +220,72 @@ describe('applyUsage', () => {
     expect(result.mon.usedAtStage).toBe(7 + share)
   })
 
+  describe('the shiny bar', () => {
+    const target = 8 * PokemonBalance.graduationTotal('common')
+    const done = (over = {}) => ({
+      xp: thr(2),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+      threshold: thr(2),
+      lineRarity: 'common' as const,
+      ...over,
+    })
+    const atLast = (used = thr(2)) => mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: used })
+
+    // [trigger branch] A registered final form on stage: what it earns past its bar fills its
+    // shiny bar, and its own bar stays where it was.
+    it('sends a registered companion’s surplus to its shiny bar', () => {
+      const result = applyUsage(atLast(), 1_000, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(result.species[3]).toMatchObject({ xp: thr(2), shinyXP: 1_000 })
+      expect(result.mon.usedAtStage).toBe(thr(2))
+    })
+
+    // The same for a registered species with nothing left to register below it.
+    it('fills the shiny bar of a registered species with nothing left below', () => {
+      const species = {
+        1: done({ xp: thr(0), threshold: thr(0) }),
+        2: done({ xp: thr(1), threshold: thr(1) }),
+        3: done(),
+      }
+      const result = applyUsage(mon({ usedAtStage: thr(0) }), 500, line, new Set(), fixedRNG(0), species)
+      expect(result.species[1]).toMatchObject({ xp: thr(0), shinyXP: 500 })
+    })
+
+    // [trigger branch] The first registration's own overflow is surplus too.
+    it('sends the overflow of the registering refresh to the shiny bar', () => {
+      const fresh = done({ registered: false, xp: 0 })
+      const result = applyUsage(atLast(0), thr(2) + 300, line, new Set(), fixedRNG(0), { 3: fresh })
+      expect(result.graduated).toBe(true)
+      expect(result.species[3]).toMatchObject({ registered: true, shinyXP: 300 })
+    })
+
+    // [trigger branch] The requirement is eight times the LINE's total for every form, not eight
+    // times the stage: at 8 × the stage threshold Charmander would be nowhere near.
+    it('registers the shiny at eight times the line’s total, and dresses the companion', () => {
+      const stageEight = 8 * thr(2)
+      const short = applyUsage(atLast(), stageEight, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(short.species[3]?.shinyRegistered ?? false).toBe(false)
+      const full = applyUsage(atLast(), target + 5, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(full.species[3]).toMatchObject({
+        shinyXP: target,
+        shinyRegistered: true,
+        shinyUnlocked: true,
+      })
+      expect(full.mon.isShiny).toBe(true)
+      expect(full.events).toContainEqual({ kind: 'shinyRegistered', speciesID: 3 })
+    })
+
+    it('leaves a registered shiny’s bar where it is', () => {
+      const shiny = done({ shinyRegistered: true, shinyXP: target })
+      expect(
+        applyUsage(atLast(), 1_000, line, new Set(), fixedRNG(0), { 3: shiny }).species[3]?.shinyXP,
+      ).toBe(target)
+    })
+  })
+
   it('records where the species sits in its line when the threshold is fixed', () => {
     const result = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {})
     expect(result.species[1]).toMatchObject({ baseID: 1, stageIndex: 0, totalForms: 3 })

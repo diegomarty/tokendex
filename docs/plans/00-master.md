@@ -327,6 +327,11 @@ El compañero elegido viene del lado ganador. `earnedTokens` (ver C6) viene del 
 - Coste y duración (¿objeto de la tienda?, ¿tokens por día?) se deciden en el sub-plan, con el simulador de la fase 1b.
 - **Sub-plan:** `docs/plans/06-senuelo.md`.
 
+### Fase 8 — Una sola interfaz: el aparato, el papel y el contador
+
+- Unificar la interfaz (paleta del aparato, una sola barra `.game-meter`, botones de juego, escalas de etiquetas y tipografía, regla de capas, diseño a 280 px). Auditoría y decisiones de Diego en el sub-plan, preparado por @helper.
+- **Sub-plan:** `docs/plans/08-ui-unificada.md`.
+
 ### Fase 7 — Ideas de diseño (para priorizar con Diego)
 
 - **Medallas e hitos:** «10 especies registradas», «primera shiny», «una línea completa».

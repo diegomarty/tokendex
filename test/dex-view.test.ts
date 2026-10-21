@@ -277,10 +277,10 @@ describe('dexTally', () => {
         4: { ...freshSpeciesProgress(), unlocked: true, registered: true },
       },
     })
-    expect(dexTally(dexSpecies(s, undefined))).toEqual({ owned: 3, registered: 2 })
+    expect(dexTally(dexSpecies(s, undefined))).toEqual({ owned: 3, registered: 2, shinyRegistered: 0 })
   })
 
   it('counts nothing for an empty Pokédex', () => {
-    expect(dexTally([])).toEqual({ owned: 0, registered: 0 })
+    expect(dexTally([])).toEqual({ owned: 0, registered: 0, shinyRegistered: 0 })
   })
 })

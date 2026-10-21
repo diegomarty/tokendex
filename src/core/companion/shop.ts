@@ -19,6 +19,7 @@ import {
   RareCandy,
   type Rarity,
   type ShopEntry,
+  type SpeciesProgress,
   itemIsBundled,
   itemIsPassive,
   itemShopPrice,
@@ -26,7 +27,8 @@ import {
   currentSpeciesID,
 } from './model.js'
 import type { RNG } from './growth.js'
-import { progressOf } from './registry.js'
+import { progressOf, registerShiny, shinyTarget } from './registry.js'
+import { EconomyBalance } from './economy.js'
 import { spendableBalance } from './ledger.js'
 import { eggOnStage } from './eggs.js'
 
@@ -311,4 +313,69 @@ export function grantCandies(
   }
   const changed = grants.length > 0 || JSON.stringify(grantTier) !== JSON.stringify(state.candyGrantTier)
   return { state: { ...state, candyGrantTier: grantTier, inventory }, grants, changed }
+}
+
+// MARK: - The shiny boost
+
+/**
+ * Tokens the wallet can still put into a species' shiny bar, 1:1 (C5): the species registered
+ * with its line's rarity known and its shiny not yet registered; then at most
+ * `EconomyBalance.shinyBoostShare` of the bar over all purchases, never past what is left of it,
+ * never past the wallet. 0 = nothing to sell.
+ */
+export function shinyBoostRoom(state: CompanionState, speciesID: number): number {
+  const p = progressOf(state, speciesID)
+  if (!p.registered || p.shinyRegistered === true || p.lineRarity === undefined) return 0
+  const left = shinyTarget(p.lineRarity) - (p.shinyXP ?? 0)
+  return Math.max(0, Math.min(shinyBoostCapLeft(state, speciesID), left, spendableBalance(state)))
+}
+
+/**
+ * What is left of the boost cap for a species — `shinyBoostShare` of its bar, less what was
+ * bought. The one statement of the cap: `shinyBoostRoom` and the panel's "why not" both read it.
+ * 0 without the line's rarity.
+ */
+export function shinyBoostCapLeft(state: CompanionState, speciesID: number): number {
+  const p = progressOf(state, speciesID)
+  if (p.lineRarity === undefined) return 0
+  const cap = Math.floor(EconomyBalance.shinyBoostShare * shinyTarget(p.lineRarity))
+  return Math.max(0, cap - (p.shinyBoosted ?? 0))
+}
+
+/**
+ * What the Pokédex offers to buy: a tenth of the bar, and all that can be bought — one figure
+ * when the two coincide or the tenth no longer fits. Empty when nothing can be.
+ */
+export function shinyBoostOffers(state: CompanionState, speciesID: number): number[] {
+  const room = shinyBoostRoom(state, speciesID)
+  if (room <= 0) return []
+  // A positive room means the rarity is known (`shinyBoostRoom` returns 0 without it).
+  const tenth = Math.round(shinyTarget(progressOf(state, speciesID).lineRarity!) / 10)
+  return tenth < room ? [tenth, room] : [room]
+}
+
+/**
+ * Buys `amount` of a species' shiny bar. Charged to `spentTokens`, counted in `shinyBoosted`;
+ * filling the bar registers the shiny, and the companion wears it if it is that species.
+ * `undefined` when the amount is not a positive whole number within `shinyBoostRoom`.
+ */
+export function boostShiny(
+  state: CompanionState,
+  speciesID: number,
+  amount: number,
+): CompanionState | undefined {
+  if (!Number.isInteger(amount) || amount <= 0 || amount > shinyBoostRoom(state, speciesID))
+    return undefined
+  const p = progressOf(state, speciesID)
+  const shinyXP = (p.shinyXP ?? 0) + amount
+  const out: CompanionState = {
+    ...state,
+    spentTokens: state.spentTokens + amount,
+    species: {
+      ...state.species,
+      [speciesID]: { ...p, shinyXP, shinyBoosted: (p.shinyBoosted ?? 0) + amount },
+    },
+  }
+  // Filling the bar registers the shiny through the one path (`registerShiny`).
+  return shinyXP >= shinyTarget(p.lineRarity!) ? registerShiny(out, speciesID) : out
 }

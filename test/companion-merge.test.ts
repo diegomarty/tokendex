@@ -386,6 +386,18 @@ describe('the registry', () => {
     expect(mergeSaves(remote, local).state.species[4]?.pendingShare).toBeUndefined()
   })
 
+  // [trigger branch] Shiny progress is a counter like the catches: the side that played more of
+  // the bar, or bought more of it, keeps it — the losing side's never wipes it.
+  it('keeps the furthest shiny bar and boost of either side', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ shinyXP: 100, shinyBoosted: 10 }) } },
+      { species: { 4: progress({ shinyXP: 50, shinyBoosted: 40 }) } },
+    )
+    for (const merged of [mergeSaves(local, remote), mergeSaves(remote, local)]) {
+      expect(merged.state.species[4]).toMatchObject({ shinyXP: 100, shinyBoosted: 40 })
+    }
+  })
+
   it('keeps a recorded nature either side knew', () => {
     const { local, remote } = fork(
       { species: { 4: progress() } },

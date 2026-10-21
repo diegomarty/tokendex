@@ -45,6 +45,7 @@ export type DevAction =
   | { action: 'devLoseLegendary' }
   | { action: 'devSpeciesXP'; amount: number }
   | { action: 'devRegisterNow' }
+  | { action: 'devRegisterShiny' }
   | { action: 'devMarkSeen'; speciesID: number }
   | { action: 'devGrantEgg' }
 
@@ -169,6 +170,14 @@ export const DEV_SCENARIOS: DevScenario[] = [
     detail: 'Fills its bar; the next refresh registers it and evolves if it can',
     input: { kind: 'none' },
     build: () => ({ action: 'devRegisterNow' }),
+  },
+  {
+    id: 'register-shiny',
+    group: 'state',
+    label: 'Register the shiny of the species on stage',
+    detail: 'As catching or hatching a shiny does: the shiny bar full, the companion wears it',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devRegisterShiny' }),
   },
   {
     id: 'mark-seen',

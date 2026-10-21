@@ -46,6 +46,44 @@ export function registrationPercent(progress: SpeciesProgress): number {
 }
 
 /**
+ * What a species' shiny bar costs: eight times its LINE's whole total, for every form (C5) —
+ * not eight times its stage, which would make Charmander's shiny 67M. Common 400M, uncommon 1B,
+ * rare 1.6B, legendary 3.2B.
+ */
+export function shinyTarget(lineRarity: Rarity): number {
+  return 8 * PokemonBalance.graduationTotal(lineRarity)
+}
+
+/**
+ * A shiny obtained — caught or hatched — completes its species' shiny bar at once (C5): the
+ * shiny is registered, and the bar reads full when the line's rarity says how full is full.
+ */
+export function obtainShiny(progress: SpeciesProgress): SpeciesProgress {
+  const next: SpeciesProgress = { ...progress, shinyUnlocked: true, shinyRegistered: true }
+  if (progress.lineRarity !== undefined) next.shinyXP = shinyTarget(progress.lineRarity)
+  return next
+}
+
+/**
+ * Registers a species' shiny — caught, hatched, boosted to full, or the dev shortcut: the flags
+ * and the bar (`obtainShiny`), and the companion on stage wears it when it is that species. The
+ * one path, so no caller dresses a companion another would not. A Ditto in disguise is never
+ * dressed: the species it shows is not its own, and dressing it would leak the disguise.
+ */
+export function registerShiny(state: CompanionState, speciesID: number): CompanionState {
+  const next: CompanionState = {
+    ...state,
+    species: { ...state.species, [speciesID]: obtainShiny(progressOf(state, speciesID)) },
+  }
+  const active = state.active
+  const disguised = active?.dittoDisguise !== undefined && active.dittoRevealed !== true
+  if (active !== undefined && !disguised && currentSpeciesID(active) === speciesID) {
+    next.active = { ...active, isShiny: true }
+  }
+  return next
+}
+
+/**
  * Experience a share of a bar is worth, rounded **up**: rounded to nearest, 5% of 16_666_667
  * lands a token short and `registrationPercent`'s floor reads 4%.
  */

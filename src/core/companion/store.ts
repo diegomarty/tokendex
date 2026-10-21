@@ -116,6 +116,7 @@ import {
   creditSpeciesXP,
   markSeen,
   meterStart,
+  registerShiny,
   rareCandyXP,
   retireCompanion,
   unlockSpecies,
@@ -123,6 +124,7 @@ import {
 } from './registry.js'
 import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
 import { isStarterID } from './starters.js'
+import { boostShiny } from './shop.js'
 
 export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
 
@@ -147,6 +149,8 @@ export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
   | { kind: 'evolved'; speciesID: number; name: string }
   | { kind: 'graduated'; name: string }
+  /** The companion filled its shiny bar: its shiny form is registered, and it wears it now. */
+  | { kind: 'shinyRegistered'; speciesID: number; name: string }
   /**
    * A finished companion stepped aside on its own (`moveOnIfDone`): `to` names the species now on
    * stage, or is absent when an egg from the stock took its place.
@@ -1022,6 +1026,13 @@ export class CompanionStore {
     return result.value
   }
 
+  /** A species' name for a toast: from the line on stage when it holds it, else its number. */
+  private speciesName(speciesID: number): string {
+    return this.line?.names[speciesID] === undefined
+      ? `#${speciesID}`
+      : localizedName(this.line, speciesID, this.state.language)
+  }
+
   /** The base of a species the registry has no position for yet: its Pokédex entry, if any. */
   private baseFromHistory(speciesID: number): number | undefined {
     return this.state.dex.find((e) => e.chainOrder.includes(speciesID))?.baseID
@@ -1115,6 +1126,30 @@ export class CompanionStore {
     if (!result.acquired) throw new SaveBusyError()
   }
 
+  /**
+   * Buys `amount` of a species' shiny bar (`boostShiny` in `shop.ts`), in one hold against the
+   * save as it is now. `false` when it no longer fits — the wallet moved, another window bought
+   * first — and nothing is charged. Filling the bar announces the shiny like earning it does.
+   */
+  async boostShiny(speciesID: number, amount: number): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = boostShiny(this.state, speciesID, amount)
+      if (next === undefined) return false
+      const filled =
+        next.species[speciesID]?.shinyRegistered === true &&
+        this.state.species[speciesID]?.shinyRegistered !== true
+      this.state = next
+      if (filled) {
+        this.pendingEvents.push({ kind: 'shinyRegistered', speciesID, name: this.speciesName(speciesID) })
+        this.eventUntil = this.now + EVENT_WINDOW_MS
+      }
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
   /** The finished-companion setting. `true` once written; a busy lock throws like any user action. */
   async setKeepCompletedCompanion(keep: boolean): Promise<boolean> {
     await this.load()
@@ -1157,6 +1192,14 @@ export class CompanionStore {
         const name =
           this.line === undefined ? '' : localizedName(this.line, event.toSpeciesID, this.state.language)
         this.pendingEvents.push({ kind: 'evolved', speciesID: event.toSpeciesID, name })
+        this.eventUntil = this.now + EVENT_WINDOW_MS
+      }
+      if (event.kind === 'shinyRegistered') {
+        this.pendingEvents.push({
+          kind: 'shinyRegistered',
+          speciesID: event.speciesID,
+          name: this.speciesName(event.speciesID),
+        })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
       if (event.kind === 'dittoRevealed') {
@@ -1403,6 +1446,10 @@ export class CompanionStore {
     let next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
     // The hatchling is obtained, and whatever the egg carried over is its experience already.
     next = creditSpeciesXP(unlockSpecies(next, baseID), baseID, mon.usedAtStage)
+    // A shiny hatched completes its species' shiny bar, as a shiny caught does (C5) — unless it
+    // is a Ditto in disguise: the species it shows is not its own, and the reveal registers
+    // Ditto's shiny instead (`applyUsage`).
+    if (mon.isShiny && mon.dittoDisguise === undefined) next = registerShiny(next, baseID)
     // The guarantee is consumed here — the single consumption point.
     delete next.eggTier
     delete next.pendingHatchID

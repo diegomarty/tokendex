@@ -801,6 +801,8 @@ export interface SpeciesProgress {
   pendingShare?: number
   /** Experience toward the shiny form, fed only once registered. */
   shinyXP?: number
+  /** Of `shinyXP`, how much was bought with the wallet — capped at `shinyBoostShare` of the bar. */
+  shinyBoosted?: number
   /** The shiny form was obtained — caught, hatched or raised — even before its bar fills. */
   shinyUnlocked?: boolean
   shinyRegistered?: boolean

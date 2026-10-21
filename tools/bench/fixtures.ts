@@ -917,6 +917,50 @@ export const FIXTURES: Fixture[] = [
       dex: [caught([129, 130], 6)],
     }),
   },
+  ...(['shinydex', 'shinydex-broke'] as const).map((id) => ({
+    id,
+    label:
+      id === 'shinydex'
+        ? 'Shinydex: not registered, registered at 0%, at 30% with boosts, and a shiny registered'
+        : 'Shinydex: the same, with an empty wallet (no boosts, only the hint)',
+    state: scene({
+      spendable: id === 'shinydex' ? 1_204_000_000 : 0,
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      dex: [caught([1, 2, 3], 9), caught([129, 130], 4)],
+      species: {
+        // #1 registered, its shiny bar at 0%; #2 at 30% of a common form's 400M; #3 unlocked only.
+        1: {
+          ...freshSpeciesProgress(),
+          unlocked: true,
+          registered: true,
+          lineRarity: 'common',
+          shinyXP: 0,
+        },
+        2: {
+          ...freshSpeciesProgress(),
+          unlocked: true,
+          registered: true,
+          lineRarity: 'common',
+          shinyUnlocked: true,
+          shinyXP: 120_000_000,
+        },
+        3: { ...freshSpeciesProgress(), unlocked: true, xp: 6_000_000, threshold: 25_000_000 },
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'common' },
+        5: { ...freshSpeciesProgress(), unlocked: true, xp: 5_950_000, threshold: 17_000_000 },
+        129: {
+          ...freshSpeciesProgress(),
+          unlocked: true,
+          registered: true,
+          lineRarity: 'common',
+          shinyUnlocked: true,
+          shinyRegistered: true,
+        },
+        130: { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'common' },
+      },
+    }),
+  })),
   {
     id: 'limits-hot',
     label: 'Límites al límite (aviso y crítico)',

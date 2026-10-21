@@ -241,17 +241,20 @@ export function dexSpecies(
  * The species Pokédex's two counts: what is owned (the collection — a seen species is not) and
  * what is registered (the completion). One pass, so the two can never disagree with the list.
  */
-export function dexTally(species: readonly Pick<DexSpecies, 'status'>[]): {
+export function dexTally(species: readonly Pick<DexSpecies, 'status' | 'shiny'>[]): {
   owned: number
   registered: number
+  shinyRegistered: number
 } {
   let owned = 0
   let registered = 0
+  let shinyRegistered = 0
   for (const sp of species) {
     if (sp.status !== 'seen') owned++
     if (sp.status === 'registered') registered++
+    if (sp.shiny === 'registered') shinyRegistered++
   }
-  return { owned, registered }
+  return { owned, registered, shinyRegistered }
 }
 
 /** Catch-log counts by rarity, per individual. The species Pokédex uses `dexSpecies`. */

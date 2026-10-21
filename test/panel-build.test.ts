@@ -795,7 +795,7 @@ describe('the Pokédex summary', () => {
         },
       }),
     })
-    expect(panel.dexSummary).toEqual({
+    expect(panel.dexSummary).toMatchObject({
       owned: 2,
       registered: 1,
       total: ANIMATED_SPECIES_MAX,
@@ -844,5 +844,88 @@ describe('the finished-companion setting', () => {
   it('reads the setting off the save, moving on by default', () => {
     expect(build().keepCompletedCompanion).toBe(false)
     expect(build({ state: state({ keepCompletedCompanion: true }) }).keepCompletedCompanion).toBe(true)
+  })
+})
+
+describe('the shiny bar in the Pokédex', () => {
+  const target = 8 * PokemonBalance.graduationTotal('common')
+  const registered = (over: Partial<SpeciesProgress> = {}) =>
+    speciesEntry({
+      unlocked: true,
+      registered: true,
+      xp: 1_000,
+      threshold: 1_000,
+      lineRarity: 'common',
+      ...over,
+    })
+  const cell = (s: CompanionState, id = 7) => build({ state: s }).dexSpecies.find((c) => c.id === id)!
+
+  // [trigger branch] No bar before the species is registered: there is nothing to fill yet.
+  it('has no shiny bar for a species not registered', () => {
+    expect(
+      cell(state({ species: { 7: speciesEntry({ unlocked: true, xp: 10 }) } })).shinyBar,
+    ).toBeUndefined()
+  })
+
+  it('shows how far the bar is, and offers a tenth and the most that can be bought', () => {
+    const s = state({
+      usedSinceInstall: 10_000_000_000,
+      species: { 7: registered({ shinyXP: target * 0.3 }) },
+    })
+    const bar = cell(s).shinyBar!
+    expect(bar.percent).toBe(30)
+    expect(bar.text).toBe(D.shinyBarText('en', 30, compact(target * 0.3), compact(target)))
+    expect(bar.boosts.map((b) => b.amount)).toEqual([target / 10, target / 2])
+    expect(bar.boosts[0]).toMatchObject({
+      text: `+${compact(target / 10)}`,
+      priceText: compact(target / 10),
+    })
+    expect(bar.boostHint).toBeUndefined()
+  })
+
+  // [trigger branch] Nothing to buy says why: the wallet is empty, or half the bar was bought.
+  it('says why nothing can be bought', () => {
+    expect(cell(state({ species: { 7: registered() } })).shinyBar?.boostHint).toBe(
+      D.shinyBoostNoFundsText('en'),
+    )
+    const capped = state({
+      usedSinceInstall: 10_000_000_000,
+      species: { 7: registered({ shinyXP: target / 2, shinyBoosted: target / 2 }) },
+    })
+    expect(cell(capped).shinyBar?.boostHint).toBe(D.shinyBoostCappedText('en', 50))
+  })
+
+  // [trigger branch] A shiny caught before the species is registered: its Shinydex entry is
+  // complete, and the cell must say so rather than draw an empty bar.
+  it('gives a registered shiny its full bar even before the species is registered', () => {
+    const shinyFirst = state({
+      species: { 7: speciesEntry({ unlocked: true, shinyUnlocked: true, shinyRegistered: true }) },
+    })
+    expect(cell(shinyFirst).shinyBar).toMatchObject({ percent: 100, text: D.shinyRegisteredText('en') })
+  })
+
+  it('reads a registered shiny as done, with nothing to sell', () => {
+    const bar = cell(
+      state({ species: { 7: registered({ shinyRegistered: true, shinyXP: target }) } }),
+    ).shinyBar!
+    expect(bar).toMatchObject({ percent: 100, text: D.shinyRegisteredText('en'), boosts: [] })
+    expect(bar.boostHint).toBeUndefined()
+  })
+
+  it('counts the Shinydex in the summary', () => {
+    const s = state({
+      species: {
+        7: registered({ shinyRegistered: true }),
+        8: registered(),
+        9: speciesEntry({ unlocked: true, shinyUnlocked: true }),
+      },
+    })
+    const summary = build({ state: s }).dexSummary
+    expect(summary).toMatchObject({
+      shinyRegistered: 1,
+      shinyPercent: Math.min(100, Math.round(100 / ANIMATED_SPECIES_MAX)),
+      shinyProgressText: D.dexProgressText(1, ANIMATED_SPECIES_MAX),
+    })
+    expect(summary.shinySegmentText).toContain('(1)')
   })
 })

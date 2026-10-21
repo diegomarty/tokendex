@@ -31,6 +31,14 @@ export type PanelRequestKind =
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setKeepCompleted'; keep: boolean }
+  | {
+      kind: 'boostShiny'
+      speciesID: number
+      amount: number
+      title: string
+      priceText: string
+      confirmLabel?: string
+    }
   | { kind: 'setRefreshInterval'; seconds: number }
   | { kind: 'setCompanion'; speciesID: number }
   | { kind: 'chooseStarter'; speciesID: number }
@@ -168,6 +176,19 @@ export class PanelSurface {
       case 'setKeepCompleted':
         this.onRequest({ kind: 'setKeepCompleted', keep: message.keep === true })
         break
+      // Forwarded as sent; the host guards the numbers and the worker re-checks the room.
+      case 'boostShiny': {
+        const request: PanelRequestKind = {
+          kind: 'boostShiny',
+          speciesID: message.speciesID,
+          amount: message.amount,
+          title: message.title,
+          priceText: message.priceText,
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
       case 'setRefreshInterval':
         this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })
         break

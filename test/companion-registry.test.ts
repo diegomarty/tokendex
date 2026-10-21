@@ -10,6 +10,7 @@ import {
 } from '../src/core/companion/model.js'
 import {
   rareCandyXP,
+  registerShiny,
   registerXP,
   registrationPercent,
   seedRegistry,
@@ -139,5 +140,40 @@ describe('seedRegistry', () => {
     expect(seeded.usedSinceInstall).toBe(before.usedSinceInstall)
     expect(seeded.spentTokens).toBe(before.spentTokens)
     expect(seeded.dex).toEqual(before.dex)
+  })
+})
+
+describe('registering a shiny', () => {
+  const charmander = mon({
+    baseID: 4,
+    pathIDs: [4],
+    plannedPathIDs: [4, 5],
+    stageIndex: 0,
+    totalForms: 2,
+  })
+  const owned = { 4: { ...freshSpeciesProgress(), unlocked: true, lineRarity: 'rare' as const } }
+
+  // [trigger branch] The one path every shiny registration takes: the flags, the bar full, and
+  // the companion on stage wearing it when it is that species.
+  it('registers the shiny and dresses the companion that is that species', () => {
+    const next = registerShiny(state({ active: charmander, species: owned }), 4)
+    expect(next.species[4]).toMatchObject({
+      shinyRegistered: true,
+      shinyUnlocked: true,
+      shinyXP: 8 * PokemonBalance.graduationTotal('rare'),
+    })
+    expect(next.active?.isShiny).toBe(true)
+  })
+
+  it('leaves a companion of another species as it is', () => {
+    const next = registerShiny(state({ active: mon(), species: owned }), 4)
+    expect(next.active?.isShiny).toBe(false)
+  })
+
+  // [trigger branch] A Ditto in disguise is not the species it shows: dressing it would leak the
+  // disguise and leave Ditto shiny without a registered shiny of its own.
+  it('never dresses a Ditto in disguise', () => {
+    const disguised = { ...charmander, dittoDisguise: 4 }
+    expect(registerShiny(state({ active: disguised, species: owned }), 4).active?.isShiny).toBe(false)
   })
 })

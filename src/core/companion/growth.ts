@@ -18,7 +18,7 @@ import {
   evoNodeWithID,
   freshSpeciesProgress,
 } from './model.js'
-import { meterStart, shareXP } from './registry.js'
+import { meterStart, obtainShiny, shareXP, shinyTarget } from './registry.js'
 
 /** Injectable randomness. Returns a non-negative integer. */
 export type RNG = () => number
@@ -26,6 +26,8 @@ export type RNG = () => number
 export type GrowthEvent =
   | { kind: 'evolved'; toSpeciesID: number }
   | { kind: 'graduated' }
+  /** The species on stage filled its shiny bar: it is registered shiny, and the companion is too. */
+  | { kind: 'shinyRegistered'; speciesID: number }
   /**
    * The disguise dropped. It carries the species that was being impersonated because the
    * state no longer holds it the instant the reveal lands, and the caller needs that name
@@ -267,6 +269,24 @@ export function applyUsage(
     }
     put(id, fixed)
   }
+  /**
+   * A registered species' surplus goes to its shiny bar, capped at `shinyTarget`. Filling it
+   * registers the shiny and dresses the companion. Nothing moves without the line's rarity (no
+   * requirement to measure against) or once the shiny is registered.
+   */
+  const shinyCredit = (id: number, amount: number): void => {
+    const p = entry(id)
+    if (amount <= 0 || p.shinyRegistered === true || p.lineRarity === undefined) return
+    const target = shinyTarget(p.lineRarity)
+    const shinyXP = Math.min(target, (p.shinyXP ?? 0) + amount)
+    if (shinyXP < target) {
+      put(id, { ...p, shinyXP })
+      return
+    }
+    put(id, { ...p, shinyXP, shinyRegistered: true, shinyUnlocked: true })
+    current = { ...current, isShiny: true }
+    events.push({ kind: 'shinyRegistered', speciesID: id })
+  }
   const register = (id: number, threshold: number, overflow: number): void => {
     const p = entry(id)
     put(id, { ...p, xp: Math.max(threshold, p.xp - overflow), registered: true, unlocked: true })
@@ -321,6 +341,9 @@ export function applyUsage(
       current = revealedDitto(current)
       credit(PokemonOdds.dittoSpeciesID, moved)
       fix(PokemonOdds.dittoSpeciesID, current)
+      // A shiny Ditto hatched in disguise registers its shiny now, as Ditto — the hatch held it
+      // back so the disguise species would not get a shiny it never had.
+      if (current.isShiny) put(PokemonOdds.dittoSpeciesID, obtainShiny(entry(PokemonOdds.dittoSpeciesID)))
       events.push({ kind: 'dittoRevealed', disguisedAsSpeciesID })
       // One reveal per pass: `line` still describes the disguise, so there is nothing here
       // that could legitimately evolve or graduate a Ditto. Growth resumes once the caller
@@ -338,14 +361,20 @@ export function applyUsage(
     const here = currentSpeciesID(current)
     const wasRegistered = entry(here).registered
     if (node.children.length === 0) {
-      register(here, threshold, current.usedAtStage - threshold)
+      const surplus = current.usedAtStage - threshold
+      register(here, threshold, surplus)
       current = { ...current, usedAtStage: threshold }
+      shinyCredit(here, surplus)
       if (wasRegistered) break
       events.push({ kind: 'graduated' })
       return { mon: current, events, graduated: true, notes, species }
     }
     if (wasRegistered && !subtreeHasUnregistered(node, species)) {
+      const surplus = current.usedAtStage - threshold
+      const p = entry(here)
+      put(here, { ...p, xp: Math.max(threshold, p.xp - surplus) })
       current = { ...current, usedAtStage: threshold }
+      shinyCredit(here, surplus)
       break
     }
 
