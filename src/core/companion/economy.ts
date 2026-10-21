@@ -55,6 +55,12 @@ export const EconomyBalance = {
    * line's rarity, above the cheapest catch of that band (`test/economy.test.ts`); no legendary
    * lure — they have their own roads (milestones, streak, trail).
    */
+  /**
+   * Daily and weekly challenges (phase 7b), paid into `earnedTokens` on completion. A day of
+   * challenges never pays more than the catches it asks for cost (`test/economy.test.ts`).
+   */
+  challenge: { dailyReward: 5_000_000, weeklyReward: 40_000_000 },
+
   lure: {
     durationMs: 24 * 3_600_000,
     lineWeight: 40,

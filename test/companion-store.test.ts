@@ -1901,6 +1901,23 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.drainEvents().some((e) => e.kind === 'medalEarned')).toBe(false)
   })
 
+  // [trigger branch] The fold brings the board to today and counts the tokens used; completing a
+  // challenge pays its reward and announces it.
+  it('keeps today’s challenges and pays one completed', async () => {
+    const s = store()
+    await s.update(obs(0, '2026-10-21'))
+    const board = s.snapshot().challenges!
+    expect(board.day).toBe('2026-10-21')
+    const tokens = board.items.find((c) => c.kind === 'useTokens' && c.period === 'day')
+    // 2026-10-21 deals a daily "use tokens" challenge (the generator is deterministic by date).
+    expect(tokens).toBeDefined()
+    await s.update(obs(5_000_000, '2026-10-21'))
+    expect(s.snapshot().challenges!.items.find((c) => c.id === tokens!.id)?.done).toBe(true)
+    expect(s.drainEvents()).toContainEqual(expect.objectContaining({ kind: 'challengeDone' }))
+    await s.update(obs(5_000_000, '2026-10-22'))
+    expect(s.snapshot().challenges!.day).toBe('2026-10-22')
+  })
+
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
     const s = await hatched()
     const companion = s.snapshot().active!.baseID

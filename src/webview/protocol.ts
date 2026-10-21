@@ -169,6 +169,29 @@ export interface PanelLureOffer {
   enabled: boolean
 }
 
+/** The challenges board on Home. Everything formatted in the core. */
+export interface PanelChallenges {
+  /** "Challenges". */
+  heading: string
+  items: PanelChallenge[]
+}
+
+export interface PanelChallenge {
+  id: string
+  /** Style token: `day` or `week`. Never shown as text — `periodText` is the label. */
+  period: string
+  periodText: string
+  /** "Catch a Fire-type Pokémon". */
+  text: string
+  /** "1 / 3". */
+  progressText: string
+  /** 0..100. */
+  percent: number
+  done: boolean
+  /** "+5M". */
+  rewardText: string
+}
+
 /** The medal catalogue, in its order. */
 export interface PanelMedals {
   earned: number
@@ -638,6 +661,8 @@ export interface PanelState {
   lure?: PanelLure
   /** Medals: the catalogue with what is earned, and the count. */
   medals: PanelMedals
+  /** Today's and this week's challenges, for Home. Absent before the first fold of a day. */
+  challenges?: PanelChallenges
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */

@@ -23,6 +23,7 @@ import type {
   PanelEncounterResult,
   PanelMoodMeter,
   PanelLure,
+  PanelChallenges,
   PanelMedals,
   PanelLureOffer,
   PanelShinyBar,
@@ -552,6 +553,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     dexSpecies: species,
     dexSummary: dexSummary(state, species, dexLog.length, lang),
     medals: medalsPanel(state, lang),
+    ...challengesPanel(state, lang),
     eggs: eggsPanel(state, lang),
     dexLog,
     dexLogFilters,
@@ -737,6 +739,27 @@ function lureOffer(
 /** A lured species' name: its number, as the Pokédex names a species it has no name for. */
 function lureName(speciesID: number): string {
   return `#${speciesID}`
+}
+
+/** The challenges board for Home, formatted; nothing before the first fold of a day. */
+function challengesPanel(state: CompanionState, lang: AppLanguage): { challenges?: PanelChallenges } {
+  const board = state.challenges
+  if (board === undefined) return {}
+  return {
+    challenges: {
+      heading: D.challengesHeading(lang),
+      items: board.items.map((c) => ({
+        id: c.id,
+        period: c.period,
+        periodText: D.challengePeriodText(lang, c.period),
+        text: D.challengeText(lang, c),
+        progressText: D.dexProgressText(c.progress, c.target),
+        percent: Math.min(100, Math.floor((100 * c.progress) / c.target)),
+        done: c.done,
+        rewardText: `+${compact(D.challengeReward(c))}`,
+      })),
+    },
+  }
 }
 
 /**

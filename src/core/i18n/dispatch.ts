@@ -5,12 +5,21 @@
  * flat four-way tables.
  */
 
-import type { AppLanguage, BallKind, BerryKind, ItemKind, Rarity } from '../companion/model.js'
+import type {
+  AppLanguage,
+  BallKind,
+  BerryKind,
+  ItemKind,
+  PokemonType,
+  Rarity,
+} from '../companion/model.js'
 import { Pokeball, RareCandy, isBallKind } from '../companion/model.js'
 import type { TurnOutcome } from '../companion/encounters.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
 import type { RegionID } from '../companion/regions.js'
+import type { Challenge } from '../companion/challenges.js'
+import { EconomyBalance } from '../companion/economy.js'
 
 const INDEX: Record<AppLanguage, 0 | 1 | 2 | 3> = { ko: 0, en: 1, ja: 2, es: 3 }
 const t = (lang: AppLanguage, ko: string, en: string, ja: string, es: string): string =>
@@ -1090,6 +1099,7 @@ export type CelebrationEvent =
   | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'shinyRegistered'; name: string }
   | { kind: 'medalEarned'; medalID: string }
+  | { kind: 'challengeDone'; challenge: Challenge }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
@@ -1139,6 +1149,14 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `${event.name} graduated into the Pokédex!`,
         `${event.name}がずかんにとうろくされた！`,
         `¡${event.name} se ha graduado a la Pokédex!`,
+      )
+    case 'challengeDone':
+      return t(
+        lang,
+        `✅ 도전 완료: ${challengeText(lang, event.challenge)} (토큰 +${compact(challengeReward(event.challenge))})`,
+        `✅ Challenge done: ${challengeText(lang, event.challenge)} (+${compact(challengeReward(event.challenge))} tokens)`,
+        `✅ チャレンジ たっせい: ${challengeText(lang, event.challenge)} (トークン +${compact(challengeReward(event.challenge))})`,
+        `✅ Reto cumplido: ${challengeText(lang, event.challenge)} (+${compact(challengeReward(event.challenge))} tokens)`,
       )
     case 'medalEarned':
       return t(
@@ -1752,4 +1770,108 @@ export function medalsHeading(lang: AppLanguage, earned: number, total: number):
     `メダル (${earned} / ${total})`,
     `Medallas (${earned} / ${total})`,
   )
+}
+
+// MARK: - Challenges (phase 7b)
+
+/** What a challenge's reward is: the table's, by period. */
+export function challengeReward(challenge: Pick<Challenge, 'period'>): number {
+  return challenge.period === 'day'
+    ? EconomyBalance.challenge.dailyReward
+    : EconomyBalance.challenge.weeklyReward
+}
+
+/** A type's name, as each language's games print it. */
+export function typeName(lang: AppLanguage, type: PokemonType): string {
+  const names: Record<PokemonType, [string, string, string, string]> = {
+    normal: ['노말', 'Normal', 'ノーマル', 'Normal'],
+    fire: ['불꽃', 'Fire', 'ほのお', 'Fuego'],
+    water: ['물', 'Water', 'みず', 'Agua'],
+    electric: ['전기', 'Electric', 'でんき', 'Eléctrico'],
+    grass: ['풀', 'Grass', 'くさ', 'Planta'],
+    ice: ['얼음', 'Ice', 'こおり', 'Hielo'],
+    fighting: ['격투', 'Fighting', 'かくとう', 'Lucha'],
+    poison: ['독', 'Poison', 'どく', 'Veneno'],
+    ground: ['땅', 'Ground', 'じめん', 'Tierra'],
+    flying: ['비행', 'Flying', 'ひこう', 'Volador'],
+    psychic: ['에스퍼', 'Psychic', 'エスパー', 'Psíquico'],
+    bug: ['벌레', 'Bug', 'むし', 'Bicho'],
+    rock: ['바위', 'Rock', 'いわ', 'Roca'],
+    ghost: ['고스트', 'Ghost', 'ゴースト', 'Fantasma'],
+    dragon: ['드래곤', 'Dragon', 'ドラゴン', 'Dragón'],
+    dark: ['악', 'Dark', 'あく', 'Siniestro'],
+    steel: ['강철', 'Steel', 'はがね', 'Acero'],
+    fairy: ['페어리', 'Fairy', 'フェアリー', 'Hada'],
+  }
+  const [ko, en, ja, es] = names[type]
+  return t(lang, ko, en, ja, es)
+}
+
+/** What a challenge asks for, in a sentence: "Catch 3 Pokémon". */
+export function challengeText(lang: AppLanguage, challenge: Challenge): string {
+  const n = challenge.target
+  switch (challenge.kind) {
+    case 'catch':
+      return t(
+        lang,
+        `포켓몬 ${n}마리 잡기`,
+        `Catch ${n} Pokémon`,
+        `ポケモンを ${n}ひき つかまえる`,
+        `Captura ${n} Pokémon`,
+      )
+    case 'catchType': {
+      const type = challenge.type === undefined ? '' : typeName(lang, challenge.type)
+      return n === 1
+        ? t(
+            lang,
+            `${type} 타입 포켓몬 잡기`,
+            `Catch a ${type}-type Pokémon`,
+            `${type}タイプの ポケモンを つかまえる`,
+            `Captura un Pokémon de tipo ${type}`,
+          )
+        : t(
+            lang,
+            `${type} 타입 포켓몬 ${n}마리 잡기`,
+            `Catch ${n} ${type}-type Pokémon`,
+            `${type}タイプの ポケモンを ${n}ひき つかまえる`,
+            `Captura ${n} Pokémon de tipo ${type}`,
+          )
+    }
+    case 'newSpecies':
+      return n === 1
+        ? t(
+            lang,
+            '새로운 종을 도감에 추가하기',
+            'Add a new species to the Pokédex',
+            'あたらしい しゅを ずかんに くわえる',
+            'Añade una especie nueva a la Pokédex',
+          )
+        : t(
+            lang,
+            `새로운 종 ${n}종을 도감에 추가하기`,
+            `Add ${n} new species to the Pokédex`,
+            `あたらしい しゅを ${n}しゅ ずかんに くわえる`,
+            `Añade ${n} especies nuevas a la Pokédex`,
+          )
+    case 'useTokens':
+      return t(
+        lang,
+        `토큰 ${compact(n)} 쓰기`,
+        `Use ${compact(n)} tokens`,
+        `トークンを ${compact(n)} つかう`,
+        `Usa ${compact(n)} tokens`,
+      )
+  }
+}
+
+/** The challenges board's heading. */
+export function challengesHeading(lang: AppLanguage): string {
+  return t(lang, '도전', 'Challenges', 'チャレンジ', 'Retos')
+}
+
+/** A challenge's period label. */
+export function challengePeriodText(lang: AppLanguage, period: 'day' | 'week'): string {
+  return period === 'day'
+    ? t(lang, '오늘', 'Today', 'きょう', 'Hoy')
+    : t(lang, '이번 주', 'This week', 'こんしゅう', 'Esta semana')
 }

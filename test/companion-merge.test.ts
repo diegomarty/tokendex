@@ -408,6 +408,29 @@ describe('the registry', () => {
   })
 
   // The lure is bought with the winner's wallet, so it travels with the winner's spend.
+  // [trigger branch] The same day on both sides: progress is the furthest of either, but paid is
+  // the winner's — the reward lives in the winner's `earnedTokens`, so a challenge only the loser
+  // completed is paid on the next settle rather than marked done with nothing in the wallet.
+  it('keeps the furthest challenge progress, and the winner’s paid flags', () => {
+    const item = {
+      id: 'day:2026-10-21:catch',
+      period: 'day' as const,
+      kind: 'catch' as const,
+      target: 3,
+      progress: 0,
+      done: false,
+    }
+    const board = (progress: number, done: boolean) => ({
+      day: '2026-10-21',
+      week: '2026-W43',
+      items: [{ ...item, progress, done }],
+    })
+    const local = save({ revision: { [A]: 4, [B]: 7 }, challenges: board(1, false) })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, challenges: board(3, true) })
+    const merged = mergeSaves(local, remote).state.challenges!
+    expect(merged.items[0]).toMatchObject({ progress: 3, done: false })
+  })
+
   // Medals only grow: a medal celebrated on either side stays celebrated, so it is never
   // announced twice after a sync.
   it('keeps every medal either side celebrated', () => {

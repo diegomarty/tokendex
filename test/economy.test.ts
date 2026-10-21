@@ -135,3 +135,14 @@ describe('the lure', () => {
     expect('legendary' in EconomyBalance.lure.price).toBe(false)
   })
 })
+
+describe('challenges', () => {
+  // A day of challenges pays less than the catches it asks for cost, so they reward playing,
+  // never replace it; the weekly one pays more than a day's, for the longer commitment.
+  it('pays a daily challenge less than three of the cheapest catches, and the weekly more', () => {
+    expect(EconomyBalance.challenge.dailyReward).toBeLessThan(3 * cheapestCatch('common'))
+    expect(EconomyBalance.challenge.weeklyReward).toBeGreaterThan(
+      2 * EconomyBalance.challenge.dailyReward,
+    )
+  })
+})

@@ -8,6 +8,7 @@
  */
 
 import { MEDALS } from './medals.js'
+import type { Challenge, ChallengeBoard } from './challenges.js'
 import {
   APP_LANGUAGES,
   COMPANION_STATE_SCHEMA,
@@ -18,6 +19,7 @@ import {
   type DexEntry,
   type MonState,
   NATURES,
+  isPokemonType,
   type PokemonNature,
   RARITIES,
   type Rarity,
@@ -159,6 +161,43 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
   // original meaning, so a save written before encounters existed needs no migration.
   if (value['source'] === 'wild') entry.source = 'wild'
   return entry
+}
+
+/**
+ * A challenge board: a day, a week, and the challenges that read. A challenge of an unknown kind
+ * or period is dropped (a newer build's), the board without its dates is.
+ */
+function decodeChallengeBoard(value: unknown): ChallengeBoard | undefined {
+  if (!isObject(value)) return undefined
+  const day = lenientOptional(value, 'day', isString)
+  const week = lenientOptional(value, 'week', isString)
+  if (day === undefined || week === undefined || !Array.isArray(value['items'])) return undefined
+  const items: Challenge[] = []
+  for (const raw of value['items']) {
+    if (!isObject(raw)) continue
+    const id = lenientOptional(raw, 'id', isString)
+    const period = raw['period']
+    const kind = raw['kind']
+    const target = lenientOptional(raw, 'target', isInt)
+    if (id === undefined || target === undefined || target <= 0) continue
+    if (period !== 'day' && period !== 'week') continue
+    if (kind !== 'catch' && kind !== 'catchType' && kind !== 'newSpecies' && kind !== 'useTokens')
+      continue
+    const challenge: Challenge = {
+      id,
+      period,
+      kind,
+      target,
+      progress: Math.min(target, Math.max(0, lenient(raw, 'progress', isInt, 0))),
+      done: raw['done'] === true,
+    }
+    if (kind === 'catchType') {
+      if (!isPokemonType(raw['type'])) continue
+      challenge.type = raw['type']
+    }
+    items.push(challenge)
+  }
+  return { day, week, items }
 }
 
 /** All or nothing: a lure aimed at an impossible species, or with no end, is dropped. */
@@ -506,6 +545,8 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     state.medals = value['medals'].filter((id): id is string => typeof id === 'string' && known.has(id))
   }
   if (value['medalsSeeded'] === true) state.medalsSeeded = true
+  const challenges = decodeChallengeBoard(value['challenges'])
+  if (challenges !== undefined) state.challenges = challenges
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 

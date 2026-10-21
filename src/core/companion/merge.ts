@@ -186,6 +186,22 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.language = local.language
   if (local.trainerID !== undefined) state.trainerID = local.trainerID
   else delete state.trainerID
+  // Challenges: the narrative winner's board. On the same day and week, each challenge keeps the
+  // furthest progress of either side but the winner's paid flag — the reward lives in the winner's
+  // `earnedTokens`, so one only the loser completed is paid on the next settle, not lost.
+  const lb = local.challenges
+  const rb = remote.challenges
+  if (lb !== undefined && rb !== undefined && lb.day === rb.day && lb.week === rb.week) {
+    const winner = state.challenges ?? lb
+    const other = winner === lb ? rb : lb
+    state.challenges = {
+      ...winner,
+      items: winner.items.map((c) => {
+        const twin = other.items.find((o) => o.id === c.id)
+        return twin === undefined ? c : { ...c, progress: Math.max(c.progress, twin.progress) }
+      }),
+    }
+  }
   // Medals only grow: one celebrated on either side stays celebrated, never announced twice.
   const medals = new Set([...(local.medals ?? []), ...(remote.medals ?? [])])
   if (medals.size > 0) state.medals = [...medals]

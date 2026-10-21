@@ -6,6 +6,8 @@
  * it is are the valuable part — several encode balance traps that were found the hard way.
  */
 
+import type { ChallengeBoard } from './challenges.js'
+
 // MARK: - Display state
 
 /** Decided by usage and burn rate; drives sprite motion and the status phrase. */
@@ -1096,6 +1098,8 @@ export interface CompanionState {
   medals?: string[]
   /** Medals were seeded for this save: what it met before medals existed was given silently. */
   medalsSeeded?: boolean
+  /** Today's challenges and this week's (`challenges.ts`). Regenerated as the date moves. */
+  challenges?: ChallengeBoard
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**

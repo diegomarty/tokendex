@@ -304,6 +304,22 @@ describe('CompanionState decoding', () => {
     expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
   })
 
+  it('keeps a challenge board, dropping what is not a challenge', () => {
+    const good = {
+      id: 'day:2026-10-21:catch',
+      period: 'day',
+      kind: 'catch',
+      target: 3,
+      progress: 1,
+      done: false,
+    }
+    const board = decodeCompanionState({
+      challenges: { day: '2026-10-21', week: '2026-W43', items: [good, { ...good, kind: 'nope' }, 'x'] },
+    }).challenges
+    expect(board).toEqual({ day: '2026-10-21', week: '2026-W43', items: [good] })
+    expect(decodeCompanionState({ challenges: { items: [] } }).challenges).toBeUndefined()
+  })
+
   it('keeps the medals celebrated, dropping what is not a medal', () => {
     const state = decodeCompanionState({
       medals: ['registered-1', 'nope', 7, 'shiny-1'],

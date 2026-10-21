@@ -126,6 +126,7 @@ import {
 import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
 import { isStarterID } from './starters.js'
 import { awardMedals } from './medals.js'
+import { type Challenge, ensureChallenges, progressCatch, progressTokens } from './challenges.js'
 import { boostShiny, setLure } from './shop.js'
 import { EconomyBalance } from './economy.js'
 
@@ -152,6 +153,8 @@ export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
   | { kind: 'evolved'; speciesID: number; name: string }
   | { kind: 'graduated'; name: string }
+  /** A challenge completed and paid (`challenges.ts`). */
+  | { kind: 'challengeDone'; challenge: Challenge }
   /** A medal newly met (`medals.ts`); its name is the dispatcher's, from the id. */
   | { kind: 'medalEarned'; medalID: string }
   /** The companion filled its shiny bar: its shiny form is registered, and it wears it now. */
@@ -741,7 +744,16 @@ export class CompanionStore {
 
     // Re-arms the "full" notice once expiry or the player has made room.
     this.noteQueueEdge()
+    // Today's challenges, then the tokens this fold used toward them.
+    this.announceChallenges(ensureChallenges(this.state, observation.todayDate))
+    this.announceChallenges(progressTokens(this.state, delta))
     this.awardMedalsNow()
+  }
+
+  /** Takes a challenge step's state and announces each challenge it completed (and paid). */
+  private announceChallenges(step: { state: CompanionState; done: Challenge[] }): void {
+    this.state = step.state
+    for (const challenge of step.done) this.pendingEvents.push({ kind: 'challengeDone', challenge })
   }
 
   /**
@@ -1100,8 +1112,18 @@ export class CompanionStore {
     // Under the lock and against the re-read queue: a Pokémon another window already caught
     // is simply not there, so the turn answers `unknownEncounter` instead of resurrecting it.
     const result = await this.transact(() => {
+      const target = this.state.wild.find((e) => e.id === encounterID)
       const taken = takeTurn(this.state, encounterID, action, this.rng, this.now)
       this.state = taken.state
+      // A catch counts toward the challenges: its types, and whether it was new to the Pokédex.
+      if (taken.outcome.kind === 'caught') {
+        this.announceChallenges(
+          progressCatch(this.state, {
+            types: target?.types,
+            isNew: taken.outcome.registeredPercent !== undefined,
+          }),
+        )
+      }
 
       // No pendingEvent on a catch: the player is looking at the panel — they just clicked —
       // so a native toast would only repeat what the animation is showing. The event window

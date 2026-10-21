@@ -1026,3 +1026,48 @@ describe('medals and regions in the panel', () => {
     expect(kanto.name).toBe(D.regionName('en', 'kanto'))
   })
 })
+
+describe('the challenges in the panel', () => {
+  it('lists the challenges formatted, with their progress and reward', () => {
+    const board = {
+      day: '2026-10-21',
+      week: '2026-W43',
+      items: [
+        {
+          id: 'day:2026-10-21:catch',
+          period: 'day' as const,
+          kind: 'catch' as const,
+          target: 3,
+          progress: 1,
+          done: false,
+        },
+        {
+          id: 'week:2026-W43:catchType',
+          period: 'week' as const,
+          kind: 'catchType' as const,
+          target: 3,
+          type: 'fire' as const,
+          progress: 3,
+          done: true,
+        },
+      ],
+    }
+    const panel = build({ state: state({ challenges: board }) }).challenges!
+    expect(panel.heading).toBe(D.challengesHeading('en'))
+    expect(panel.items[0]).toEqual({
+      id: 'day:2026-10-21:catch',
+      period: 'day',
+      periodText: D.challengePeriodText('en', 'day'),
+      text: D.challengeText('en', board.items[0]!),
+      progressText: '1 / 3',
+      percent: 33,
+      done: false,
+      rewardText: `+${compact(EconomyBalance.challenge.dailyReward)}`,
+    })
+    expect(panel.items[1]).toMatchObject({ done: true, percent: 100, text: 'Catch 3 Fire-type Pokémon' })
+  })
+
+  it('has no board before the first fold of a day', () => {
+    expect(build().challenges).toBeUndefined()
+  })
+})
