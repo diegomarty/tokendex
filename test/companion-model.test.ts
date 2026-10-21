@@ -289,6 +289,22 @@ describe('CompanionState decoding', () => {
     expect(state.species[5]?.nature).toBeUndefined()
   })
 
+  // [trigger branch] A position that contradicts the species it prices is dropped: a base must be
+  // its own line's base, an evolved form must not be.
+  it('drops a wild line that does not fit its species', () => {
+    const encounter = { id: 'w1', speciesID: 6, captureRate: 45, rarity: 'rare' }
+    const decode = (line: unknown) =>
+      decodeCompanionState({ wild: [{ ...encounter, line }] }).wild[0]?.line
+    expect(decode({ baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'rare' })).toEqual({
+      baseID: 4,
+      stageIndex: 2,
+      totalForms: 3,
+      rarity: 'rare',
+    })
+    expect(decode({ baseID: 6, stageIndex: 2, totalForms: 3, rarity: 'rare' })).toBeUndefined()
+    expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
+  })
+
   it('keeps that the companion on stage was chosen by hand while registered', () => {
     const active = {
       baseID: 1,

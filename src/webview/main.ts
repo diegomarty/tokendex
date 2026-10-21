@@ -512,24 +512,32 @@ function renderCatchBanner(): string {
       <span class="catch-detail">${escapeHTML(banner.detail)}</span>
     </div>`
   }
-  // A new species: the Pokémon itself, and its registration bar with the share just earned
-  // marked as a span [from, to] — placed by `placeSpans` after the paint, since the CSP allows
-  // no inline style.
+  // A new species, shown as the Pokédex shows a new entry: the device's red casing with its
+  // lens, lights and the entry's number, the Pokémon on the screen, and its registration bar
+  // with the share just earned marked as a span [from, to] — placed by `placeSpans` after the
+  // paint, since the CSP allows no inline style.
   return `<div class="catch-banner new rich${entering}" aria-hidden="true">
       <span class="catch-shine"></span>
-      <span class="catch-mon-wrap">
-        <img class="catch-mon" src="${sceneSpriteURL(reg.speciesID, false)}" alt=""
-             data-fallback="${spriteURL(reg.speciesID, false, false)}">
-      </span>
-      <div class="catch-body">
-        <span class="catch-headline">${escapeHTML(banner.headline)}</span>
-        <div class="catch-reg">
-          <div class="catch-reg-bar">
-            <i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
-            <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>
+      <div class="dexcard-top">
+        <span class="brand-lens"></span>
+        <span class="brand-leds"><i></i><i></i><i></i></span>
+        <span class="dexcard-num">${dexNumber(reg.speciesID)}</span>
+      </div>
+      <div class="dexcard-body">
+        <span class="catch-mon-wrap">
+          <img class="catch-mon" src="${sceneSpriteURL(reg.speciesID, false)}" alt=""
+               data-fallback="${spriteURL(reg.speciesID, false, false)}">
+        </span>
+        <div class="catch-body">
+          <span class="catch-headline">${escapeHTML(banner.headline)}</span>
+          <div class="catch-reg">
+            <div class="catch-reg-bar">
+              <i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
+              <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>
+            </div>
           </div>
+          <span class="catch-detail">${escapeHTML(banner.detail)}</span>
         </div>
-        <span class="catch-detail">${escapeHTML(banner.detail)}</span>
       </div>
     </div>`
 }

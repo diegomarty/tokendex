@@ -2,9 +2,8 @@
  * Economy simulator: N days of play for a few usage profiles, through the **real** engine.
  *
  * It drives a `CompanionStore` exactly as the worker does — one observation per refresh, the
- * player acting between refreshes — with no network: the species index is the real cached one
- * when it exists, evolution lines are synthesised by rarity, and the clock and the RNG are
- * injected. Everything that decides a token's fate is production code, so a number printed here
+ * player acting between refreshes — with no network: a synthetic world with the real index's
+ * shape (`buildWorld`), and the clock and the RNG injected. Everything that decides a token's fate is production code, so a number printed here
  * is the number the game would produce, not a model of it.
  *
  * What it answers (docs/plans/01b-economia-simulador.md): how long a line takes to register,
@@ -15,10 +14,8 @@
  *   make sim ARGS="--days 365 --profile heavy --seed 7"
  */
 import { mkdtempSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as AppPaths from '../src/core/appPaths.js'
 import { CompanionStore } from '../src/core/companion/store.js'
 import { PokemonBalance, type BallKind, type Rarity, rarityFrom } from '../src/core/companion/model.js'
 import type { BaseSpecies, EvoLine, PokeProviding, WildSpecies } from '../src/core/pokeapi.js'
@@ -68,61 +65,96 @@ function mulberry32(seed: number): () => number {
   }
 }
 
-// MARK: - Provider: the real index, synthetic lines
+// MARK: - Provider: a synthetic gen 1–5 world
 
-async function loadIndex(): Promise<BaseSpecies[]> {
-  try {
-    const raw = JSON.parse(await readFile(join(AppPaths.ourData(), 'base-index.json'), 'utf8')) as {
-      entries?: BaseSpecies[]
+/**
+ * The world the simulation plays in: 328 lines with the real index's rarity mix (175 common,
+ * 33 uncommon, 72 rare, 48 legendary) and 649 species in all, numbered 1..649 with each line's
+ * forms consecutive — so every id is one the engine accepts (`ANIMATED_SPECIES_MAX`) and the
+ * index carries forms the way schema 3 does. Commons split between three-form and two-form lines
+ * to land on the real species count. Evolved forms catch harder, as in the games.
+ */
+interface SimLine {
+  base: BaseSpecies
+  ids: number[]
+}
+
+function buildWorld(): SimLine[] {
+  const shapes: { n: number; captureRate: number; forms: number; legendary?: boolean }[] = [
+    { n: 41, captureRate: 190, forms: 3 },
+    { n: 134, captureRate: 190, forms: 2 },
+    { n: 33, captureRate: 90, forms: 2 },
+    { n: 72, captureRate: 45, forms: 2 },
+    { n: 48, captureRate: 3, forms: 1, legendary: true },
+  ]
+  const out: SimLine[] = []
+  let next = 1
+  for (const shape of shapes) {
+    for (let i = 0; i < shape.n; i++) {
+      const ids = Array.from({ length: shape.forms }, (_, k) => next + k)
+      next += shape.forms
+      out.push({
+        ids,
+        base: {
+          id: ids[0]!,
+          captureRate: shape.captureRate,
+          isLegendary: shape.legendary === true,
+          lineForms: shape.forms,
+          forms: ids.slice(1).map((id, k) => ({
+            id,
+            stage: k + 1,
+            captureRate: formCaptureRate(shape.captureRate, k + 1),
+            totalForms: shape.forms,
+          })),
+        },
+      })
     }
-    if (Array.isArray(raw.entries) && raw.entries.length > 100) return raw.entries
-  } catch {
-    // fall through to the synthetic index
   }
-  // 328 lines in the real gen 1–5 index: 175 common, 33 uncommon, 72 rare, 48 legendary.
-  const out: BaseSpecies[] = []
-  let id = 1
-  const push = (n: number, captureRate: number, legendary = false) => {
-    for (let i = 0; i < n; i++) out.push({ id: id++, captureRate, isLegendary: legendary })
-  }
-  push(175, 190)
-  push(33, 90)
-  push(72, 45)
-  push(48, 3, true)
   return out
 }
 
-/** Forms per line by rarity: the gen 1–5 average is close to this. */
-function formsFor(rarity: Rarity): number {
-  return rarity === 'legendary' ? 1 : rarity === 'common' ? 3 : 2
+/** An evolved form's capture rate: 120 then 45 for a common line, the base's own past that. */
+function formCaptureRate(base: number, stage: number): number {
+  return Math.min(base, stage === 1 ? 120 : 45)
 }
 
-function provider(index: BaseSpecies[]): PokeProviding {
-  const byID = new Map(index.map((e) => [e.id, e]))
+function provider(world: SimLine[]): PokeProviding {
+  const lineOf = new Map<number, SimLine>()
+  for (const l of world) for (const id of l.ids) lineOf.set(id, l)
   const rarityOf = (e: BaseSpecies) =>
     rarityFrom(e.captureRate, e.isLegendary ?? false, e.isMythical ?? false)
   const lines = new Map<number, EvoLine>()
-  const line = async (baseID: number): Promise<EvoLine> => {
-    const cached = lines.get(baseID)
+  const line = async (id: number): Promise<EvoLine> => {
+    const sim = lineOf.get(id)
+    if (sim === undefined) throw new Error(`sim: no line holds #${id}`)
+    const cached = lines.get(sim.base.id)
     if (cached !== undefined) return cached
-    const base = byID.get(baseID) ?? { id: baseID, captureRate: 190 }
-    const rarity = rarityOf(base)
-    const forms = formsFor(rarity)
-    // Evolved forms get ids outside the index so they never collide with another base.
-    const ids = Array.from({ length: forms }, (_, i) => (i === 0 ? baseID : baseID + 1000 * i))
-    let node = { speciesID: ids[forms - 1]!, children: [] as { speciesID: number; children: never[] }[] }
-    for (let i = forms - 2; i >= 0; i--) node = { speciesID: ids[i]!, children: [node as never] }
-    const made = makeEvoLine(baseID, node as never, rarity, {})
-    lines.set(baseID, made)
+    let node = {
+      speciesID: sim.ids[sim.ids.length - 1]!,
+      children: [] as { speciesID: number; children: never[] }[],
+    }
+    for (let i = sim.ids.length - 2; i >= 0; i--)
+      node = { speciesID: sim.ids[i]!, children: [node as never] }
+    const made = makeEvoLine(sim.base.id, node as never, rarityOf(sim.base), {})
+    lines.set(sim.base.id, made)
     return made
   }
+  const index = world.map((l) => l.base)
   return {
     line,
     baseSpeciesIndex: async () => index,
-    baseSpecies: async (id) => byID.get(id),
+    baseSpecies: async (id) => index.find((e) => e.id === id),
     wildSpecies: async (id): Promise<WildSpecies> => {
-      const base = byID.get(id) ?? { id, captureRate: 190 }
-      return { id, captureRate: base.captureRate, rarity: rarityOf(base), names: { en: `#${id}` } }
+      const sim = lineOf.get(id)
+      const stage = sim === undefined ? 0 : sim.ids.indexOf(id)
+      const base = sim?.base ?? { id, captureRate: 190 }
+      const captureRate = stage === 0 ? base.captureRate : formCaptureRate(base.captureRate, stage)
+      return {
+        id,
+        captureRate,
+        rarity: rarityFrom(captureRate, base.isLegendary ?? false, false),
+        names: { en: `#${id}` },
+      }
     },
   }
 }
@@ -150,7 +182,7 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
   const rng = mulberry32(SEED)
   let clock = Date.parse('2026-01-05T09:00:00Z')
   const store = new CompanionStore({
-    provider: provider(await loadIndex()),
+    provider: provider(buildWorld()),
     filePath: join(mkdtempSync(join(tmpdir(), 'tokendex-sim-')), 'companion-state.json'),
     now: () => clock,
     rng,

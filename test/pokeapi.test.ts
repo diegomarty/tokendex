@@ -1,13 +1,18 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PokeAPIClient,
+  attachForms,
   chooseBaseFromIndex,
   chooseBaseViaREST,
+  chooseWildFromIndex,
+  wildLineWeight,
   type BaseSpecies,
+  type WildStatus,
 } from '../src/core/pokeapi.js'
+import { rarityFrom } from '../src/core/companion/model.js'
 
 const index: BaseSpecies[] = [
   { id: 1, captureRate: 45 }, // rare
@@ -233,4 +238,201 @@ describe('PokeAPIClient.wildSpecies', () => {
     expect(wild.stats).toBeUndefined()
     expect(Date.now() - started).toBeLessThan(1_000)
   }, 2_000)
+})
+
+describe('the index with every form of each line', () => {
+  // A branched line (Eevee) and a three-stage one, with a form whose parent is out of range
+  // dropped rather than attached to nothing.
+  it('attaches each line its forms, with their stage and the length of the road through them', () => {
+    const lines = attachForms(
+      [
+        { id: 1, captureRate: 45 },
+        { id: 133, captureRate: 45 },
+        { id: 10, captureRate: 255 },
+      ],
+      [
+        { id: 2, captureRate: 45, from: 1 },
+        { id: 3, captureRate: 45, from: 2 },
+        { id: 134, captureRate: 45, from: 133 },
+        { id: 135, captureRate: 45, from: 133 },
+        { id: 900, captureRate: 45, from: 899 },
+      ],
+    )
+    expect(lines[0]).toMatchObject({
+      id: 1,
+      lineForms: 3,
+      forms: [
+        { id: 2, stage: 1, captureRate: 45, totalForms: 3 },
+        { id: 3, stage: 2, captureRate: 45, totalForms: 3 },
+      ],
+    })
+    expect(lines[1]?.forms?.map((f) => [f.id, f.stage, f.totalForms])).toEqual([
+      [134, 1, 2],
+      [135, 1, 2],
+    ])
+    expect(lines[2]).toMatchObject({ id: 10, lineForms: 1 })
+    expect(lines[2]?.forms ?? []).toEqual([])
+  })
+})
+
+describe('chooseWildFromIndex', () => {
+  const venusaur: BaseSpecies = {
+    id: 1,
+    captureRate: 45,
+    lineForms: 3,
+    forms: [
+      { id: 2, stage: 1, captureRate: 45, totalForms: 3 },
+      { id: 3, stage: 2, captureRate: 45, totalForms: 3 },
+    ],
+  }
+  const missing = (): WildStatus => 'missing'
+
+  // [trigger branch] The games' weights for a three-stage line, counted over every stage draw:
+  // the line draw is pinned to 0 (the only line), the stage draw walks 0..99.
+  it('picks a stage of a three-form line 65/30/5', () => {
+    const counts = new Map<number, number>()
+    for (let r = 0; r < 100; r++) {
+      const pick = chooseWildFromIndex([venusaur], missing, rng(0, r, 0))!
+      counts.set(pick.speciesID, (counts.get(pick.speciesID) ?? 0) + 1)
+    }
+    expect([counts.get(1), counts.get(2), counts.get(3)]).toEqual([65, 30, 5])
+  })
+
+  it('picks 75/25 on a two-form line, and always the base of a single one', () => {
+    const two: BaseSpecies = {
+      id: 4,
+      captureRate: 45,
+      lineForms: 2,
+      forms: [{ id: 5, stage: 1, captureRate: 45, totalForms: 2 }],
+    }
+    let evolved = 0
+    for (let r = 0; r < 100; r++)
+      if (chooseWildFromIndex([two], missing, rng(0, r, 0))!.speciesID === 5) evolved++
+    expect(evolved).toBe(25)
+    expect(chooseWildFromIndex([{ id: 10, captureRate: 255 }], missing, rng(0, 99, 0))!.speciesID).toBe(
+      10,
+    )
+  })
+
+  // The pick carries where the form sits in its line and the line's rarity, which price its
+  // registration and its duplicate — not the form's own capture rate.
+  it('tells where the form sits in its line, with the line’s rarity', () => {
+    const pick = chooseWildFromIndex([venusaur], missing, rng(0, 99, 0))!
+    expect(pick).toEqual({
+      speciesID: 3,
+      line: { baseID: 1, stageIndex: 2, totalForms: 3, rarity: rarityFrom(45, false, false) },
+    })
+  })
+
+  // [trigger branch] Among branches, what the player does not have weighs four times what is
+  // registered: Jolteon (missing) against Vaporeon (registered), 4:1.
+  it('favours the branch the player does not have', () => {
+    const eevee: BaseSpecies = {
+      id: 133,
+      captureRate: 45,
+      lineForms: 2,
+      forms: [
+        { id: 134, stage: 1, captureRate: 45, totalForms: 2 },
+        { id: 135, stage: 1, captureRate: 45, totalForms: 2 },
+      ],
+    }
+    const status = (id: number): WildStatus => (id === 134 ? 'registered' : 'missing')
+    const counts = new Map<number, number>()
+    for (let b = 0; b < 5; b++) {
+      const id = chooseWildFromIndex([eevee], status, rng(0, 99, b))!.speciesID
+      counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    expect([counts.get(135), counts.get(134)]).toEqual([4, 1])
+  })
+
+  // [trigger branch] An index without forms (REST-built, or an older schema read offline) knows
+  // no line length: the pick carries no position, so the share is owed rather than mispriced.
+  it('makes up no line position from an index without forms', () => {
+    const pick = chooseWildFromIndex([{ id: 1, captureRate: 45 }], missing, rng(0, 99, 0))!
+    expect(pick.speciesID).toBe(1)
+    expect(pick.line).toBeUndefined()
+  })
+
+  // [trigger branch] A guaranteed floor narrows the pool and meets the base: the one pick builder
+  // for ordinary and granted encounters alike.
+  it('honours a rarity floor, at the base of the line', () => {
+    const mew: BaseSpecies = { id: 151, captureRate: 45, isMythical: true, lineForms: 1, forms: [] }
+    const pick = chooseWildFromIndex([venusaur, mew], missing, rng(0, 99, 0), 'legendary')!
+    expect(pick).toEqual({
+      speciesID: 151,
+      line: { baseID: 151, stageIndex: 0, totalForms: 1, rarity: 'legendary' },
+    })
+    expect(chooseWildFromIndex([venusaur], missing, rng(0), 'legendary')).toBeUndefined()
+  })
+
+  // A line still missing a form weighs four times a line fully registered, twice one that is
+  // owned but not registered.
+  it('weighs a line by what is left in it', () => {
+    expect(wildLineWeight(venusaur, () => 'missing')).toBe(45 * 4)
+    expect(wildLineWeight(venusaur, () => 'owned')).toBe(45 * 2)
+    expect(wildLineWeight(venusaur, () => 'registered')).toBe(45)
+    expect(wildLineWeight(venusaur, (id) => (id === 3 ? 'missing' : 'registered'))).toBe(45 * 4)
+  })
+})
+
+describe('PokeAPIClient.line from an evolved form', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const respond = (body: unknown) =>
+    Promise.resolve({ ok: true, status: 200, json: async () => body } as Response)
+
+  // [trigger branch] Asked for Charmeleon, the line is Charmander's — its base and its rarity —
+  // not one priced by the evolved form's capture rate.
+  it('answers with the line of the chain’s root', async () => {
+    const chain = 'https://pokeapi.co/api/v2/evolution-chain/2/'
+    const speciesDTO = (id: number) => ({
+      capture_rate: id === 4 ? 255 : 3,
+      is_legendary: false,
+      is_mythical: false,
+      evolution_chain: { url: chain },
+      names: [{ name: `#${id}`, language: { name: 'en' } }],
+    })
+    vi.stubGlobal('fetch', (url: string) => {
+      if (url.includes('/evolution-chain/')) {
+        return respond({
+          chain: {
+            species: { url: 'https://pokeapi.co/api/v2/pokemon-species/4/' },
+            evolves_to: [
+              { species: { url: 'https://pokeapi.co/api/v2/pokemon-species/5/' }, evolves_to: [] },
+            ],
+          },
+        })
+      }
+      const id = Number(/pokemon-species\/(\d+)/.exec(url)?.[1])
+      return respond(speciesDTO(id))
+    })
+    const line = await new PokeAPIClient(join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json')).line(5)
+    expect(line.baseID).toBe(4)
+    expect(line.rarity).toBe(rarityFrom(255, false, false))
+  })
+})
+
+describe('the REST-built index', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // [trigger branch] Built over REST it has no forms, so it is written under the previous schema:
+  // read back, it counts as expired and the next load with GraphQL up replaces it, instead of
+  // passing for current for 30 days.
+  it('is written as an older schema, so it is replaced as soon as GraphQL answers', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          capture_rate: 45,
+          is_legendary: false,
+          is_mythical: false,
+          evolves_from_species: null,
+        }),
+      } as Response),
+    )
+    const file = join(mkdtempSync(join(tmpdir(), 'ptb-api-')), 'i.json')
+    await new PokeAPIClient(file).buildBaseIndexViaREST()
+    const written = JSON.parse(readFileSync(file, 'utf8')) as { version: number }
+    expect(written.version).toBe(2)
+  })
 })

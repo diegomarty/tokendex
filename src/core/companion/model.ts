@@ -858,6 +858,14 @@ export interface DexEntry {
   source?: 'wild'
 }
 
+/** A wild form's place in its line: see `WildEncounter.line`. */
+export interface WildLine {
+  baseID: number
+  stageIndex: number
+  totalForms: number
+  rarity: Rarity
+}
+
 /**
  * A wild Pokémon that has appeared and not yet been resolved.
  *
@@ -877,6 +885,13 @@ export interface WildEncounter {
    */
   captureRate: number
   rarity: Rarity
+  /**
+   * Where the species sits in its line, and the *line's* rarity — what prices registering it and
+   * what a duplicate pays. `rarity` above is the form's own, for catching, fleeing and stealing.
+   * Absent on encounters from before forms could be met in the wild: they were bases, so the
+   * catch reads `rarity` and owes its share until the line is loaded.
+   */
+  line?: WildLine
   isShiny: boolean
   /** Epoch milliseconds. */
   appearedAt: number

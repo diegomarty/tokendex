@@ -198,7 +198,10 @@ function caught(chain: number[], days: number, over: Partial<DexEntry> = {}): De
 
 /** Real types for the species the fixtures stage, so each scene stands on its own terrain. */
 const TYPES: Record<number, PokemonType[]> = {
+  6: ['fire', 'flying'],
   10: ['bug'],
+  130: ['water', 'flying'],
+  149: ['dragon', 'flying'],
   129: ['water'],
   133: ['normal'],
   147: ['dragon'],
@@ -861,6 +864,56 @@ export const FIXTURES: Fixture[] = [
       line: evoLine([4, 5, 6]),
       companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
       wild: [wild(129), wild(147)],
+      dex: [caught([129, 130], 6)],
+    }),
+  },
+  {
+    id: 'wild-evolved',
+    label: 'Wild: an evolved form on stage (Charizard), more evolved forms queued',
+    state: scene({
+      inventory: { pokeBall: 7, greatBall: 2, ultraBall: 3, masterBall: 1 },
+      wild: [
+        wild(6, {
+          captureRate: 45,
+          rarity: 'rare',
+          line: { baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'rare' },
+        }),
+        wild(149, {
+          captureRate: 45,
+          rarity: 'rare',
+          line: { baseID: 147, stageIndex: 2, totalForms: 3, rarity: 'rare' },
+        }),
+        wild(130, {
+          captureRate: 45,
+          rarity: 'rare',
+          line: { baseID: 129, stageIndex: 1, totalForms: 2, rarity: 'common' },
+        }),
+      ],
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+    }),
+  },
+  {
+    id: 'wild-evolved-owned',
+    label: 'Wild: an evolved form you already have (Gyarados), with the Poké Ball',
+    state: scene({
+      inventory: { pokeBall: 7, greatBall: 2, ultraBall: 3, masterBall: 1 },
+      wild: [
+        wild(130, {
+          captureRate: 45,
+          rarity: 'rare',
+          line: { baseID: 129, stageIndex: 1, totalForms: 2, rarity: 'common' },
+        }),
+        wild(6, {
+          captureRate: 45,
+          rarity: 'rare',
+          line: { baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'rare' },
+        }),
+      ],
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
       dex: [caught([129, 130], 6)],
     }),
   },

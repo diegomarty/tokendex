@@ -41,6 +41,21 @@ export interface BaseSpecies {
   captureRate: number
   isLegendary?: boolean
   isMythical?: boolean
+  /**
+   * The line's other forms, for wild encounters (`chooseWildFromIndex`). Absent in an index built
+   * over REST or written before schema 3: the wild then meets bases only, as it always did.
+   */
+  forms?: WildForm[]
+  /** Forms on the longest road through the line, the base included. Absent = 1. */
+  lineForms?: number
+}
+
+/** A form past the base: its stage (1 = first evolution) and the forms on the road through it. */
+export interface WildForm {
+  id: number
+  stage: number
+  captureRate: number
+  totalForms: number
 }
 
 /**
@@ -89,9 +104,9 @@ const INDEX_TTL_MS = 30 * 86_400_000
  * than deleted: it is refetched at the next opportunity, but it still stands in offline, where
  * a stale index beats no index — the only thing it cannot do is answer a legendary pool, and a
  * reward that waits is better than one that hands over the wrong species. History: 1 = id and
- * capture rate only, 2 = with `is_legendary`/`is_mythical`.
+ * capture rate only, 2 = with `is_legendary`/`is_mythical`, 3 = with every form of each line.
  */
-const INDEX_SCHEMA = 2
+const INDEX_SCHEMA = 3
 // 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
 // timeout is what bounds how long a sick network can hold `update()` — and with it the scan.
 const REQUEST_TIMEOUT_MS = 8_000
@@ -231,6 +246,13 @@ export class PokeAPIClient implements PokeProviding {
 
     const chain = await getJSON<{ chain: ChainLinkDTO }>(chainURL)
     const tree = nodeFrom(chain.chain)
+    // Asked by a form that is not the chain's root (a wild Charmeleon, chosen as companion): the
+    // line is the root's — its base and its rarity — never one priced by the evolved form.
+    if (tree.speciesID !== baseSpeciesID) {
+      const rooted = await this.line(tree.speciesID)
+      this.lineCache.set(baseSpeciesID, rooted)
+      return rooted
+    }
     const rarity = rarityFrom(base.capture_rate, base.is_legendary, base.is_mythical)
 
     // Names for every species in the line, restricted to the languages the app supports.
@@ -352,8 +374,9 @@ export class PokeAPIClient implements PokeProviding {
 
   private async fetchBaseIndex(): Promise<BaseSpecies[]> {
     // Official GraphQL: evolves_from IS NULL (a base) and id <= 649, the gen-V animated
-    // sprite ceiling. Ditto (#132) is excluded — it exists only for the disguise reveal.
-    const query = `{ pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate is_legendary is_mythical } }`
+    // sprite ceiling. Ditto (#132) is excluded — it exists only for the disguise reveal. The
+    // second selection, in the same request, is every other form, for wild encounters.
+    const query = `{ bases: pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate is_legendary is_mythical } forms: pokemonspecies(where: {evolves_from_species_id: {_is_null: false}, id: {_lte: ${ANIMATED_SPECIES_MAX}}}, order_by: {id: asc}) { id capture_rate evolves_from_species_id } }`
     const response = await fetch(GRAPHQL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -363,22 +386,30 @@ export class PokeAPIClient implements PokeProviding {
     if (!response.ok) throw new Error(`graphql: HTTP ${response.status}`)
     const decoded = (await response.json()) as {
       data?: {
-        pokemonspecies?: {
+        bases?: {
           id: number
           capture_rate: number
           is_legendary?: boolean
           is_mythical?: boolean
         }[]
+        forms?: { id: number; capture_rate: number; evolves_from_species_id: number }[]
       }
     }
-    const rows = decoded.data?.pokemonspecies ?? []
+    const rows = decoded.data?.bases ?? []
     if (rows.length === 0) throw new Error('graphql: empty base index')
-    return rows.map((r) => ({
-      id: r.id,
-      captureRate: r.capture_rate,
-      isLegendary: r.is_legendary === true,
-      isMythical: r.is_mythical === true,
-    }))
+    return attachForms(
+      rows.map((r) => ({
+        id: r.id,
+        captureRate: r.capture_rate,
+        isLegendary: r.is_legendary === true,
+        isMythical: r.is_mythical === true,
+      })),
+      (decoded.data?.forms ?? []).map((f) => ({
+        id: f.id,
+        captureRate: f.capture_rate,
+        from: f.evolves_from_species_id,
+      })),
+    )
   }
 
   /**
@@ -400,7 +431,9 @@ export class PokeAPIClient implements PokeProviding {
     if (bases.length < MIN_REST_INDEX_SIZE) return
     bases.sort((a, b) => a.id - b.id)
     this.baseIndexCache = bases
-    await this.writeDiskIndex(bases)
+    // No forms over REST, so it is written under the schema before forms: it still stands in
+    // offline, and the next load with GraphQL up replaces it instead of it passing for current.
+    await this.writeDiskIndex(bases, INDEX_SCHEMA - 1)
   }
 
   /** Single-species REST check: is this a line start, and what is its capture rate. */
@@ -436,13 +469,13 @@ export class PokeAPIClient implements PokeProviding {
     }
   }
 
-  private async writeDiskIndex(entries: BaseSpecies[]): Promise<void> {
+  private async writeDiskIndex(entries: BaseSpecies[], version = INDEX_SCHEMA): Promise<void> {
     try {
       // Temp-then-rename, per writer: a torn index reads back as `undefined` and the client
       // rebuilds it over REST — hundreds of requests across the whole species range.
       await atomicWriteFile(
         this.indexFilePath,
-        JSON.stringify({ version: INDEX_SCHEMA, fetchedAt: Date.now(), entries }),
+        JSON.stringify({ version, fetchedAt: Date.now(), entries }),
       )
     } catch {
       // A cache write failure must never break hatching.
@@ -461,6 +494,140 @@ function nodeFrom(link: ChainLinkDTO): EvoNode {
 
 function allIDs(node: EvoNode): number[] {
   return [node.speciesID, ...node.children.flatMap(allIDs)]
+}
+
+// MARK: - The forms of each line
+
+/**
+ * Gives each base its line's other forms, walking `from` links down from it: each form's stage
+ * (its depth) and the forms on the longest road through it, which prices its registration. A
+ * form whose parent is not reachable from a base is dropped — it has no line to belong to.
+ */
+export function attachForms(
+  bases: BaseSpecies[],
+  evolved: { id: number; captureRate: number; from: number }[],
+): BaseSpecies[] {
+  const children = new Map<number, { id: number; captureRate: number }[]>()
+  for (const f of evolved) {
+    const list = children.get(f.from) ?? []
+    list.push(f)
+    children.set(f.from, list)
+  }
+  // Longest road from a node to a leaf, the node included. Guarded against a cyclic `from`.
+  const below = (id: number, seen: Set<number>): number => {
+    if (seen.has(id)) return 1
+    const next = new Set(seen).add(id)
+    return 1 + Math.max(0, ...(children.get(id) ?? []).map((c) => below(c.id, next)))
+  }
+  return bases.map((base) => {
+    const forms: WildForm[] = []
+    const walk = (id: number, stage: number, seen: Set<number>) => {
+      for (const child of children.get(id) ?? []) {
+        if (seen.has(child.id)) continue
+        const next = new Set(seen).add(child.id)
+        forms.push({
+          id: child.id,
+          stage,
+          captureRate: child.captureRate,
+          totalForms: stage + below(child.id, seen),
+        })
+        walk(child.id, stage + 1, next)
+      }
+    }
+    walk(base.id, 1, new Set([base.id]))
+    forms.sort((a, b) => a.stage - b.stage || a.id - b.id)
+    return { ...base, forms, lineForms: below(base.id, new Set()) }
+  })
+}
+
+// MARK: - Wild selection
+
+/** What the player has of a species, as the wild draw weighs it. */
+export type WildStatus = 'missing' | 'owned' | 'registered'
+
+const WILD_STATUS_WEIGHT: Record<WildStatus, number> = { missing: 4, owned: 2, registered: 1 }
+
+/** The games' odds of meeting each stage, by the number of forms in the line (percent). */
+const WILD_STAGE_ODDS: Record<number, number[]> = { 1: [100], 2: [75, 25], 3: [65, 30, 5] }
+
+/**
+ * A line's weight in the wild draw: its capture rate, ×4 while any form is missing, ×2 while
+ * any is owned but unregistered, ×1 once all are registered.
+ */
+export function wildLineWeight(base: BaseSpecies, status: (id: number) => WildStatus): number {
+  const ids = [base.id, ...(base.forms ?? []).map((f) => f.id)]
+  const statuses = ids.map(status)
+  const factor = statuses.includes('missing') ? 4 : statuses.includes('owned') ? 2 : 1
+  return Math.max(1, base.captureRate * factor)
+}
+
+/**
+ * A wild pick: the species met, and where it sits in its line (which prices registering it).
+ * `line` is absent when the index cannot say — one without forms knows no line length, and a
+ * made-up one would price the registration wrongly; the catch then owes its share instead.
+ */
+export interface WildPick {
+  speciesID: number
+  line?: { baseID: number; stageIndex: number; totalForms: number; rarity: Rarity }
+}
+
+/**
+ * The wild draw: a line (`wildLineWeight`), a stage by the games' odds (`WILD_STAGE_ODDS`), and
+ * among branches at that stage the form the player has least of. Three draws, in that order.
+ * An index without forms (REST-built, or an older schema) meets bases only.
+ *
+ * `tier` is a floor, passed only for a granted legendary: it narrows the pool as
+ * `meetsRarityFloor` does for an egg (an empty pool returns undefined, never something else) and
+ * meets the base — the one pick builder for ordinary and granted encounters alike.
+ */
+export function chooseWildFromIndex(
+  index: BaseSpecies[],
+  status: (id: number) => WildStatus,
+  rng: RNG,
+  tier?: Rarity,
+): WildPick | undefined {
+  const pool =
+    tier === undefined
+      ? index
+      : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
+  if (pool.length === 0) return undefined
+  const base = weightedPick(pool, (e) => wildLineWeight(e, status), rng)
+  const rarity = rarityFrom(base.captureRate, base.isLegendary === true, base.isMythical === true)
+  const atBase = (): WildPick =>
+    base.lineForms === undefined
+      ? { speciesID: base.id }
+      : {
+          speciesID: base.id,
+          line: { baseID: base.id, stageIndex: 0, totalForms: base.lineForms, rarity },
+        }
+  if (tier !== undefined || base.lineForms === undefined) return atBase()
+
+  const odds = WILD_STAGE_ODDS[Math.min(Math.max(1, base.lineForms), 3)] ?? [100]
+  let roll = rng() % 100
+  let stage = 0
+  for (; stage < odds.length - 1; stage++) {
+    roll -= odds[stage]!
+    if (roll < 0) break
+  }
+  const atStage = (base.forms ?? []).filter((f) => f.stage === stage)
+  if (stage === 0 || atStage.length === 0) return atBase()
+  const form = weightedPick(atStage, (f) => WILD_STATUS_WEIGHT[status(f.id)], rng)
+  return {
+    speciesID: form.id,
+    line: { baseID: base.id, stageIndex: form.stage, totalForms: form.totalForms, rarity },
+  }
+}
+
+/** One weighted draw: `rng() % total`, walked in order. `items` must not be empty. */
+function weightedPick<T>(items: T[], weight: (item: T) => number, rng: RNG): T {
+  const weights = items.map(weight)
+  const total = weights.reduce((a, b) => a + b, 0)
+  let r = rng() % total
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i]!
+    if (r < 0) return items[i]!
+  }
+  return items[items.length - 1]!
 }
 
 // MARK: - Hatch candidate selection
@@ -490,17 +657,11 @@ export function chooseBaseFromIndex(
       : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
   if (pool.length === 0) return undefined
 
-  const weights = pool.map((e) => {
-    const seen = unlocked.has(e.id)
-    return Math.max(1, seen ? Math.floor(e.captureRate / 2) : e.captureRate)
-  })
-  const total = weights.reduce((a, b) => a + b, 0)
-  let r = rng() % total
-  for (let i = 0; i < weights.length; i++) {
-    r -= weights[i]!
-    if (r < 0) return pool[i]!.id
-  }
-  return pool[pool.length - 1]?.id // unreachable, kept as a guard
+  return weightedPick(
+    pool,
+    (e) => Math.max(1, unlocked.has(e.id) ? Math.floor(e.captureRate / 2) : e.captureRate),
+    rng,
+  ).id
 }
 
 /**

@@ -2031,16 +2031,65 @@ body.vscode-dark .exp-figures {
    and the share it earned lights up white on its registration bar before settling into EXP blue
    — the bar that was, the part that is new, and then what it is now. Every beat is gated on
    `.entering`, so a later repaint shows the end state at once. */
+/* A new species is shown the way the Pokédex shows a new entry: the device itself — red casing,
+   the blue lens and its three lights, the entry's number — with the Pokémon on its screen and
+   the registration bar on the panel beside it. The illustration's palette, in every theme. */
 .catch-banner.rich {
-  flex-direction: row;
-  gap: 10px;
-  padding: 9px 14px 10px 9px;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 5px 5px;
   text-align: left;
-  /* The double rule of the games' dialog boxes, in gold. */
-  outline: 2px solid rgb(255 255 255 / 0.65);
-  outline-offset: -6px;
+  color: #fff;
+  border: 2px solid #6e1c17;
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  box-shadow:
+    inset 0 -3px 0 rgb(0 0 0 / 0.18),
+    inset 0 1px 0 rgb(255 255 255 / 0.25),
+    0 8px 22px rgb(0 0 0 / 0.35);
 }
-/* The Pokémon on a spotlight, as a new entry is shown in the games' Pokédex. */
+.catch-banner.new.rich::before,
+.catch-banner.new.rich::after {
+  content: none;
+}
+.dexcard-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 5px;
+}
+.dexcard-top .brand-lens {
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 3px rgb(0 0 0 / 0.25);
+}
+.dexcard-top .brand-leds {
+  align-self: center;
+}
+.dexcard-num {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 0 rgb(0 0 0 / 0.3);
+}
+/* The panel the casing holds: the screen on the left, the entry's text on the right. */
+.dexcard-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px 8px 7px;
+  border-radius: 8px;
+  /* Fixed, not the theme's paper: a device looks the same whatever the editor is wearing. */
+  background: #f4f6ef;
+  color: #1d2433;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
+}
+/* The screen: a light LCD in a dark bezel, with the faint scanlines the wallet's screen has. */
 .catch-mon-wrap {
   position: relative;
   flex: none;
@@ -2048,13 +2097,13 @@ body.vscode-dark .exp-figures {
   place-items: center;
   width: 68px;
   height: 68px;
-  border-radius: 50%;
-  background: radial-gradient(
-    closest-side,
-    rgb(255 255 255 / 0.95),
-    rgb(255 255 255 / 0.35) 70%,
-    transparent
-  );
+  border: 3px solid #2b2f3a;
+  border-radius: 6px 6px 6px 16px;
+  background:
+    repeating-linear-gradient(180deg, rgb(0 0 0 / 0.04) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 50% 45%, #f2fbf2, #c9e6cc 75%);
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.25);
+  overflow: hidden;
 }
 /* The animated Gen-V frame at native ×1 in a 64px window: cropped if it is larger, never
    scaled — a fractional scale of pixel art is mush. */
@@ -2065,13 +2114,12 @@ body.vscode-dark .exp-figures {
   object-fit: none;
   image-rendering: pixelated;
 }
-/* The burst of light the silhouette steps out of. */
+/* The scan the screen runs as the silhouette resolves. */
 .catch-mon-wrap::after {
   content: '';
   position: absolute;
-  inset: 4px;
-  border-radius: 50%;
-  border: 2px solid rgb(255 214 90 / 0.9);
+  inset: 0;
+  background: linear-gradient(180deg, transparent 40%, rgb(255 255 255 / 0.85) 50%, transparent 60%);
   opacity: 0;
 }
 .catch-body {
@@ -2158,7 +2206,7 @@ body.vscode-dark .exp-figures {
   animation: catch-reveal 600ms ease-out 250ms backwards;
 }
 .catch-banner.rich.entering .catch-mon-wrap::after {
-  animation: catch-burst 700ms ease-out 650ms;
+  animation: catch-burst 650ms ease-in-out 250ms;
 }
 .catch-banner.rich.entering .catch-detail {
   animation: catch-detail-in 260ms ease-out 700ms backwards;
@@ -2177,11 +2225,11 @@ body.vscode-dark .exp-figures {
 @keyframes catch-burst {
   0% {
     opacity: 1;
-    transform: scale(0.6);
+    transform: translateY(-60%);
   }
   100% {
     opacity: 0;
-    transform: scale(1.35);
+    transform: translateY(60%);
   }
 }
 @keyframes catch-reveal {

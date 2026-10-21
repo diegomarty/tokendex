@@ -24,6 +24,7 @@ import {
   type Temperament,
   type TrailEntry,
   type WildEncounter,
+  type WildLine,
   type WildFind,
   freshCompanionState,
   freshSpeciesProgress,
@@ -159,6 +160,31 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
 }
 
 /**
+ * All four or nothing, and consistent with the species it prices: a base is its own line's base,
+ * an evolved form is not. A partial or contradictory position would price a registration wrongly.
+ */
+function decodeWildLine(value: unknown, speciesID: number): WildLine | undefined {
+  if (!isObject(value)) return undefined
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  const totalForms = lenientOptional(value, 'totalForms', isInt)
+  const rarity = lenientOptional(value, 'rarity', isRarity)
+  if (
+    baseID === undefined ||
+    stageIndex === undefined ||
+    totalForms === undefined ||
+    rarity === undefined
+  ) {
+    return undefined
+  }
+  if (baseID <= 0 || stageIndex < 0 || totalForms < 1 || totalForms > 12 || stageIndex >= totalForms) {
+    return undefined
+  }
+  if ((stageIndex === 0) !== (baseID === speciesID)) return undefined
+  return { baseID, stageIndex, totalForms, rarity }
+}
+
+/**
  * One queued wild encounter. Anything missing an identity, a species or a capture rate is
  * dropped rather than defaulted: a made-up capture rate would silently change the catch odds,
  * which is worse than losing one encounter the player has not seen yet.
@@ -186,6 +212,8 @@ export function decodeWildEncounter(value: unknown): WildEncounter | undefined {
   }
   const names = lenientOptional(value, 'names', isStringRecord)
   if (names !== undefined) encounter.names = names
+  const line = decodeWildLine(value['line'], speciesID)
+  if (line !== undefined) encounter.line = line
   // Everything below is optional and dropped rather than defaulted when malformed: an absent mood
   // reads as the initial mood for its temperament, which is the player-favourable direction — a
   // corrupt value must never arrive as "furious".

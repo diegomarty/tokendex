@@ -48,6 +48,30 @@ Que en estado salvaje aparezca cualquier forma, no solo inicios de línea, con l
 
 7. **Base y rareza de una forma capturada:** al capturar una forma evolucionada se guardan `baseID`, `stageIndex`, `totalForms` y `lineRarity` en su registro (desde el índice v3). Así `setCompanion` y el cambio automático piden la línea por la base real y con la rareza de la línea, no la de la forma. Hoy `baseFromHistory` cae en la propia forma (revisión de la fase 3).
 
+## Notas de la implementación
+
+- `PokeAPIClient.line(id)` pedido por una forma que no es la raíz de la cadena delega en la raíz: la base y la rareza son las de la línea. Antes una forma evolucionada daba una línea con la rareza de la forma.
+- El encuentro guarda `line` (`WildLine`: base, etapa, formas y rareza de la línea). Al capturarlo, la especie fija su posición y su `threshold` en el acto, y el 5 % entra como xp, sin `pendingShare`. Vale también para las bases, porque el índice da `lineForms`.
+- El incentivo sustituye a «la mitad si visto» por ×4 si falta / ×2 si está obtenido o en cola / ×1 registrado. El test de sesgo del store se reajustó a esos pesos.
+- Los legendarios garantizados siguen con `chooseBaseFromIndex` (son líneas de una forma) y también llevan `line`.
+- **Simulador:** ahora usa un mundo sintético con la forma del índice real: 328 líneas, 649 especies, ids 1..649 consecutivos por línea y las formas en el índice. Antes leía el índice en disco y ponía las formas evolucionadas en ids de más de 1000, que el cambio automático de compañero descartaba por estar fuera de rango.
+- Resultados a 180 días, semillas 1–3 (registradas / desbloqueadas):
+  - chat: 12–14 / 43–50;
+  - ligero: 108–116 / 153–163;
+  - medio: 210–229 / 218–242, cartera unos 6,2–6,8B;
+  - intenso: 384–424 / 384–424.
+
+  El salto frente a la fase 3 (medio unas 95) viene del cambio automático de compañero, que ya ve especies válidas, y de las formas evolucionadas en estado salvaje. El embudo sigue siendo desbloquear: el intenso registra todo lo que desbloquea. Nadie llega a desbloquear la Pokédex entera en 180 días. Es el dato para la fase 4: precios y sumideros, porque la cartera del perfil medio crece.
+
+- Revisión de código, corregido con test e inyección:
+  - Un índice sin formas no se inventa la posición de la línea: el encuentro va sin `line` y la captura deja el 5 % pendiente.
+  - El índice construido por REST se escribe con el esquema anterior: offline sirve, y en cuanto responde GraphQL se sustituye.
+  - Hay un único constructor de salvajes: `chooseWildFromIndex` acepta el suelo de rareza del legendario garantizado. `chooseBaseFromIndex` reutiliza `weightedPick`.
+  - `putOnStage` archiva el compañero bajo `line.baseID`, la base real de la línea.
+  - `decodeWildLine` descarta una posición que contradice su especie (una base que no es su propia base, o una forma evolucionada que dice serlo).
+  - Sin cambios: «las capturas salvajes del historial cuentan como vistas». `seedRegistry` ya desbloquea al migrar todas las especies del historial, así que ese caso no se da sin un guardado corrupto.
+- Webview (@helper): el aviso de «Nuevo en la Pokédex» tiene ahora aspecto de Pokédex (carcasa roja, pantalla LCD y número). Bench de salvajes evolucionados sin fallos a 280/360/600 en claro y oscuro.
+
 ## Preguntas abiertas
 
 - ¿Afecta a los legendarios debidos (`owedLegendaryEncounters`)? No: son líneas de una forma.

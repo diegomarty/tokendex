@@ -47,6 +47,7 @@ import {
   type WildEncounter,
   type WildFind,
   type SpeciesProgress,
+  PokemonBalance,
   freshCompanionState,
   freshSpeciesProgress,
 } from '../src/core/companion/model.js'
@@ -1197,5 +1198,47 @@ describe('catching registers', () => {
   it('marks the shiny form obtained when a shiny is caught', () => {
     expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyUnlocked).toBe(true)
     expect(catchOne(state()).state.species[10]?.shinyUnlocked).toBeUndefined()
+  })
+})
+
+describe('catching an evolved form', () => {
+  const evolved = (over: Partial<WildEncounter> = {}) =>
+    wild({
+      speciesID: 6,
+      rarity: 'rare',
+      line: { baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'uncommon' },
+      ...over,
+    })
+  const catchIt = (s: CompanionState, target: WildEncounter) =>
+    takeTurn(
+      { ...s, inventory: { masterBall: 1 }, wild: [target] },
+      target.id,
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+
+  // [trigger branch] The encounter knows where the form sits, so the share lands as experience
+  // at once — priced by the line's rarity and stage — instead of waiting as `pendingShare`.
+  it('registers its share against its place in the line', () => {
+    const result = catchIt(state(), evolved())
+    const threshold = PokemonBalance.phaseThreshold('uncommon', 3, 2)
+    expect(result.state.species[6]).toMatchObject({
+      unlocked: true,
+      threshold,
+      baseID: 4,
+      stageIndex: 2,
+      totalForms: 3,
+      lineRarity: 'uncommon',
+      xp: Math.ceil(EconomyBalance.catchShare * threshold),
+    })
+    expect(result.state.species[6]?.pendingShare).toBeUndefined()
+  })
+
+  // [trigger branch] A duplicate pays by the line's rarity, not the form's own.
+  it('pays a duplicate by the line’s rarity', () => {
+    const owned = { 6: { ...freshSpeciesProgress(), unlocked: true } }
+    const result = catchIt(state({ species: owned }), evolved())
+    expect(result.state.earnedTokens).toBe(EconomyBalance.duplicateReward.uncommon)
   })
 })

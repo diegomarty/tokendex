@@ -36,8 +36,8 @@ import { dirname, join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
 import { atomicWriteFile } from '../coordination/atomicWrite.js'
 import { FileLock, lockPathFor, type LockResult } from '../coordination/fileLock.js'
-import type { BaseSpecies, PokeProviding } from '../pokeapi.js'
-import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
+import type { BaseSpecies, PokeProviding, WildStatus } from '../pokeapi.js'
+import { chooseBaseFromIndex, chooseBaseViaREST, chooseWildFromIndex } from '../pokeapi.js'
 import {
   EncounterBalance,
   addEncounterUsage,
@@ -875,30 +875,25 @@ export class CompanionStore {
   }
 
   /**
-   * One wild Pokémon.
-   *
-   * The species pick reuses the hatch selector verbatim: its capture-rate weighting already
-   * makes common species common, and halving an already-collected line is exactly the bias a
-   * Pokédex wants. No tier is passed — a wild encounter carries no guarantee.
+   * One wild Pokémon: any form of any line (`chooseWildFromIndex`), weighted toward what the
+   * player is missing. No tier is passed for an ordinary encounter — it carries no guarantee.
    */
   private async rollEncounter(index: BaseSpecies[], tier?: Rarity): Promise<WildEncounter | undefined> {
-    // Wild catches never enter `collectedFinals` (that set steers evolution-branch diversity),
-    // so without help the same Caterpie reappears at full weight for ever. The selector's
-    // halve-if-seen bias is fed a *local* set instead: the real collection, plus every species
-    // already caught wild, plus everything already waiting in the queue — computed per roll and
-    // never persisted, so the evolution rules cannot see it.
-    const seen = unlockedSpecies(this.state)
-    for (const entry of this.state.dex) {
-      if (entry.source === 'wild') seen.add(entry.finalID)
+    // What the player has, as the draw weighs it — with everything already waiting in the queue
+    // counted as owned, so the same Caterpie is not queued twice at full weight. Computed per roll
+    // and never persisted.
+    const queued = new Set(this.state.wild.map((e) => e.speciesID))
+    const status = (id: number): WildStatus => {
+      const p = this.state.species[id]
+      if (p?.registered === true) return 'registered'
+      return p?.unlocked === true || queued.has(id) ? 'owned' : 'missing'
     }
-    for (const queued of this.state.wild) seen.add(queued.speciesID)
 
-    // `tier` is a floor, and the granted-legendary reward is the only caller that passes one.
-    // Reusing the ordinary roll rather than a parallel path is what keeps the reward an
-    // ordinary wild Pokémon: same weighting inside the pool, same shiny roll, same flee rules,
-    // same 24h window, same toast. A guaranteed prize would have been a different feature.
-    const speciesID = chooseBaseFromIndex(index, tier, seen, this.rng)
-    if (speciesID === undefined) return undefined
+    // `tier` is a floor, and the granted-legendary reward is the only caller that passes one: the
+    // same draw narrowed to the pool, with the same shiny roll, flee rules, 24h window and toast.
+    const pick = chooseWildFromIndex(index, status, this.rng, tier)
+    if (pick === undefined) return undefined
+    const speciesID = pick.speciesID
 
     try {
       const species = await this.options.provider.wildSpecies(speciesID)
@@ -913,6 +908,7 @@ export class CompanionStore {
         speciesID,
         captureRate: species.captureRate,
         rarity: species.rarity,
+        ...(pick.line === undefined ? {} : { line: pick.line }),
         isShiny,
         appearedAt: this.now,
         throws: 0,
@@ -1004,7 +1000,8 @@ export class CompanionStore {
       const totalForms = plan.length
       const threshold = PokemonBalance.phaseThreshold(line.rarity, totalForms, stageIndex)
       const mon: MonState = {
-        baseID,
+        // The line's own base: asked by an evolved form, `line` comes back rooted at the real one.
+        baseID: line.baseID,
         pathIDs: path,
         plannedPathIDs: plan,
         stageIndex,

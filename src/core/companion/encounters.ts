@@ -43,7 +43,7 @@ import {
 } from './model.js'
 import type { RNG } from './growth.js'
 import { spendableBalance } from './ledger.js'
-import { progressOf, registrationPercent, shareXP } from './registry.js'
+import { progressOf, registerXP, registrationPercent, shareXP } from './registry.js'
 import { EconomyBalance } from './economy.js'
 
 // MARK: - Balance
@@ -846,7 +846,7 @@ function caughtSpecies(
   const p: SpeciesProgress = { ...before, unlocked: true, caught: before.caught + 1 }
   if (encounter.isShiny) p.shinyUnlocked = true
   if (before.unlocked) {
-    const reward = EconomyBalance.duplicateReward[encounter.rarity]
+    const reward = EconomyBalance.duplicateReward[encounter.line?.rarity ?? encounter.rarity]
     return {
       state: {
         ...state,
@@ -855,6 +855,16 @@ function caughtSpecies(
       },
       reward,
     }
+  }
+  // The encounter knows where the form sits (an index with forms): its position and threshold
+  // are fixed here, as `growth`'s `fix` would on stage, and the share lands as experience at once.
+  const line = encounter.line
+  if (p.threshold === undefined && line !== undefined) {
+    p.threshold = registerXP(line.rarity, line.totalForms, line.stageIndex)
+    p.baseID = line.baseID
+    p.stageIndex = line.stageIndex
+    p.totalForms = line.totalForms
+    p.lineRarity = line.rarity
   }
   if (p.threshold !== undefined) {
     p.xp = Math.min(p.threshold, p.xp + shareXP(EconomyBalance.catchShare, p.threshold))

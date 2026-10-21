@@ -571,8 +571,8 @@ describe('wild encounters', () => {
     expect(s.snapshot().encountersSeen).toBeGreaterThan(EncounterBalance.maxQueue)
   })
 
-  // Wild catches never enter `collectedFinals`, so the variety bias needs its own memory: a
-  // species already caught wild (or already waiting in the queue) weighs half on the next roll.
+  // A species already obtained (or already waiting in the queue) weighs half of one still
+  // missing on the next roll: ×2 against ×4 of its capture rate (`wildLineWeight`).
   it('biases the next roll away from species already caught or queued', async () => {
     const twoSpecies = stubProvider({
       baseSpeciesIndex: async (): Promise<BaseSpecies[]> => [
@@ -580,8 +580,8 @@ describe('wild encounters', () => {
         { id: 2, captureRate: 255 },
       ],
     })
-    // 200 % 510 lands in species 1's full weight (255), but past its halved weight (127).
-    const s = store({ provider: twoSpecies, rng: () => 200 })
+    // 600 % 2040 lands in species 1's full weight (1020); 600 % 1530 is past its owned one (510).
+    const s = store({ provider: twoSpecies, rng: () => 600 })
     await s.update(obs(0))
     await s.update(obs(readyForOne))
     expect(s.snapshot().wild[0]!.speciesID).toBe(1)
@@ -591,6 +591,31 @@ describe('wild encounters', () => {
 
     await s.update(obs(readyForOne + EncounterBalance.threshold))
     expect(s.snapshot().wild[0]!.speciesID).toBe(2)
+  })
+
+  // [trigger branch] An index with forms: the stage draw (99 → the last 5%) meets the final form,
+  // and the encounter carries its place in the line and the line's rarity.
+  it('meets an evolved form, knowing where it sits in its line', async () => {
+    const withForms = stubProvider({
+      baseSpeciesIndex: async (): Promise<BaseSpecies[]> => [
+        {
+          id: 1,
+          captureRate: 45,
+          lineForms: 3,
+          forms: [
+            { id: 2, stage: 1, captureRate: 45, totalForms: 3 },
+            { id: 3, stage: 2, captureRate: 45, totalForms: 3 },
+          ],
+        },
+      ],
+    })
+    const s = store({ provider: withForms, rng: () => 99 })
+    await s.update(obs(0))
+    await s.update(obs(readyForOne))
+    expect(s.snapshot().wild[0]).toMatchObject({
+      speciesID: 3,
+      line: { baseID: 1, stageIndex: 2, totalForms: 3, rarity: 'rare' },
+    })
   })
 
   it('starts a fresh save with a handful of Poké Balls', async () => {
@@ -1717,6 +1742,24 @@ describe('companion choice, starters and the egg stock', () => {
     } finally {
       await hold?.release()
     }
+  })
+
+  // [trigger branch] Chosen by an evolved form with no recorded base: the line comes back rooted
+  // at the real base, and the companion is filed under it, not under the form asked for.
+  it('files a companion chosen by an evolved form under its line’s base', async () => {
+    const rooted = stubProvider({
+      line: async () => makeEvoLine(1, node(1, [node(2)]), 'common', {}),
+    })
+    const s = store({ provider: rooted })
+    await s.update(obs(0))
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        species: { ...tx.state.species, 2: { ...freshSpeciesProgress(), unlocked: true } },
+      }),
+    )
+    expect(await s.setCompanion(2)).toBe('set')
+    expect(s.snapshot().active).toMatchObject({ baseID: 1, pathIDs: [1, 2] })
   })
 
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
