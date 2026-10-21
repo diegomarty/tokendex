@@ -1981,3 +1981,19 @@ export function usageColumnLabel(lang: AppLanguage, which: 'today' | 'month'): s
 export function lidToggleLabel(lang: AppLanguage): string {
   return t(lang, '사용량 자세히', 'Usage details', 'しようりょうの くわしく', 'Detalle de uso')
 }
+
+/** The PC box: the quick switch from the battle plate. */
+export function pcBoxTitle(lang: AppLanguage): string {
+  return t(lang, 'PC 박스', 'PC box', 'パソコンの ボックス', 'Caja del PC')
+}
+
+/** The PC box with nothing else to switch to. */
+export function pcBoxEmptyText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '바꿀 수 있는 포켓몬이 아직 없어요. 잡거나 부화시켜 보세요.',
+    'No other Pokémon to switch to yet. Catch or hatch one.',
+    'まだ ほかの ポケモンが いない。つかまえるか タマゴを かえそう。',
+    'Aún no tienes otro Pokémon para cambiar. Captura o eclosiona uno.',
+  )
+}

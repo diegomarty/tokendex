@@ -169,6 +169,27 @@ export interface PanelLureOffer {
   enabled: boolean
 }
 
+/** The PC box: what the companion can be switched to, in the order to offer it. */
+export interface PanelPCBox {
+  /** "PC box" — also the open button's accessible name. */
+  title: string
+  items: PanelPCBoxItem[]
+  /** Shown when there is nothing else to switch to. */
+  emptyText: string
+}
+
+export interface PanelPCBoxItem {
+  id: number
+  name: string
+  isShiny: boolean
+  /** Style token (`common`…`legendary`). */
+  rarity: string
+  percent: number
+  /** "45% registered" / "Registered". */
+  percentText: string
+  registered: boolean
+}
+
 /** The lid: usage folded in, expanded on click to the counter; three lights for the limits. */
 export interface PanelLid {
   /** "Today 253M · This month 4.8B". */
@@ -698,6 +719,11 @@ export interface PanelState {
    * totals). Plan 08 §8. A drawer with nothing to say is absent, never empty.
    */
   drawers: PanelDrawer[]
+  /**
+   * The PC box (Diego): the quick switch from the battle plate — every obtained species but the
+   * one on stage, unfinished first. Picking one posts `setCompanion`.
+   */
+  pcBox: PanelPCBox
   /** The lid (Diego): usage folded into it, and its three lights reading the official limits. */
   lid: PanelLid
   /** The player's avatar: a Showdown trainer slug from the core's roster. */

@@ -24,6 +24,7 @@ import type {
   PanelMoodMeter,
   PanelLure,
   PanelChallenges,
+  PanelPCBox,
   PanelDrawer,
   PanelMedals,
   PanelLureOffer,
@@ -556,6 +557,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     dexSpecies: species,
     dexSummary: dexSummary(state, species, dexLog.length, lang),
     medals: medalsPanel(state, lang),
+    pcBox: pcBoxPanel(species, lang),
     ...challengesPanel(state, now, lang),
     eggs: eggsPanel(state, lang),
     dexLog,
@@ -824,6 +826,27 @@ function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage
 
   drawer('streak', panel.wild.streak.text, false)
   return drawers
+}
+
+/**
+ * The PC box (Diego): what the companion can switch to — every species `canChoose` allows, the
+ * unfinished ones first and the most advanced of those first, then the registered. From the
+ * Pokédex's own cells, so the box and the Pokédex never disagree.
+ */
+function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): PanelPCBox {
+  const items = species
+    .filter((sp) => sp.canChoose)
+    .map((sp) => ({
+      id: sp.id,
+      name: sp.name,
+      isShiny: sp.isShiny,
+      rarity: sp.rarity,
+      percent: sp.percent,
+      percentText: sp.percentText,
+      registered: sp.status === 'registered',
+    }))
+    .sort((a, b) => Number(a.registered) - Number(b.registered) || b.percent - a.percent || a.id - b.id)
+  return { title: D.pcBoxTitle(lang), items, emptyText: D.pcBoxEmptyText(lang) }
 }
 
 /** The challenges board for Home, formatted; nothing before the first fold of a day. */

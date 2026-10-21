@@ -1238,3 +1238,30 @@ describe('the lid', () => {
     expect(build().lid.lights).toEqual(['off', 'off', 'off'])
   })
 })
+
+describe('the PC box', () => {
+  // The quick switch from the battle plate: every obtained species but the one on stage, the
+  // ones still to register first (most advanced first), then the registered — formatted here.
+  it('lists the obtained species to switch to, unfinished first', () => {
+    const s = state({
+      active: activeMon, // #25
+      species: {
+        25: speciesEntry({ unlocked: true, xp: 1, threshold: 10 }),
+        4: speciesEntry({ unlocked: true, xp: 2, threshold: 10 }),
+        7: speciesEntry({ unlocked: true, xp: 8, threshold: 10 }),
+        1: speciesEntry({ unlocked: true, registered: true }),
+        16: speciesEntry({ seen: true }),
+      },
+    })
+    const box = build({ state: s }).pcBox
+    expect(box.title).toBe(D.pcBoxTitle('en'))
+    expect(box.items.map((i) => i.id)).toEqual([7, 4, 1])
+    expect(box.items[0]).toMatchObject({
+      percent: 80,
+      percentText: D.registrationText('en', 80, false),
+      registered: false,
+    })
+    expect(box.items[2]).toMatchObject({ registered: true })
+    expect(box.emptyText).toBe(D.pcBoxEmptyText('en'))
+  })
+})
