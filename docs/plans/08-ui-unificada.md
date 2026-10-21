@@ -125,6 +125,9 @@ Funciones nuevas (medallas, retos, regiones: fase 7), cambios de economía, el c
 2. **Aparato:** `.device-casing`, `.device-lights`, `.lcd` y Nugget.
 3. **Barra única** `.meter` + `.meter-gain`.
 3b. **Inicio unificado** (§8): cajones desplegables para incubadora, retos, rastro legendario y el resto de datos. Primero maqueta con capturas para Diego.
+3c. **Ajustes de Diego sobre 3b** (hecho, `4a7deac`): la tapa se abre en una pantalla LCD (Hoy / Este mes con coste, tabla por herramienta y límites) con flecha visible; cajones de Salvajes (tarjetas) y Hallazgos (cuadrícula + «Recoger todo») rediseñados; **caja del PC** en la placa del jugador para cambiar de compañero (buscador por nombre o número, orden por progreso, número o rareza).
+3d. **Barras de ánimo del salvaje** (en curso, @helper): solo iconos en cualquier ancho (decisión de Diego), animación de tramo blanco → color al subir y desvanecido al bajar; el % de la placa del jugador se oculta a ≤ 300 px.
+3e. **Pokédex con las herramientas de la caja del PC** (pendiente, Diego): una sola barra de herramientas compartida por la Pokédex y la caja del PC. La Pokédex ya tiene buscador por nombre o número, «Solo obtenidos» y regiones; le faltan los **órdenes** (número, rareza, progreso) y unificar el aspecto de buscador y selector con los de la caja. Mismo componente en las dos, no dos implementaciones. Los textos ya existen en el núcleo (`dexSearchPlaceholder`, `pcSortLabel`); si la Pokédex necesita el rango de rareza por celda, se añade en `PanelDexSpecies`.
 4. **Botones por capa** y **`.tag`**.
 5. **Estrecho** (con el cambio de geometría y su test).
 6. **UX:** lenguaje de celebración, transiciones, estados vacíos; los opcionales con capturas para que Diego decida.
