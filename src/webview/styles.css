@@ -530,7 +530,9 @@ button.action.secondary {
   gap: 6px;
   margin-bottom: 10px;
 }
-.dex-search {
+/* The one search-and-sort row (`listTools`), shared by the Pokédex and the PC box: the tool's
+   own controls, so native fields on the editor's tokens, in both. */
+.list-search {
   flex: 1 1 140px;
   min-width: 0;
   font: inherit;
@@ -540,7 +542,18 @@ button.action.secondary {
   border-radius: var(--r-s);
   padding: 4px 8px;
 }
-.dex-search:focus-visible {
+.list-sort {
+  flex: none;
+  min-width: 0;
+  font: inherit;
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: var(--r-s);
+  padding: 3px 6px;
+}
+.list-search:focus-visible,
+.list-sort:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
 }
@@ -1873,25 +1886,23 @@ body.paused .wild-scene[data-terrain] {
   background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
 }
 
-/* Where the games put HP: anger, nerves and trust — as gauges of ten cells, each led by its
-   glyph. An empty gauge still shows its cells, so "none yet" reads as a measure at zero, not as
-   a bar that failed to draw. */
-/* One column grid shared by the three rows (subgrid), so the bars start together after the
-   longest label in the language at hand rather than after a guessed width. */
+/* Where the games put HP: anger, nerves and trust — three short gauges of cells on one line,
+   each led by its glyph, at every width (Diego: a label per gauge made a wide plate tall). An
+   empty gauge still shows its cells, so "none yet" reads as a measure at zero, not as a bar that
+   failed to draw. */
 .meters {
   display: grid;
-  grid-template-columns: 14px max-content minmax(0, 1fr);
-  column-gap: 5px;
-  row-gap: 3px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 8px;
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
 }
 .meter {
   --tone: var(--ink);
-  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: subgrid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  column-gap: 3px;
   align-items: center;
 }
 .meter.anger {
@@ -1912,24 +1923,8 @@ body.paused .wild-scene[data-terrain] {
 .meter:not([data-tone='low']) .meter-icon {
   opacity: 1;
 }
+/* The label stays in the DOM for the screen reader and in the row's title for the pointer. */
 .meter-label {
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  opacity: 0.8;
-  white-space: nowrap;
-}
-/* Calm: the three gauges share one line, each led only by its glyph; the label stays in the
-   DOM for the screen reader and in the row's title for the pointer. */
-.meters.calm {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  column-gap: 8px;
-}
-.meters.calm .meter {
-  grid-column: auto;
-  grid-template-columns: 12px minmax(0, 1fr);
-  column-gap: 3px;
-}
-.meters.calm .meter-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1979,7 +1974,7 @@ body.paused .meter .meter-icon {
 }
 /* Forced colours paint the track as canvas: the empty cells keep a system grey of their own. */
 @media (forced-colors: active) {
-  .game-meter.cells-10 .game-meter-track {
+  .game-meter.cells-5 .game-meter-track {
     forced-color-adjust: none;
     background: GrayText;
   }
@@ -2032,6 +2027,12 @@ body.vscode-dark .exp-figures {
   background: color-mix(in srgb, var(--exp) 22%, transparent);
   color: color-mix(in srgb, var(--exp) 55%, var(--ink));
   font-size: 10.5px;
+}
+/* At 300px or less the name needs the room: the EXP line under it already says the figure. */
+@media (max-width: 300px) {
+  .plate-player .plate-pct {
+    display: none;
+  }
 }
 
 /* Already yours: the Poké Ball the games print beside a species you have caught — the same
@@ -4571,23 +4572,53 @@ body.paused .wallet-badge .coin {
 }
 /* Cells: the track cut by a mask, so the fill keeps the one width paintBars() gives it and
    lands on cell edges only as far as the core's percent says. */
-.game-meter.cells-10 .bar.game-meter-track {
+.game-meter.cells-5 .bar.game-meter-track {
   border-radius: 2px;
-  -webkit-mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0 calc(10% - 2px),
-    transparent calc(10% - 2px) 10%
-  );
-  mask-image: repeating-linear-gradient(90deg, #000 0 calc(10% - 2px), transparent calc(10% - 2px) 10%);
-}
-/* Five cells in the calm mood's short gauge, so a cell stays a cell and not a 2px hairline. */
-.meters.calm .game-meter.cells-10 .bar.game-meter-track {
   -webkit-mask-image: repeating-linear-gradient(
     90deg,
     #000 0 calc(20% - 2px),
     transparent calc(20% - 2px) 20%
   );
   mask-image: repeating-linear-gradient(90deg, #000 0 calc(20% - 2px), transparent calc(20% - 2px) 20%);
+}
+/* A mood that moved since the last render, as the catch card shows a gain: the cells gained lit
+   white, then filled in the gauge's colour from the left; the cells lost fading out. The end
+   fill is there for the progressbar's value only. */
+.game-meter .bar.game-meter-track .mood-end {
+  position: absolute;
+  opacity: 0;
+}
+.game-meter .bar.game-meter-track .loss {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
+  animation: mood-loss var(--t-slow) ease-in forwards;
+}
+.game-meter.mood-rise .gain {
+  animation: catch-gain-in 260ms ease-out backwards;
+}
+.game-meter.mood-rise .gain b {
+  animation: catch-gain-fill 520ms ease-in-out 320ms backwards;
+}
+@keyframes mood-loss {
+  0%,
+  30% {
+    opacity: 1;
+    background: rgb(255 255 255 / 0.8);
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-meter.mood-rise :is(.gain, .gain b) {
+    animation: none;
+  }
+  .game-meter .bar.game-meter-track .loss {
+    display: none;
+  }
 }
 /* A glyph at the track's left: ★, or the games' own "EXP" label. */
 .game-meter-glyph {
@@ -4606,13 +4637,13 @@ body.paused .wallet-badge .coin {
 }
 /* A gain on the track — the new entry's share: the bar that was (base), and the part just
    earned, lit white, then filled in the meter's tone from the left. Placed by `placeSpans()`. */
-.game-meter-track .base {
+.game-meter .bar.game-meter-track .base {
   position: absolute;
   inset: 0 auto 0 0;
   display: block;
   background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
 }
-.game-meter-track .gain {
+.game-meter .bar.game-meter-track .gain {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -4621,7 +4652,7 @@ body.paused .wallet-badge .coin {
   box-shadow: 0 0 6px rgb(255 255 255 / 0.9);
   transform-origin: left center;
 }
-.game-meter-track .gain b {
+.game-meter .bar.game-meter-track .gain b {
   display: block;
   width: 100%;
   height: 100%;
@@ -5474,37 +5505,11 @@ body.vscode-dark .challenge-reward {
     background: Canvas;
   }
 }
-/* The box's search and sort: one row under its head, native fields on paper. */
+/* The box's search and sort: one row under its head (`listTools`, styled with the Pokédex's). */
 .pc-tools {
   display: flex;
   gap: 6px;
   padding: 8px 10px 0;
-}
-.pc-search {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: var(--fs-s);
-  color: var(--ink);
-  background: var(--paper-field);
-  border: 1px solid var(--paper-edge);
-  border-radius: var(--r-s);
-}
-.pc-sort {
-  flex: none;
-  padding: 4px 6px;
-  font: inherit;
-  font-size: var(--fs-s);
-  color: var(--ink);
-  background: var(--paper-field);
-  border: 1px solid var(--paper-edge);
-  border-radius: var(--r-s);
-}
-.pc-search:focus-visible,
-.pc-sort:focus-visible {
-  outline: 1px solid var(--exp);
-  outline-offset: 0;
 }
 .pc-grid-wrap {
   display: flex;

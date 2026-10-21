@@ -87,6 +87,17 @@ describe('the stylesheet', () => {
     expect(handWritten, 'hand-written `class="bar"` in main.ts (the limits are the one allowed)').toBe(1)
   })
 
+  // [trigger branch] A span on a meter's track (a gain, a loss, the bar that was) is an `<i>` like
+  // the fill, so `.game-meter .bar.game-meter-track i` paints it unless the span's rule outranks
+  // it: the catch card's gain was never white for that reason. Each one names the track in full.
+  it('lets a span on the track outrank the fill it sits on', () => {
+    const spans = topLevelSelectors().filter((s) => /game-meter-track \./.test(s))
+    expect(spans.length).toBeGreaterThan(0)
+    for (const selector of spans)
+      for (const part of selector.split(','))
+        expect(part.trim(), selector).toMatch(/^\.game-meter(\.[-a-z]+)* \.bar\.game-meter-track \./)
+  })
+
   it('names the three layers at the top, before any rule', () => {
     const tokens = CSS.indexOf('---- tokens ----')
     expect(tokens).toBeGreaterThan(-1)

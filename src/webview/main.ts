@@ -47,6 +47,8 @@ let dexSegment: DexSegment = 'species'
 let dexSelected: number | undefined
 /** Pokédex narrowing. Panel-owned view state, so it survives a repaint but not a reload. */
 let dexQuery = ''
+/** The Pokédex grid's order (view state): number by default, as a Pokédex reads. */
+let dexSort: SortID = 'number'
 let dexOwnedOnly = false
 /** The region the Pokédex grid is narrowed to (`kanto`…), or none. View state only. */
 let dexRegion: string | undefined
@@ -55,6 +57,11 @@ let dexRegion: string | undefined
  * reaches the host, and it survives a reload through `vscode.setState`.
  */
 const openDrawers = new Set<string>()
+/**
+ * Each wild Pokémon's mood as last drawn, by encounter id and meter: what a new render compares
+ * against, so a berry or a miss shows the cells it added or took away. View state only.
+ */
+const moodSeen = new Map<string, Record<string, number>>()
 /** Catch-log rarity chip: 'all', or a rarity token matching `PanelDexEntry.rarity`. */
 let dexLogFilter = 'all'
 /**
@@ -87,7 +94,7 @@ let stagedID: string | undefined
 let pcOpen = false
 /** The PC box's search and sort (view state, kept while the panel lives). */
 let pcQuery = ''
-let pcSort: 'progress' | 'number' | 'rarity' = 'progress'
+let pcSort: SortID = 'progress'
 /**
  * The encounter whose entrance has already played. Home is repainted wholesale — by every state
  * push, and it used to be by every menu click — and the entrance hung off the scene's own class,
@@ -146,8 +153,8 @@ interface MeterOptions {
   surface: 'device' | 'paper' | 'dialog' | 'casing'
   /** Fill colour; EXP blue unless said. `mood` takes the row's own `--tone`. */
   tone?: 'shiny' | 'done' | 'mood'
-  /** Cut into cells, as the mood gauges are. */
-  cells?: 10
+  /** Cut into cells, as the mood gauges are: five, so a short gauge's cell is never a hairline. */
+  cells?: 5
   size?: 'thin' | 'large'
   /** A glyph at the track's left (★, the game's "EXP"). Decoration: the label names the bar. */
   glyph?: string
@@ -157,6 +164,8 @@ interface MeterOptions {
   hidden?: boolean
   /** The track's content when it is not one fill (the new-entry card's base and gain). */
   inner?: string
+  /** A mood gauge that moved since the last render: which way, for its animation. */
+  change?: 'rise' | 'drop'
 }
 
 function gameMeter(percent: number, o: MeterOptions): string {
@@ -164,6 +173,7 @@ function gameMeter(percent: number, o: MeterOptions): string {
   if (o.tone !== undefined) classes.push(`tone-${o.tone}`)
   if (o.cells !== undefined) classes.push(`cells-${o.cells}`)
   if (o.size !== undefined) classes.push(o.size)
+  if (o.change !== undefined) classes.push(`mood-${o.change}`)
   const glyph =
     o.glyph === undefined
       ? ''
@@ -847,25 +857,47 @@ const MOOD_ICONS: Record<PanelMoodMeter['key'], string> = {
 }
 
 /**
+ * A mood gauge that moved since it was last drawn, as the catch card shows a gain: the cells it
+ * gained lit white and filling in the gauge's colour, or the cells it lost fading out. The fill
+ * the gauge ends on is still a `data-fill`, so it keeps its progressbar value.
+ */
+function moodChange(from: number | undefined, to: number): Pick<MeterOptions, 'inner' | 'change'> {
+  if (from === undefined || from === to) return {}
+  const end = `<i class="mood-end" data-fill="${to}"></i>`
+  return from < to
+    ? {
+        change: 'rise',
+        inner: `${end}<i class="base" data-span-from="0" data-span-to="${from}"></i>
+          <i class="gain" data-span-from="${from}" data-span-to="${to}"><b></b></i>`,
+      }
+    : {
+        change: 'drop',
+        inner: `<i data-fill="${to}"></i><i class="loss" data-span-from="${to}" data-span-to="${from}"></i>`,
+      }
+}
+
+/**
  * The wild Pokémon's plate, top left as in the games: name, rarity, character and three gauges
  * where the games put HP. The gauges are anger, nerves and trust — drawn, never measured, here:
  * the core's `tone` picks how loudly each one shows, never a threshold of the webview's own.
  */
 function wildPlate(encounter: PanelWildEncounter): string {
-  // All three low says one thing — "calm" — so it takes one line: the gauges side by side, the
-  // labels kept for the tooltip and the screen reader. Any of them rising opens the full rows.
-  const calm = encounter.meters.every((m) => m.tone === 'low')
+  // The three gauges share one line at every width, each led only by its glyph (Diego): the
+  // plate stays low, and the name of each lives in its title and its accessible name.
+  const before = moodSeen.get(encounter.id)
+  const now: Record<string, number> = {}
   const meters = encounter.meters
-    .map(
-      (
-        m,
-      ) => `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
+    .map((m) => {
+      const percent = Math.max(0, Math.min(100, Math.round(m.percent)))
+      now[m.key] = percent
+      return `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
         <i class="codicon codicon-${MOOD_ICONS[m.key]} meter-icon" aria-hidden="true"></i>
         <span class="meter-label">${escapeHTML(m.label)}</span>
-        ${gameMeter(Math.max(0, Math.min(100, Math.round(m.percent))), { surface: 'paper', tone: 'mood', cells: 10, label: m.label })}
-      </div>`,
-    )
+        ${gameMeter(percent, { surface: 'paper', tone: 'mood', cells: 5, label: m.label, ...moodChange(before?.[m.key], percent) })}
+      </div>`
+    })
     .join('')
+  moodSeen.set(encounter.id, now)
   return `<div class="plate plate-wild">
       <div class="plate-head">
         <span class="plate-name">${escapeHTML(encounter.name)}${encounter.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
@@ -885,7 +917,7 @@ function wildPlate(encounter: PanelWildEncounter): string {
         <span class="rarity-badge ${escapeHTML(encounter.rarity)}">${escapeHTML(encounter.rarityText)}</span>
       </div>
 
-      <div class="meters${calm ? ' calm' : ''}">${meters}</div>
+      <div class="meters">${meters}</div>
       ${
         (encounter.statuses ?? []).length === 0
           ? ''
@@ -1549,9 +1581,14 @@ function renderDex(state: PanelState): string {
 
     const controls = `
       <div class="dex-controls">
-        <input id="dex-search" type="search" class="dex-search" value="${escapeHTML(dexQuery)}"
-               placeholder="${escapeHTML(state.strings.dexSearch)}"
-               aria-label="${escapeHTML(state.strings.dexSearch)}">
+        ${listTools({
+          searchAttr: 'id="dex-search"',
+          query: dexQuery,
+          placeholder: state.strings.dexSearch,
+          sorts: summary.sorts,
+          sort: dexSort,
+          sortAttr: 'data-dex-sort',
+        })}
         <button class="chip" data-dex-owned aria-pressed="${dexOwnedOnly}">
           ${escapeHTML(state.strings.dexOwnedOnly)}
         </button>
@@ -1568,9 +1605,21 @@ function renderDex(state: PanelState): string {
       </div>`
 
     const cells: string[] = []
-    for (let id = 1; id <= ANIMATED_SPRITE_MAX; id++) {
+    // The order the grid reads in: number by default; by progress or rarity, the obtained first
+    // (most advanced or rarest first), the silhouettes after them in number order.
+    const ids = Array.from({ length: ANIMATED_SPRITE_MAX }, (_, i) => i + 1).filter((id) =>
+      matches(id, byID.get(id)),
+    )
+    if (dexSort !== 'number') {
+      const key = (id: number): number => {
+        const sp = byID.get(id)
+        if (sp === undefined || sp.status === 'seen') return -1
+        return dexSort === 'rarity' ? sp.rarityRank : sp.percent
+      }
+      ids.sort((a, b) => key(b) - key(a) || a - b)
+    }
+    for (const id of ids) {
       const sp = byID.get(id)
-      if (!matches(id, sp)) continue
       const selected = id === dexSelected ? ' selected' : ''
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
@@ -2614,21 +2663,18 @@ vscode.postMessage({ type: 'ready' })
  */
 function pcBox(state: PanelState): string {
   const box = state.pcBox
-  const sorts = box.sorts
-    .map(
-      (o) =>
-        `<option value="${escapeHTML(o.id)}"${o.id === pcSort ? ' selected' : ''}>${escapeHTML(o.label)}</option>`,
-    )
-    .join('')
   // Search and sort only when there is something to search: an empty box keeps its one sentence.
   const tools =
     box.items.length === 0
       ? ''
-      : `<div class="pc-tools">
-          <input class="pc-search" type="search" data-pc-search value="${escapeHTML(pcQuery)}"
-                 placeholder="${escapeHTML(box.searchPlaceholder)}" aria-label="${escapeHTML(box.searchPlaceholder)}">
-          <select class="pc-sort" data-pc-sort aria-label="${escapeHTML(box.sorts.map((o) => o.label).join(' / '))}">${sorts}</select>
-        </div>`
+      : `<div class="pc-tools">${listTools({
+          searchAttr: 'data-pc-search',
+          query: pcQuery,
+          placeholder: box.searchPlaceholder,
+          sorts: box.sorts,
+          sort: pcSort,
+          sortAttr: 'data-pc-sort',
+        })}</div>`
   return `<div class="pc-backdrop" data-pc-close></div>
     <div class="pc-box" role="dialog" aria-modal="true" aria-label="${escapeHTML(box.title)}">
       <div class="pc-head">
@@ -2729,6 +2775,15 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('input', (event) => {
   const field = (event.target as HTMLElement | null)?.closest?.('[data-pc-search]')
   if (field == null || current === undefined) return
+  // As the Pokédex's search: mid-composition the IME owns the field (ko, ja), so the filter runs
+  // on the composition's end instead.
+  if ((event as InputEvent).isComposing) return
+  pcQuery = (field as HTMLInputElement).value
+  repaintPCGrid()
+})
+document.addEventListener('compositionend', (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.('[data-pc-search]')
+  if (field == null || current === undefined) return
   pcQuery = (field as HTMLInputElement).value
   repaintPCGrid()
 })
@@ -2740,9 +2795,48 @@ document.addEventListener('change', (event) => {
   repaintPCGrid()
 })
 
+// The Pokédex's sort reorders the grid; focus goes back to the select it came from.
+document.addEventListener('change', (event) => {
+  const select = (event.target as HTMLElement | null)?.closest?.('[data-dex-sort]')
+  if (select == null) return
+  const value = (select as HTMLSelectElement).value
+  if (value === 'progress' || value === 'number' || value === 'rarity') dexSort = value
+  invalidate('dex')
+  render()
+  document.querySelector<HTMLElement>('[data-dex-sort]')?.focus()
+})
+
 function repaintPCGrid(): void {
   const wrap = document.querySelector<HTMLElement>('#pc-layer .pc-grid-wrap')
   if (wrap === null || current === undefined) return
   wrap.innerHTML = pcGrid(current)
   paintBars(wrap)
+}
+
+// MARK: - List tools
+
+type SortID = 'progress' | 'number' | 'rarity'
+
+/**
+ * The one search-and-sort row, shared by the Pokédex and the PC box: a search field and a sort
+ * select, native fields (they are the tool's controls, not the game's). Each caller names its
+ * own field (`searchAttr`) so its handlers find it, and owns its view state.
+ */
+function listTools(o: {
+  searchAttr: string
+  query: string
+  placeholder: string
+  sorts: { id: SortID; label: string }[]
+  sort: SortID
+  sortAttr: string
+}): string {
+  const options = o.sorts
+    .map(
+      (s) =>
+        `<option value="${escapeHTML(s.id)}"${s.id === o.sort ? ' selected' : ''}>${escapeHTML(s.label)}</option>`,
+    )
+    .join('')
+  return `<input ${o.searchAttr} class="list-search" type="search" value="${escapeHTML(o.query)}"
+                 placeholder="${escapeHTML(o.placeholder)}" aria-label="${escapeHTML(o.placeholder)}">
+          <select ${o.sortAttr} class="list-sort" aria-label="${escapeHTML(o.sorts.map((s) => s.label).join(' / '))}">${options}</select>`
 }
