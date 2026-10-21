@@ -1099,3 +1099,103 @@ describe('the challenges in the panel', () => {
     expect(build({ state: state({ challenges: stale }) }).challenges).toBeUndefined()
   })
 })
+
+describe('Home’s drawers', () => {
+  const drawer = (s: CompanionState, id: string, over = {}) =>
+    build({ state: s, ...over }).drawers.find((d) => d.id === id)
+
+  it('orders the drawers and gives each a title and a summary line', () => {
+    const s = state({ active: activeMon, eggStock: { count: 2 } })
+    const ids = build({ state: s }).drawers.map((d) => d.id)
+    expect(ids).toEqual(['incubator', 'wild', 'streak', 'usage'])
+    for (const d of build({ state: s }).drawers) {
+      expect(d.title.trim()).not.toBe('')
+      expect(d.summary.trim()).not.toBe('')
+    }
+  })
+
+  // [trigger branch] The incubator says what the egg is doing: incubating, paused, or only stock.
+  it('sums up the incubator from the egg and the stock', () => {
+    const incubating = {
+      ...state({ eggStock: { count: 1 } }),
+      species: { 1: speciesEntry({ unlocked: true }) },
+      eggUsage: PokemonBalance.eggHatchThreshold * 0.4,
+    }
+    expect(drawer(incubating, 'incubator')?.summary).toBe(
+      D.incubatorSummary('en', { percent: 40, stock: 1 }),
+    )
+    const paused = state({ active: activeMon, eggUsage: 1_000, eggStock: { count: 0 } })
+    expect(drawer(paused, 'incubator')).toMatchObject({
+      summary: D.incubatorSummary('en', { paused: true, stock: 0 }),
+      attention: true,
+    })
+    const stocked = state({ active: activeMon, eggStock: { count: 2 } })
+    expect(drawer(stocked, 'incubator')).toMatchObject({
+      summary: D.incubatorSummary('en', { stock: 2 }),
+      attention: true,
+    })
+    expect(drawer(state({ active: activeMon }), 'incubator')?.attention).toBe(false)
+  })
+
+  it('has no incubator before the starter', () => {
+    expect(drawer(state(), 'incubator')).toBeUndefined()
+  })
+
+  it('sums up today’s challenges, and flags them while some are left', () => {
+    const board = {
+      day: todayKey(NOW),
+      week: isoWeekKey(todayKey(NOW)),
+      items: [
+        { id: 'a', period: 'day' as const, kind: 'catch' as const, target: 3, progress: 3, done: true },
+        { id: 'b', period: 'day' as const, kind: 'catch' as const, target: 3, progress: 0, done: false },
+      ],
+    }
+    expect(drawer(state({ challenges: board }), 'challenges')).toMatchObject({
+      summary: D.challengesSummary('en', 1, 2),
+      attention: true,
+    })
+  })
+
+  // [trigger branch] A trail is the one thing that runs out: flagged, and named by what it tracks.
+  it('names the legendary trail running, and has none without one', () => {
+    const trail = [
+      {
+        id: 't',
+        speciesID: 150,
+        captureRate: 3,
+        isShiny: false,
+        names: { en: 'Mewtwo' },
+        trackedCount: 0,
+        lostAt: NOW,
+      },
+    ]
+    const d = drawer(state({ legendaryTrail: trail }), 'trail')
+    expect(d?.attention).toBe(true)
+    expect(d?.summary).toContain('Mewtwo')
+    expect(drawer(state(), 'trail')).toBeUndefined()
+  })
+
+  // [trigger branch] Finds wait to be picked up: their own drawer, flagged; none without any.
+  it('gives the finds a drawer of their own while some wait', () => {
+    const find = {
+      id: 'f1',
+      item: 'oranBerry' as const,
+      count: 1,
+      rarity: 'common' as const,
+      appearedAt: NOW,
+    }
+    expect(drawer(state({ finds: [find] }), 'finds')).toMatchObject({
+      summary: D.findsSummary('en', 1),
+      attention: true,
+    })
+    expect(drawer(state(), 'finds')).toBeUndefined()
+  })
+
+  it('sums up the wild queue with the lure running, and the usage totals', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: NOW + 3_600_000 }
+    const wildDrawer = drawer(state({ wild: [wild()], lure }), 'wild')!
+    expect(wildDrawer.summary).toContain(D.lureActiveText('en', '#5', 1))
+    expect(wildDrawer.attention).toBe(true)
+    expect(drawer(state(), 'usage')?.summary).toBe(D.usageSummary('en', '0', '0'))
+  })
+})

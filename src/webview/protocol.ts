@@ -169,6 +169,18 @@ export interface PanelLureOffer {
   enabled: boolean
 }
 
+/** One of Home's drawers. Everything formatted in the core; open/closed is view state. */
+export interface PanelDrawer {
+  /** Which detail it opens; also a style token. */
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak' | 'usage'
+  /** "Incubator". */
+  title: string
+  /** The one line shown folded: "Egg at 40% · 2 in stock". */
+  summary: string
+  /** Something waits on the player (an egg to incubate, a challenge done, a trail running out). */
+  attention: boolean
+}
+
 /** The challenges board on Home. Everything formatted in the core. */
 export interface PanelChallenges {
   /** "Challenges". */
@@ -663,6 +675,12 @@ export interface PanelState {
   medals: PanelMedals
   /** Today's and this week's challenges, for Home. Absent before the first fold of a day. */
   challenges?: PanelChallenges
+  /**
+   * Home's drawers, in order: one summary line each, opened in place to the detail the panel
+   * already carries (`eggs`, `challenges`, `wild.trail`, `wild`/`lure`, `wild.streak`, the usage
+   * totals). Plan 08 §8. A drawer with nothing to say is absent, never empty.
+   */
+  drawers: PanelDrawer[]
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */

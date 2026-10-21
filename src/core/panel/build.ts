@@ -24,6 +24,7 @@ import type {
   PanelMoodMeter,
   PanelLure,
   PanelChallenges,
+  PanelDrawer,
   PanelMedals,
   PanelLureOffer,
   PanelShinyBar,
@@ -526,6 +527,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   if (state.finds.length > 0) wild.findsText = D.findsText(lang, state.finds.length)
 
   const panel: PanelState = {
+    drawers: [],
     totals: {
       todayText: compact(usage.totals.todayTokens),
       todayExactText: grouped(usage.totals.todayTokens, locale),
@@ -609,6 +611,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       })),
     }
   }
+  panel.drawers = homeDrawers(state, panel, lang)
   if (inputs.dev !== undefined) panel.dev = inputs.dev
   return panel
 }
@@ -739,6 +742,62 @@ function lureOffer(
 /** A lured species' name: its number, as the Pokédex names a species it has no name for. */
 function lureName(speciesID: number): string {
   return `#${speciesID}`
+}
+
+/**
+ * Home's drawers (plan 08 §8): one summary line per system, in a fixed order, built from what the
+ * panel already carries so a drawer and the tab it summarises can never disagree. A drawer with
+ * nothing to say is absent. `attention` marks what waits on the player.
+ */
+function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage): PanelDrawer[] {
+  const drawers: PanelDrawer[] = []
+  const drawer = (id: PanelDrawer['id'], summary: string, attention: boolean) =>
+    drawers.push({ id, title: D.drawerTitle(lang, id), summary, attention })
+
+  // The incubator: the egg on stage, one paused, or only the stock. Nothing before the starter.
+  if (!isFreshGame(state)) {
+    const stock = state.eggStock.count
+    if (eggOnStage(state)) {
+      drawer(
+        'incubator',
+        D.incubatorSummary(lang, { percent: Math.floor(100 * eggProgress(state)), stock }),
+        false,
+      )
+    } else if (eggIsPaused(state)) {
+      drawer('incubator', D.incubatorSummary(lang, { paused: true, stock }), true)
+    } else {
+      drawer('incubator', D.incubatorSummary(lang, { stock }), stock > 0)
+    }
+  }
+
+  const challenges = panel.challenges
+  if (challenges !== undefined && challenges.items.length > 0) {
+    const done = challenges.items.filter((c) => c.done).length
+    drawer(
+      'challenges',
+      D.challengesSummary(lang, done, challenges.items.length),
+      done < challenges.items.length,
+    )
+  }
+
+  // The trail is the one thing that runs out: flagged while it lasts.
+  const trail = panel.wild.trail
+  if (trail.length > 0) {
+    const first = trail[0]!
+    drawer('trail', D.trailSummary(lang, first.name, first.expiresText, trail.length - 1), true)
+  }
+
+  const waiting = state.wild.length
+  const wildLine = waiting > 0 ? panel.wild.waitingText : panel.wild.nextText
+  drawer('wild', panel.lure === undefined ? wildLine : `${wildLine} · ${panel.lure.text}`, waiting > 0)
+
+  // Finds wait to be picked up: their own drawer, flagged while there is something to collect.
+  const finds = state.finds.length
+  if (finds > 0) drawer('finds', D.findsSummary(lang, finds), true)
+
+  drawer('streak', panel.wild.streak.text, false)
+  drawer('usage', D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText), false)
+  return drawers
 }
 
 /** The challenges board for Home, formatted; nothing before the first fold of a day. */

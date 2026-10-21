@@ -1879,3 +1879,90 @@ export function challengePeriodText(lang: AppLanguage, period: 'day' | 'week'): 
 }
 
 export { challengeReward }
+
+// MARK: - Home's drawers (plan 08 §8)
+
+/** A drawer's title. */
+export function drawerTitle(
+  lang: AppLanguage,
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak' | 'usage',
+): string {
+  switch (id) {
+    case 'incubator':
+      return t(lang, '부화기', 'Incubator', 'ふか そうち', 'Incubadora')
+    case 'challenges':
+      return t(lang, '도전', 'Challenges', 'チャレンジ', 'Retos')
+    case 'trail':
+      return t(lang, '전설의 흔적', 'Legendary trail', 'でんせつの あしあと', 'Rastro legendario')
+    case 'wild':
+      return t(lang, '야생', 'Wild', 'やせい', 'Salvajes')
+    case 'finds':
+      return t(lang, '발견한 물건', 'Finds', 'みつけた どうぐ', 'Hallazgos')
+    case 'streak':
+      return t(lang, '연속 기록', 'Streak', 'れんぞく きろく', 'Racha')
+    case 'usage':
+      return t(lang, '사용량', 'Usage', 'しようりょう', 'Uso')
+  }
+}
+
+/** The incubator folded: the egg on stage, one paused, or only the stock. */
+export function incubatorSummary(
+  lang: AppLanguage,
+  egg: { percent?: number; paused?: boolean; stock: number },
+): string {
+  const stock = t(
+    lang,
+    `보관 ${egg.stock}개`,
+    `${egg.stock} in stock`,
+    `ストック ${egg.stock}こ`,
+    `${egg.stock} en stock`,
+  )
+  if (egg.paused === true) {
+    return `${t(lang, '알 일시정지', 'Egg paused', 'タマゴ いちじていし', 'Huevo en pausa')} · ${stock}`
+  }
+  if (egg.percent !== undefined) {
+    return `${t(lang, `알 ${egg.percent}%`, `Egg at ${egg.percent}%`, `タマゴ ${egg.percent}%`, `Huevo al ${egg.percent} %`)} · ${stock}`
+  }
+  return stock
+}
+
+/** The challenges folded: "1 / 3 done". */
+export function challengesSummary(lang: AppLanguage, done: number, total: number): string {
+  return t(
+    lang,
+    `${done} / ${total} 완료`,
+    `${done} / ${total} done`,
+    `${done} / ${total} たっせい`,
+    `${done} / ${total} hechos`,
+  )
+}
+
+/** The trail folded: what it tracks, how long it lasts, and how many more. */
+export function trailSummary(lang: AppLanguage, name: string, expires: string, more: number): string {
+  const head = `${name} · ${expires}`
+  return more > 0 ? `${head} · +${more}` : head
+}
+
+/** The usage folded: "Today 12.3M · Month 400M". */
+export function usageSummary(lang: AppLanguage, today: string, month: string): string {
+  return t(
+    lang,
+    `오늘 ${today} · 이번 달 ${month}`,
+    `Today ${today} · Month ${month}`,
+    `きょう ${today} · こんげつ ${month}`,
+    `Hoy ${today} · Mes ${month}`,
+  )
+}
+
+/** The finds folded: how many wait to be picked up. */
+export function findsSummary(lang: AppLanguage, count: number): string {
+  return count === 1
+    ? t(lang, '주울 물건 1개', '1 item to pick up', 'ひろえる どうぐ 1こ', '1 objeto por recoger')
+    : t(
+        lang,
+        `주울 물건 ${count}개`,
+        `${count} items to pick up`,
+        `ひろえる どうぐ ${count}こ`,
+        `${count} objetos por recoger`,
+      )
+}
