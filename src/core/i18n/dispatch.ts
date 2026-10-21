@@ -63,7 +63,7 @@ export const statusEvolved = (lang: AppLanguage, name: string): string =>
   )
 
 export const buyConfirm = (lang: AppLanguage, name: string): string =>
-  t(lang, `${name} 구매할까요?`, `Buy ${name}?`, `${name} を購入しますか？`, `¿Comprar ${name}?`)
+  t(lang, `${name} 구매할까요?`, `Buy ${name}?`, `${name}を かいますか？`, `¿Comprar ${name}?`)
 
 /** Names for the new-limits `limits[]` entries, from kind plus model scope. */
 export function claudeLimitEntry(
@@ -447,7 +447,7 @@ export const shopGroupBalls = (lang: AppLanguage): string =>
 export const commandPrompt = (lang: AppLanguage): string =>
   t(lang, '무엇을 할까?', 'What will you do?', 'どうする？', '¿Qué vas a hacer?')
 
-export const commandBalls = (lang: AppLanguage): string => t(lang, '볼', 'Balls', 'ボール', 'Balls')
+export const commandBalls = (lang: AppLanguage): string => t(lang, '볼', 'Balls', 'ボール', 'Poké Balls')
 
 export const commandBack = (lang: AppLanguage): string => t(lang, '뒤로', 'Back', 'もどる', 'Atrás')
 
@@ -473,7 +473,7 @@ export const shopEggsNote = (lang: AppLanguage): string =>
 
 /** The call-to-action under an empty ball rack — the moment of highest purchase intent. */
 export const getBallsCta = (lang: AppLanguage): string =>
-  t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Comprar Poké Balls')
+  t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Ir a por Poké Balls')
 
 /**
  * The saving marked on the ten-pack's own action.
@@ -501,7 +501,7 @@ export const buyActionLabel = (lang: AppLanguage, name: string, price: string): 
     lang,
     `${name} 구매 — ${price}`,
     `Buy ${name} — ${price}`,
-    `${name} を購入 — ${price}`,
+    `${name}を かう — ${price}`,
     `Comprar ${name} — ${price}`,
   )
 
@@ -516,7 +516,7 @@ export const bundleBuyLabel = (
     lang,
     `${name} 구매 — ${price}, ${discountPercent}% 할인`,
     `Buy ${name} — ${price}, ${discountPercent}% off`,
-    `${name} を購入 — ${price}、${discountPercent}%お得`,
+    `${name}を かう — ${price}、${discountPercent}%お得`,
     `Comprar ${name} — ${price}, ${discountPercent}% de descuento`,
   )
 

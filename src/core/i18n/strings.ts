@@ -429,7 +429,7 @@ const STRINGS = {
     `使ったトークンでアイテムを購入できます。`,
     `Usa los tokens que has consumido para comprar objetos.`,
   ],
-  buy: [`구매`, `Buy`, `購入`, `Comprar`],
+  buy: [`구매`, `Buy`, `かう`, `Comprar`],
   notEnoughTokens: [
     `토큰이 부족해요`,
     `Not enough tokens`,

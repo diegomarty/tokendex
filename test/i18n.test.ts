@@ -290,6 +290,20 @@ describe('shop and first-run strings', () => {
     expect(bundle).not.toBe(d.buyActionLabel(lang, 'Poké Ball ×10', '45M'))
   })
 
+  // Plan 08 §7, microcopy: a button says what it does, in the games' verb. The battle's way to
+  // the shop only opens the shop — "Comprar Poké Balls" promised a purchase that never happened.
+  it.each(APP_LANGUAGES)('does not say "buy" on a button that only goes to the shop, in %s', (lang) => {
+    expect(d.getBallsCta(lang)).not.toContain(s(lang, 'buy'))
+  })
+
+  it('speaks the games’ own verbs', () => {
+    // つかう, にげる, ひろう… the Japanese buttons are the games' kana verbs, and so is buying.
+    expect(s('ja', 'buy')).toBe('かう')
+    expect(d.buyActionLabel('ja', 'Poké Ball', '5M')).not.toContain('購入')
+    // "Balls" is the English menu; the Spanish games call them Poké Balls.
+    expect(d.commandBalls('es')).toBe('Poké Balls')
+  })
+
   // [trigger branch] The badge on the bundle is the only place the 10% survives now that the
   // ×10 has no card of its own, so it is derived from the constants the price is divided by.
   it('formats the bundle saving from the discount it is handed', () => {

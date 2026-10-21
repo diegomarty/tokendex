@@ -342,8 +342,9 @@ function renderHome(state: PanelState): string {
     .join('')
 
   // The spendable balance is currency, and a number with nothing to spend it on is a dead end —
-  // so it carries the way to the shop. `data-tab` reuses the tab handler, no round trip.
-  const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.buy)} →</button>`
+  // so it carries the way to the shop. `data-tab` reuses the tab handler, no round trip. Named
+  // after where it goes, like a drawer's link: it opens the shop, it does not buy anything.
+  const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.tabs.shop)} →</button>`
 
   const compact = document.body.classList.contains('compact')
   // A brand-new game asks for a starter before anything else; the card is a glance, so it only
@@ -413,7 +414,7 @@ function renderHome(state: PanelState): string {
             </span>
           </span>
         </button>
-        <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
+        <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.tabs.shop)}"
           aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
           <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
           <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
