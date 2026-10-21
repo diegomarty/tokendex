@@ -30,6 +30,15 @@
   raised to its end and each region (Kanto to Unova) are announced once. Two daily challenges
   and one weekly one pay 5M and 40M; they are the same on every machine and paid once, even
   across merged saves. The Pokédex filters by region.
+- **Every species card is a Pokédex entry.** The sprite on the device's screen, its genus, types,
+  height and weight, the Pokédex text written letter by letter, base stats as bars and the
+  evolution line, each form a way to its own card. Read from PokéAPI when the card first opens
+  and kept on disk, so it opens offline afterwards; a species only seen shows its genus and
+  types, and the rest comes with obtaining it.
+- **Packs from ×10 to ×100.** The ten-pack has ▲▼ beside its price, so a big restock is one
+  confirmation at the same 10% off.
+- **The PC box filters and both lists turn around.** Registered, still to register, shiny and
+  region chips in the PC box, and an arrow beside every sort to reverse it.
 
 ### Changed
 
@@ -50,6 +59,16 @@
   companion stays the same, and your balance and catch history are untouched.
 - Buttons say what they do: the ways to the shop say "Shop", and Japanese uses the games' verbs
   (かう, つかう, にげる).
+- The Shop and Pokédex heads are the same device as Home's lid, titles in the logo's capitals,
+  and the Pokédex's segments, search and filters fold into it.
+- Home's Wild drawer lists the next three in rows with their party icons, then how many more
+  wait. Bag pockets are never greyed out: an empty one says how it fills.
+- The battle dialog writes itself letter by letter in every encounter, not only the first.
+
+### Fixed
+
+- A registered species' catch card showed an empty green pill: its text was painted the pill's
+  own colour. It reads "+5% registered" again, and a test keeps a pill's colours its own.
 
 ## [0.5.0] - 2026-10-20
 
