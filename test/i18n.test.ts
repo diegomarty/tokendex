@@ -595,3 +595,18 @@ describe('the battle menu', () => {
     expect(d.pokemonMenuLabel(lang).trim()).not.toBe('')
   })
 })
+
+describe('empty states', () => {
+  // Every empty view says what it is and how it fills, in every language — and the Shinydex no
+  // longer borrows the collection's "nothing caught" line, which said nothing about shinies.
+  it.each(APP_LANGUAGES)('titles each empty view and says how it fills, in %s', (lang) => {
+    const views = ['collection', 'shinydex', 'log', 'bag'] as const
+    const texts = views.map((v) => d.emptyState(lang, v))
+    for (const { title, hint } of texts) {
+      expect(title.trim()).not.toBe('')
+      expect(hint.trim()).not.toBe('')
+    }
+    expect(new Set(texts.map((x) => x.title)).size).toBe(views.length)
+    expect(d.emptyBagAction(lang).trim()).not.toBe('')
+  })
+})

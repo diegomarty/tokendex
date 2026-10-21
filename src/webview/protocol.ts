@@ -594,6 +594,12 @@ export interface PanelTabLabels {
   dev: string
 }
 
+/** An empty view: what it is, and how it fills. */
+export interface PanelEmpty {
+  title: string
+  hint: string
+}
+
 /** UI chrome labels, resolved once on the extension side. */
 export interface PanelStrings {
   tabs: PanelTabLabels
@@ -627,6 +633,11 @@ export interface PanelStrings {
   run: string
   /** The battle menu's Pokémon button: opens the companion's Pokédex entry. */
   pokemonMenu: string
+  /** Empty states, each a title and the line saying how it fills (plan 08 §7). */
+  emptyCollection: PanelEmpty
+  emptyShinydex: PanelEmpty
+  emptyLog: PanelEmpty
+  emptyBag: PanelEmpty & { action: string }
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */

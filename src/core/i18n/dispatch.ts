@@ -2027,3 +2027,87 @@ export function eggsEmptyText(lang: AppLanguage): string {
     'Cada día que usas IA llega un huevo, o cómpralo en la tienda.',
   )
 }
+
+// MARK: - Empty states (plan 08 §7)
+
+/** An empty view's title and the line saying how it fills — the way out, not only the absence. */
+export function emptyState(
+  lang: AppLanguage,
+  view: 'collection' | 'shinydex' | 'log' | 'bag',
+): { title: string; hint: string } {
+  switch (view) {
+    case 'collection':
+      return {
+        title: t(
+          lang,
+          '아직 포켓몬이 없어요',
+          'No Pokémon yet',
+          'まだ ポケモンが いない',
+          'Aún no tienes Pokémon',
+        ),
+        hint: t(
+          lang,
+          '알을 부화시키거나 야생 포켓몬을 잡아 보세요.',
+          'Hatch an egg or catch a wild one on Home.',
+          'タマゴを かえすか、ホームで やせいの ポケモンを つかまえよう。',
+          'Eclosiona un huevo o captura uno salvaje en Inicio.',
+        ),
+      }
+    case 'shinydex':
+      return {
+        title: t(
+          lang,
+          '아직 색이 다른 포켓몬이 없어요',
+          'No shinies yet',
+          'まだ いろちがいが いない',
+          'Aún no hay shinies',
+        ),
+        hint: t(
+          lang,
+          '등록한 포켓몬을 계속 키우면 색이 다른 막대가 차요. 색이 다른 포켓몬을 잡아도 돼요.',
+          'Keep raising a registered species to fill its shiny bar, or catch a shiny.',
+          'とうろくした ポケモンを そだてつづけると いろちがいの バーが たまる。いろちがいを つかまえても いい。',
+          'Sigue criando una especie registrada para llenar su barra shiny, o captura un shiny.',
+        ),
+      }
+    case 'log':
+      return {
+        title: t(
+          lang,
+          '아직 잡은 포켓몬이 없어요',
+          'Nothing caught yet',
+          'まだ なにも つかまえていない',
+          'Aún no has capturado nada',
+        ),
+        hint: t(
+          lang,
+          'AI를 쓰는 동안 홈에 야생 포켓몬이 나타나요.',
+          'Wild Pokémon turn up on Home while you use AI.',
+          'AIを つかうあいだ、ホームに やせいの ポケモンが あらわれる。',
+          'Los Pokémon salvajes aparecen en Inicio mientras usas IA.',
+        ),
+      }
+    case 'bag':
+      return {
+        title: t(
+          lang,
+          '가방이 비어 있어요',
+          'Your bag is empty',
+          'バッグは からっぽ',
+          'Tu bolsa está vacía',
+        ),
+        hint: t(
+          lang,
+          '상점에서 볼과 열매를 사거나, 야생에서 물건을 주워 보세요.',
+          'Buy balls and berries in the shop, or pick up finds in the wild.',
+          'ショップで ボールや きのみを かうか、やせいで どうぐを ひろおう。',
+          'Compra balls y bayas en la tienda, o recoge hallazgos en estado salvaje.',
+        ),
+      }
+  }
+}
+
+/** The empty bag's way out: to the shop. */
+export function emptyBagAction(lang: AppLanguage): string {
+  return t(lang, '상점으로', 'Go to the shop', 'ショップへ', 'Ir a la tienda')
+}
