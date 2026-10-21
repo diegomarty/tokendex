@@ -72,6 +72,14 @@
   --exp-label: #f7cf4a;
   --shiny: #e0a91c;
   --shiny-light: #ffe58a;
+  --shiny-ink: #6b4a00;
+  /* A medal not earned yet: silver. */
+  --medal-hi: #e6e9ee;
+  --medal: #9aa3b0;
+  /* The shadow a raised piece casts on itself. */
+  --shade: rgb(0 0 0 / 0.2);
+  /* Text and marks drawn on a coloured fill: a badge, a check, a medal. */
+  --on-fill: #fff;
   --gain: #2f8f4e;
   --gain-ink: #23703c;
   --rarity-common: #8a94a3;
@@ -2205,6 +2213,10 @@ body.vscode-dark .exp-figures {
   gap: 8px;
   padding: 6px 4px 5px;
 }
+/* On the card's top band the lights sit centred on the lens and the number, not at its top. */
+.dexcard-top .device-leds {
+  align-self: center;
+}
 .dexcard-num {
   margin-left: auto;
   font-size: var(--fs-s);
@@ -3681,6 +3693,8 @@ body.compact .row-stat .label {
 .pockets,
 .segments {
   display: flex;
+  /* Four segments since the medals: a narrow sidebar takes them two to a row. */
+  flex-wrap: wrap;
   gap: 0;
   padding: 3px;
   margin-bottom: 10px;
@@ -3690,9 +3704,9 @@ body.compact .row-stat .label {
 }
 .pocket,
 .segments .seg {
-  flex: 1;
+  /* Sized by its label, sharing what is left: a row that cannot fit them all wraps. */
+  flex: 1 0 auto;
   appearance: none;
-  min-width: 0;
   padding: 5px 8px;
   border: none;
   border-radius: 8px;
@@ -3700,10 +3714,10 @@ body.compact .row-stat .label {
   color: var(--ink);
   font: inherit;
   font-weight: 700;
-  /* Three segments since the Shinydex: in a narrow sidebar a label wraps onto a second line
-     rather than being cut to "Collecti…". */
+  /* Four segments since the medals: each keeps its label whole and the row wraps instead, two
+     to a row in a narrow sidebar — never "Collec-tion" or "Collecti…". */
+  white-space: nowrap;
   line-height: 1.2;
-  overflow-wrap: anywhere;
   cursor: pointer;
   opacity: 0.6;
 }
@@ -4714,4 +4728,188 @@ body.paused .wallet-badge .coin {
 }
 .lure-text {
   min-width: 0;
+}
+
+/* The game meter on paper: the track a shade of the ink, for bars that sit on a card. */
+.game-meter.on-paper .bar.game-meter-track {
+  height: 6px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+/* Done: the green of a good outcome. */
+.game-meter.tone-done {
+  --meter-tone: var(--gain);
+  --meter-tone-light: var(--trust);
+}
+
+/* ---- regions: the Pokédex narrowed to one generation ---- */
+.region-chips {
+  gap: 4px;
+}
+.chip.region {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.region-pct {
+  font-size: var(--fs-xs);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.chip.region.done {
+  border-color: var(--shiny);
+}
+
+/* ---- medals ----
+   A medallion each: gold once earned, grey and dimmed until then, with its bar on paper. */
+.medals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+.medal {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--r-l);
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 0 2px 0 var(--paper-edge);
+}
+.medal:not(.earned) {
+  opacity: 0.72;
+}
+.medallion {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--on-fill);
+  font-size: var(--fs-l);
+  background: radial-gradient(circle at 35% 30%, var(--medal-hi), var(--medal) 70%);
+  box-shadow:
+    inset 0 -2px 0 var(--shade),
+    0 0 0 2px color-mix(in srgb, var(--ink) 25%, transparent);
+}
+.medal.earned .medallion {
+  color: var(--shiny-ink);
+  background: radial-gradient(circle at 35% 30%, var(--shiny-light), var(--shiny) 70%);
+  box-shadow:
+    inset 0 -2px 0 var(--shade),
+    0 0 0 2px var(--shiny),
+    0 0 8px color-mix(in srgb, var(--shiny) 60%, transparent);
+}
+.medal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.medal-name {
+  font-weight: 800;
+}
+.medal-progress,
+.challenge-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.medal-progress .game-meter,
+.challenge-progress .game-meter {
+  flex: 1;
+}
+.medal-count,
+.challenge-count {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* ---- challenges: today's two and this week's one, on Home ---- */
+.challenges {
+  margin-bottom: 14px;
+}
+.challenges h2.section {
+  margin: 0 0 6px;
+}
+.challenge-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.challenge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--r-l);
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  box-shadow: 0 2px 0 var(--paper-edge);
+}
+.challenge-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  font-size: var(--fs-s);
+  font-weight: 900;
+}
+.challenge.done .challenge-check {
+  border-color: var(--gain);
+  background: var(--gain);
+  color: var(--on-fill);
+}
+.challenge-body {
+  flex: 1;
+  min-width: 0;
+}
+.challenge-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
+.challenge-period {
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+.challenge.period-week .challenge-period {
+  color: var(--rarity-rare);
+  opacity: 1;
+}
+.challenge-text {
+  font-weight: 700;
+}
+.challenge.done .challenge-text {
+  opacity: 0.7;
+}
+.challenge-reward {
+  flex: none;
+  padding: 0 7px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--gain) 16%, transparent);
+  color: var(--gain);
+  font-size: var(--fs-s);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+body.vscode-dark .challenge-reward {
+  color: var(--trust);
 }

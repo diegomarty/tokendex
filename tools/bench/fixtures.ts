@@ -46,6 +46,8 @@ import {
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import { registerXP } from '../../src/core/companion/registry.js'
 import { EconomyBalance } from '../../src/core/companion/economy.js'
+import { ensureChallenges } from '../../src/core/companion/challenges.js'
+import { MEDALS, medalProgress } from '../../src/core/companion/medals.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { buildPanelState, catchBanner } from '../../src/core/panel/build.js'
 import { todayKey } from '../../src/core/usage/entry.js'
@@ -320,6 +322,10 @@ interface SceneOptions extends UsageOptions {
   walletFrom?: number
   /** A lure running. */
   lure?: CompanionState['lure']
+  /** The challenges board: dealt for the fixture's day, then this many of its items done. */
+  challengesDone?: number
+  /** Celebrate every medal the fixture's registry has reached, as the store would have. */
+  celebrateMedals?: boolean
 }
 
 /** The registry a fixture implies, with the bar of the form on stage at `progress`. */
@@ -385,6 +391,21 @@ function scene(options: SceneOptions = {}): PanelState {
   }
   if (options.eggStock !== undefined) state.eggStock = options.eggStock
   if (options.lure !== undefined) state.lure = options.lure
+  if (options.challengesDone !== undefined) {
+    // The real deal for the fixture's day, then progressed: the first `challengesDone` finished,
+    // the rest a third of the way.
+    const board = ensureChallenges(state, todayKey(EPOCH)).state.challenges
+    if (board !== undefined) {
+      state.challenges = {
+        ...board,
+        items: board.items.map((c, i) =>
+          i < (options.challengesDone ?? 0)
+            ? { ...c, progress: c.target, done: true }
+            : { ...c, progress: Math.floor(c.target / 3) },
+        ),
+      }
+    }
+  }
   if (options.fresh !== true) {
     state.species = options.species ?? impliedSpecies(state, options.companion?.progress ?? 0.5)
     // An egg fixture is an egg under way, not a new game: give it the usage its bar shows.
@@ -393,6 +414,13 @@ function scene(options: SceneOptions = {}): PanelState {
       (options.mon === undefined
         ? Math.max(1, Math.round((options.companion?.progress ?? 0) * PokemonBalance.eggHatchThreshold))
         : 0)
+  }
+  // After the registry is in place: the medals are read from it.
+  if (options.celebrateMedals === true) {
+    state.medals = MEDALS.map((m) => m.id).filter((id) => {
+      const progress = medalProgress(state, id)
+      return progress !== undefined && progress.current >= progress.target
+    })
   }
 
   const over = options.companion
@@ -1002,6 +1030,43 @@ export const FIXTURES: Fixture[] = [
       ...(id === 'lure-active'
         ? { lure: { speciesID: 147, baseID: 147, stageIndex: 0, until: EPOCH + 5 * 3_600_000 } }
         : {}),
+    }),
+  })),
+  {
+    id: 'medals-none',
+    label: 'Medals and regions: nothing registered yet',
+    state: scene({
+      mon: mon([4, 5, 6], 0),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.2, stageText: D.stage('en', 1, 3), toNextText: '6M to next evolution' },
+      species: { 4: { ...freshSpeciesProgress(), unlocked: true, xp: 1_600_000, threshold: 8_000_000 } },
+    }),
+  },
+  {
+    id: 'medals-kanto',
+    label: 'Medals and regions: all of Kanto registered, some medals earned',
+    state: scene({
+      mon: mon([4, 5, 6], 2),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 1, stageText: D.stage('en', 3, 3), toNextText: '' },
+      dex: [caught([1, 2, 3], 9), caught([4, 5, 6], 4)],
+      celebrateMedals: true,
+      species: Object.fromEntries(
+        Array.from({ length: 151 }, (_, i) => [
+          i + 1,
+          { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'common' as const },
+        ]),
+      ),
+    }),
+  },
+  ...([0, 1, 3] as const).map((done) => ({
+    id: `challenges-${done}`,
+    label: `Challenges: ${done === 0 ? 'in progress' : done === 1 ? 'one done' : 'all done'}`,
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      challengesDone: done,
     }),
   })),
   {

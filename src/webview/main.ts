@@ -37,8 +37,8 @@ const vscode = acquireVsCodeApi()
 
 /** One list for the skeleton, the renderers and the restore guard — shell.ts owns it. */
 type TabID = PanelTabID
-type DexSegment = 'species' | 'shiny' | 'log'
-const DEX_SEGMENTS: readonly DexSegment[] = ['species', 'shiny', 'log']
+type DexSegment = 'species' | 'shiny' | 'medals' | 'log'
+const DEX_SEGMENTS: readonly DexSegment[] = ['species', 'shiny', 'medals', 'log']
 let current: PanelState | undefined
 let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
@@ -47,6 +47,8 @@ let dexSelected: number | undefined
 /** Pokédex narrowing. Panel-owned view state, so it survives a repaint but not a reload. */
 let dexQuery = ''
 let dexOwnedOnly = false
+/** The region the Pokédex grid is narrowed to (`kanto`…), or none. View state only. */
+let dexRegion: string | undefined
 /** Catch-log rarity chip: 'all', or a rarity token matching `PanelDexEntry.rarity`. */
 let dexLogFilter = 'all'
 /**
@@ -276,7 +278,7 @@ function renderHome(state: PanelState): string {
         : renderStarters(state, state.starters)
       : compact
         ? renderCompanion(state) + renderWildStrip(state)
-        : renderGame(state) + renderLure(state) + renderEggs(state)
+        : renderGame(state) + renderLure(state) + renderEggs(state) + renderChallenges(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -1244,6 +1246,66 @@ function shinySection(speciesID: number, bar: NonNullable<PanelDexSpecies['shiny
     </div>`
 }
 
+/**
+ * The medals: a medallion each, gold once earned and grey until then, with the bar to it. Every
+ * name, sentence and figure is the core's.
+ */
+function renderMedals(state: PanelState): string {
+  const items = state.medals.items
+    .map(
+      (
+        m,
+      ) => `<div class="medal${m.earned ? ' earned' : ''}" role="group" aria-label="${escapeHTML(m.name)}">
+        <span class="medallion" aria-hidden="true">★</span>
+        <div class="medal-body">
+          <span class="medal-name">${escapeHTML(m.name)}</span>
+          <span class="desc">${escapeHTML(m.description)}</span>
+          <div class="medal-progress">
+            <div class="game-meter on-paper${m.earned ? ' tone-shiny' : ''}">
+              <div class="bar game-meter-track" aria-label="${escapeHTML(m.progressText)}"><i data-fill="${m.percent}"></i></div>
+            </div>
+            <span class="medal-count">${escapeHTML(m.progressText)}</span>
+          </div>
+        </div>
+      </div>`,
+    )
+    .join('')
+  return `<div class="medals">${items}</div>`
+}
+
+/**
+ * Today's and this week's challenges on Home: a compact board, each with its bar and reward,
+ * done ones checked. Absent until the day's first fold, as the core sends it.
+ */
+function renderChallenges(state: PanelState): string {
+  const board = state.challenges
+  if (board === undefined || board.items.length === 0) return ''
+  const rows = board.items
+    .map(
+      (c) => `<li class="challenge period-${escapeHTML(c.period)}${c.done ? ' done' : ''}">
+        <span class="challenge-check" aria-hidden="true">${c.done ? '✓' : ''}</span>
+        <div class="challenge-body">
+          <div class="challenge-line">
+            <span class="challenge-period">${escapeHTML(c.periodText)}</span>
+            <span class="challenge-text">${escapeHTML(c.text)}</span>
+          </div>
+          <div class="challenge-progress">
+            <div class="game-meter on-paper${c.done ? ' tone-done' : ''}">
+              <div class="bar game-meter-track" aria-label="${escapeHTML(c.progressText)}"><i data-fill="${c.percent}"></i></div>
+            </div>
+            <span class="challenge-count">${escapeHTML(c.progressText)}</span>
+          </div>
+        </div>
+        <span class="challenge-reward">${escapeHTML(c.rewardText)}</span>
+      </li>`,
+    )
+    .join('')
+  return `<section class="challenges">
+      <h2 class="section">${escapeHTML(board.heading)}</h2>
+      <ul class="challenge-list">${rows}</ul>
+    </section>`
+}
+
 function renderDex(state: PanelState): string {
   const segments = `
     <div class="segments">
@@ -1253,10 +1315,15 @@ function renderDex(state: PanelState): string {
       <button class="seg" data-seg="shiny" aria-selected="${dexSegment === 'shiny'}">
         ${escapeHTML(state.dexSummary.shinySegmentText)}
       </button>
+      <button class="seg" data-seg="medals" aria-selected="${dexSegment === 'medals'}">
+        ${escapeHTML(state.medals.headingText)}
+      </button>
       <button class="seg" data-seg="log" aria-selected="${dexSegment === 'log'}">
         ${escapeHTML(state.dexSummary.logSegmentText)}
       </button>
     </div>`
+
+  if (dexSegment === 'medals') return `${dexHead(state, '')}${segments}${renderMedals(state)}`
 
   if (dexSegment === 'species' || dexSegment === 'shiny') {
     // The Shinydex is the same grid seen through the shiny axis: a shiny registered is lit in
@@ -1268,13 +1335,22 @@ function renderDex(state: PanelState): string {
     // The core counts: the completion is registered species, the collection what is owned.
     const summary = state.dexSummary
     const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
-    const completion = shinydex
-      ? `
+    // A region narrows the grid to its numbers and puts its own progress on the head.
+    const region = summary.regions.find((r) => r.id === dexRegion)
+    const completion =
+      region !== undefined && !shinydex
+        ? `
+      <div class="dex-progress">
+        <span class="desc">${escapeHTML(region.name)} · ${escapeHTML(region.progressText)}</span>
+        <div class="bar"><i data-fill="${region.percent}"></i></div>
+      </div>`
+        : shinydex
+          ? `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(summary.shinyProgressText)}</span>
         <div class="bar shiny"><i data-fill="${summary.shinyPercent}"></i></div>
       </div>`
-      : `
+          : `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(summary.progressText)}</span>
         <div class="bar"><i data-fill="${summary.percent}"></i></div>
@@ -1292,6 +1368,7 @@ function renderDex(state: PanelState): string {
     const query = dexQuery.trim().toLowerCase()
     const numeric = /^#?\d+$/.test(query) ? String(Number(query.replace('#', ''))) : undefined
     const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
+      if (region !== undefined && (id < region.from || id > region.to)) return false
       if (dexOwnedOnly && (sp === undefined || sp.status === 'seen')) return false
       if (dexOwnedOnly && shinydex && sp?.shiny !== 'registered') return false
       if (query === '') return true
@@ -1307,6 +1384,16 @@ function renderDex(state: PanelState): string {
         <button class="chip" data-dex-owned aria-pressed="${dexOwnedOnly}">
           ${escapeHTML(state.strings.dexOwnedOnly)}
         </button>
+      </div>
+      <div class="dex-controls region-chips" role="group">
+        ${summary.regions
+          .map(
+            (
+              r,
+            ) => `<button class="chip region region-${escapeHTML(r.id)}${r.percent >= 100 ? ' done' : ''}" data-dex-region="${escapeHTML(r.id)}"
+              aria-pressed="${r.id === dexRegion}" title="${escapeHTML(r.progressText)}">${escapeHTML(r.name)}<span class="region-pct">${escapeHTML(r.progressText)}</span></button>`,
+          )
+          .join('')}
       </div>`
 
     const cells: string[] = []
@@ -1826,6 +1913,15 @@ document.addEventListener('click', (event) => {
   }
   if (target.closest('[data-dex-close]') !== null) {
     dexSelected = undefined
+    invalidate('dex')
+    render()
+    return
+  }
+  const regionChip = target.closest('[data-dex-region]')
+  if (regionChip !== null) {
+    const id = (regionChip as HTMLElement).dataset['dexRegion']
+    // A second click on the region in use lifts the filter.
+    dexRegion = id === dexRegion ? undefined : id
     invalidate('dex')
     render()
     return
