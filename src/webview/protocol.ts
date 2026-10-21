@@ -146,6 +146,8 @@ export interface PanelDexSpecies {
   percentText: string
   /** Can be chosen as the companion (unlocked, and not already on stage). */
   canChoose: boolean
+  /** 0 common … 3 legendary: what the Pokédex's rarity sort orders by. */
+  rarityRank: number
   isCompanion: boolean
   /**
    * The shiny bar, once the species is registered (before that there is none to fill). Absent
@@ -328,6 +330,8 @@ export interface PanelDexSummary {
   logSegmentText: string
   /** The five regions' registration, in Pokédex order. */
   regions: PanelRegion[]
+  /** The grid's sorts, its default first: number, progress, rarity (the PC box's, reordered). */
+  sorts: { id: 'progress' | 'number' | 'rarity'; label: string }[]
   /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
   shinyRegistered: number
   /** 0..100 of the Shinydex, rounded as `percent` is. */

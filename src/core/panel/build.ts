@@ -392,6 +392,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       // Anything owned can be the companion — a seen species is not owned yet, and the one on
       // stage is already chosen.
       canChoose: sp.status !== 'seen' && !isCompanion,
+      rarityRank: Math.max(0, RARITIES.indexOf(sp.rarity as (typeof RARITIES)[number])),
       isCompanion,
       ...lureOffer(state, sp.id, now, lang),
       ...(sp.status === 'registered' || sp.shiny === 'registered'
@@ -706,6 +707,10 @@ function dexSummary(
     progressText: D.dexProgressText(registered, total),
     speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
     logSegmentText: D.countedLabel(strings.segmentLog, logCount),
+    sorts: (['number', 'progress', 'rarity'] as const).map((id) => ({
+      id,
+      label: D.pcSortLabel(lang, id),
+    })),
     regions: regionProgress(state).map((r) => {
       const region = REGIONS.find((x) => x.id === r.id)!
       return {
@@ -844,7 +849,7 @@ function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): Pan
       percent: sp.percent,
       percentText: sp.percentText,
       registered: sp.status === 'registered',
-      rarityRank: Math.max(0, RARITIES.indexOf(sp.rarity as (typeof RARITIES)[number])),
+      rarityRank: sp.rarityRank,
     }))
     .sort((a, b) => Number(a.registered) - Number(b.registered) || b.percent - a.percent || a.id - b.id)
   return {

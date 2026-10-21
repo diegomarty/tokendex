@@ -1284,3 +1284,18 @@ describe('the PC box', () => {
     for (const item of box.items) expect(item.rarityRank).toBe(RARITIES.indexOf(item.rarity as never))
   })
 })
+
+describe('the Pokédex sorts', () => {
+  // The Pokédex reads in number order by default, then progress and rarity — the same options
+  // as the PC box, its own default first; each cell carries its rarity rank to sort by.
+  it('offers number first, then progress and rarity, with a rank on every cell', () => {
+    const s = state({
+      species: { 4: speciesEntry({ unlocked: true }), 150: speciesEntry({ unlocked: true }) },
+    })
+    const panel = build({ state: s })
+    expect(panel.dexSummary.sorts.map((o) => o.id)).toEqual(['number', 'progress', 'rarity'])
+    expect(panel.dexSummary.sorts[0]?.label).toBe(D.pcSortLabel('en', 'number'))
+    for (const cell of panel.dexSpecies)
+      expect(cell.rarityRank).toBe(RARITIES.indexOf(cell.rarity as never))
+  })
+})
