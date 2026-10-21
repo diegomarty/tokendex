@@ -1523,12 +1523,15 @@ const dexNumber = (id: number): string => `#${String(id).padStart(3, '0')}`
 function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number] | undefined): string {
   if (dexSelected === undefined) return ''
   const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
+  // The grid behind the sheet is veiled, as the window over Home veils the scene (Diego): the
+  // card reads as open on top, and a click on the veil closes it.
+  const veil = '<div class="dex-backdrop" data-dex-close aria-hidden="true"></div>'
 
   if (sp === undefined || sp.status === 'seen') {
     // Seen, as in the games: the genus and the types, and the line saying the rest comes with
     // obtaining it (plan 9.7). Never met: the number and the silhouette, nothing to ask for.
     const entry = sp === undefined ? undefined : pokedexEntry(state, sp.id)
-    return `
+    return `${veil}
     <div class="dex-detail locked">
       <div class="dex-entry-head device-casing flush">
         <span class="device-lens small" aria-hidden="true"></span>
@@ -1547,7 +1550,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
     </div>`
   }
 
-  return speciesCard(state, sp, close)
+  return veil + speciesCard(state, sp, close)
 }
 
 /**

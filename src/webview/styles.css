@@ -5865,6 +5865,24 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   background: currentColor;
   border-radius: 1px;
 }
+.dex-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+  animation: veil-in var(--t-mid) ease-out;
+}
+@keyframes veil-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dex-backdrop {
+    animation: none;
+  }
+}
 .pc-backdrop {
   position: fixed;
   inset: 0;
