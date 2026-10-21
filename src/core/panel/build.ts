@@ -917,6 +917,7 @@ function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): Pan
       id,
       label: D.pcFilterLabel(lang, id),
       count: items.filter(matches[id]).length,
+      countText: String(items.filter(matches[id]).length),
     })),
   }
 }

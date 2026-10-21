@@ -196,7 +196,12 @@ export interface PanelPCBox {
    * Status chips (plan 9.8), beside the Pokédex's region chips (`dexSummary.regions`): an item
    * matches `unregistered` / `registered` by `registered`, and `shiny` by `shinyRegistered`.
    */
-  filters: { id: 'unregistered' | 'registered' | 'shiny'; label: string; count: number }[]
+  filters: {
+    id: 'unregistered' | 'registered' | 'shiny'
+    label: string
+    count: number
+    countText: string
+  }[]
 }
 
 export interface PanelPCBoxItem {
@@ -867,7 +872,7 @@ export interface PanelPokedexEntry {
   heightLabel: string
   weightLabel: string
   /** Base stats in the games' order and names; `percent` is of 255. Obtained species only. */
-  stats?: { key: string; label: string; value: number; percent: number }[]
+  stats?: { key: string; label: string; value: number; valueText: string; percent: number }[]
   /** "Total 498". */
   statTotalText?: string
   statsTitle: string

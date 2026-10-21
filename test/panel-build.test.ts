@@ -1381,6 +1381,8 @@ describe('the PC box filters (plan 9.8)', () => {
     })
     const panel = build({ state: s })
     const box = panel.pcBox
+    // Formatted here like every figure the panel shows (code review 9.12 #15).
+    expect(box.filters.map((f) => f.countText)).toEqual(['2', '2', '1'])
     expect(box.filters.map((f) => [f.id, f.count])).toEqual([
       ['unregistered', 2],
       ['registered', 2],

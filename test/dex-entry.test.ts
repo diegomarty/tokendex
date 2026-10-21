@@ -77,6 +77,7 @@ describe('pokedexEntry', () => {
     expect(entry.stats![5]).toMatchObject({
       key: 'speed',
       value: 108,
+      valueText: '108',
       percent: Math.round((108 / 255) * 100),
     })
     expect(entry.statTotalText).toContain('472')

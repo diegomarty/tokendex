@@ -85,6 +85,7 @@ export function pokedexEntry(
       key,
       label: D.statLabel(lang, key),
       value: stats[key],
+      valueText: String(stats[key]),
       percent: Math.round((stats[key] / STAT_MAX) * 100),
     }))
     entry.statTotalText = D.statTotalText(
