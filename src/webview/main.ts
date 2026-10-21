@@ -671,7 +671,7 @@ async function playThrow(result: PanelEncounterResult): Promise<void> {
     scene.classList.add(result.kind === 'fled' ? 'fled-out' : 'fed')
     if (result.attacked) await strikeBack(scene)
     const line = document.querySelector<HTMLElement>('.wild-result')
-    if (line !== null) line.textContent = result.resultText
+    if (line !== null) showLineWhole(line, result.encounterID, result.resultText)
     await sleep(RESULT_HOLD_MS)
     finishThrow(result)
     return
@@ -703,7 +703,7 @@ async function playThrow(result: PanelEncounterResult): Promise<void> {
 
   // The dialog box sits under the scene, so it is looked up on the page, not inside the scene.
   const line = document.querySelector<HTMLElement>('.wild-result')
-  if (line !== null) line.textContent = result.resultText
+  if (line !== null) showLineWhole(line, result.encounterID, result.resultText)
 
   await sleep(RESULT_HOLD_MS)
   finishThrow(result)
@@ -879,7 +879,8 @@ function renderGame(state: PanelState): string {
   const prompt = selected === undefined ? undefined : strings.commandPrompt
   const dialog = `
     <div class="dialog${selected === undefined ? '' : ' slim'}">
-      <p class="dialog-text wild-result${(resultLine ?? prompt) ? '' : ' empty'}" aria-live="polite">${escapeHTML(resultLine ?? prompt ?? '')}</p>
+      <p class="dialog-text wild-result${(resultLine ?? prompt) ? '' : ' empty'}" aria-live="polite"
+         data-line-context="${escapeHTML(resultLine === undefined ? (selected?.id ?? '') : (wildResult?.encounterID ?? ''))}">${escapeHTML(resultLine ?? prompt ?? '')}</p>
       ${dialogLines}
     </div>`
 
@@ -1395,7 +1396,7 @@ function renderBag(state: PanelState): string {
     selected === undefined
       ? ''
       : `<div class="dialog bag-dialog">
-        <p class="dialog-text">${escapeHTML(selected.description)}</p>
+        <p class="dialog-text" data-line-context="${escapeHTML(selected.id)}">${escapeHTML(selected.description)}</p>
         ${
           selected.usable
             ? `<button class="btn primary dialog-action" data-use="${escapeHTML(selected.id)}">${escapeHTML(state.strings.use)}</button>`
@@ -3146,27 +3147,57 @@ function listTools(o: {
  *    written whole.
  */
 const DIALOG_CHARS_PER_SECOND = 60
-let typing: { text: string; shown: number; timer: ReturnType<typeof setInterval> } | undefined
+/**
+ * A line is remembered *in its context* — the encounter it was said in, the item it describes —
+ * never by its words alone: "What will you do?" is the same sentence for every wild Pokémon, and
+ * keyed by text it was written once and never again (plan 09 §9.5).
+ */
+let typing:
+  { key: string; text: string; shown: number; timer: ReturnType<typeof setInterval> } | undefined
 const writtenLines = new Set<string>()
 
+function lineKey(el: HTMLElement, text: string): string {
+  return `${el.dataset['lineContext'] ?? ''}\n${text}`
+}
+
 function typeDialogs(): void {
-  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+  // Only the open tab's dialogs: a line left in a hidden section would take the typewriter from
+  // the one on screen.
+  for (const el of document.querySelectorAll<HTMLElement>('main > section:not([hidden]) .dialog-text')) {
     const text = el.dataset['line'] ?? el.textContent ?? ''
     el.dataset['line'] = text
-    if (text === '' || motionOff() || writtenLines.has(text)) continue
-    if (typing === undefined || typing.text !== text) {
+    const key = lineKey(el, text)
+    el.dataset['lineKey'] = key
+    if (text === '' || motionOff() || writtenLines.has(key)) continue
+    if (typing === undefined || typing.key !== key) {
       if (typing !== undefined) {
         clearInterval(typing.timer)
-        writtenLines.add(typing.text)
+        writtenLines.add(typing.key)
       }
-      typing = {
-        text,
-        shown: 0,
-        timer: setInterval(stepDialog, 1000 / DIALOG_CHARS_PER_SECOND),
-      }
+      typing = { key, text, shown: 0, timer: setInterval(stepDialog, 1000 / DIALOG_CHARS_PER_SECOND) }
     }
     paintDialogLine(el, typing.shown)
   }
+}
+
+/**
+ * A line the scene has already shown whole — a throw's result, written as the ball lands — is
+ * written: the repaint after it must not type it out again.
+ */
+function showLineWhole(el: HTMLElement, context: string, text: string): void {
+  finishDialog()
+  el.dataset['lineContext'] = context
+  el.dataset['line'] = text
+  const key = lineKey(el, text)
+  el.dataset['lineKey'] = key
+  remember(key)
+  el.textContent = text
+}
+
+function remember(key: string): void {
+  // Bounded, as lines are many over a day.
+  if (writtenLines.size > 64) writtenLines.clear()
+  writtenLines.add(key)
 }
 
 /** One element's line with `shown` letters written; the whole line for the screen reader. */
@@ -3182,7 +3213,7 @@ function stepDialog(): void {
   const letters = [...typing.text].length
   typing.shown += 1
   for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
-    if (el.dataset['line'] === typing.text) paintDialogLine(el, typing.shown)
+    if (el.dataset['lineKey'] === typing.key) paintDialogLine(el, typing.shown)
   }
   if (typing.shown >= letters) finishDialog()
 }
@@ -3191,13 +3222,11 @@ function stepDialog(): void {
 function finishDialog(): void {
   if (typing === undefined) return
   clearInterval(typing.timer)
-  const text = typing.text
-  // Remembered so a re-render does not write it again; bounded, as lines are many over a day.
-  if (writtenLines.size > 64) writtenLines.clear()
-  writtenLines.add(text)
+  const { key, text } = typing
+  remember(key)
   typing = undefined
   for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
-    if (el.dataset['line'] === text) el.textContent = text
+    if (el.dataset['lineKey'] === key) el.textContent = text
   }
 }
 
