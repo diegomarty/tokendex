@@ -4,6 +4,7 @@ import { type CompanionState, type DexEntry, freshCompanionState } from '../src/
 import { MilestoneBalance } from '../src/core/companion/encounters.js'
 import { sanitized } from '../src/core/companion/saveTransfer.js'
 import { spendableBalance } from '../src/core/companion/ledger.js'
+import { challengeReward, ensureChallenges } from '../src/core/companion/challenges.js'
 
 const A = 'a'.repeat(32)
 const B = 'b'.repeat(32)
@@ -429,6 +430,37 @@ describe('the registry', () => {
     const remote = save({ revision: { [A]: 2, [B]: 7 }, challenges: board(3, true) })
     const merged = mergeSaves(local, remote).state.challenges!
     expect(merged.items[0]).toMatchObject({ progress: 3, done: false })
+  })
+
+  // [trigger branch] Code review 9.12 #7: the paid list was a union, so the loser's own payment
+  // came over as "paid" while its tokens stayed behind — the next settle marked it done and paid
+  // nothing. The winner's list only: the settle after the merge pays it, once.
+  it('pays once, after the merge, a challenge only the losing side was paid for', () => {
+    const item = {
+      id: 'day:2026-10-21:catch',
+      period: 'day' as const,
+      kind: 'catch' as const,
+      target: 3,
+      progress: 3,
+      done: true,
+    }
+    const board = (done: boolean) => ({
+      day: '2026-10-21',
+      week: '2026-W43',
+      items: [{ ...item, progress: done ? 3 : 1, done }],
+    })
+    const winner = save({ revision: { [A]: 4, [B]: 7 }, challenges: board(false), earnedTokens: 0 })
+    const loser = save({
+      revision: { [A]: 2, [B]: 7 },
+      challenges: board(true),
+      challengesPaid: [item.id],
+      earnedTokens: challengeReward(item),
+    })
+    const merged = mergeSaves(winner, loser).state
+    const settled = ensureChallenges(merged, '2026-10-21').state
+    expect(settled.earnedTokens).toBe(challengeReward(item))
+    expect(settled.challengesPaid).toEqual([item.id])
+    expect(ensureChallenges(settled, '2026-10-21').state.earnedTokens).toBe(challengeReward(item))
   })
 
   // Medals only grow: a medal celebrated on either side stays celebrated, so it is never
