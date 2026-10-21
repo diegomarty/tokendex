@@ -17,6 +17,7 @@ import {
   NATURES,
   Pokeball,
   type PokemonNature,
+  RARITIES,
   RareCandy,
   type Rarity,
   type ShopEntry,
@@ -154,6 +155,10 @@ export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): bool
     )
   }
   if (!FreshEgg.shopTiers.includes(tier)) return false
+  // Over a guarantee, only a stronger one (code review 9.12 #6): the same one again is paid for
+  // nothing, a weaker one is paid for a downgrade.
+  if (state.eggTier !== undefined && RARITIES.indexOf(tier) <= RARITIES.indexOf(state.eggTier))
+    return false
   return eggOnStage(state) && spendableBalance(state) >= FreshEgg.price_(tier)
 }
 

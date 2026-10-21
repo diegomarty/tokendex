@@ -244,6 +244,20 @@ describe('buying items', () => {
 const incubating = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, eggUsage: 1_000_000 })
 
 describe('buying eggs', () => {
+  // [trigger branch] Code review 9.12 #6: the guarantee on the egg was never checked, so the
+  // same one could be paid twice, or a weaker one bought over a stronger one — paying again to
+  // be downgraded. Only a stronger guarantee is ever on sale over the one the egg carries.
+  it('sells over a guarantee only a stronger one', () => {
+    const rare = buyEgg(incubating(), 'rare')!
+    expect(rare.eggTier).toBe('rare')
+    expect(canBuyEgg(rare, 'rare')).toBe(false)
+    expect(canBuyEgg(rare, 'uncommon')).toBe(false)
+    expect(buyEgg(rare, 'uncommon')).toBeUndefined()
+    const uncommon = buyEgg(incubating(), 'uncommon')!
+    expect(canBuyEgg(uncommon, 'uncommon')).toBe(false)
+    expect(canBuyEgg(uncommon, 'rare')).toBe(true)
+  })
+
   it('requires an egg on the stage, not a Pokémon', () => {
     expect(canBuyEgg(incubating(), 'uncommon')).toBe(true)
     expect(canBuyEgg(rich(), 'uncommon')).toBe(false)
