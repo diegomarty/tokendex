@@ -87,6 +87,20 @@ describe('the stylesheet', () => {
     expect(handWritten, 'hand-written `class="bar"` in main.ts (the limits are the one allowed)').toBe(1)
   })
 
+  // [trigger branch] The narrow layout is one width, not one per zone. With four (a 300px media
+  // query, containers at 300, 310 and 320 — panels of 324, 334 and 344px), each zone switched on
+  // its own, and between them a plate was narrow while its percentage pill was not, and the name
+  // clipped. Two names: `narrow` (340px, where the battle menu's three across stop fitting —
+  // measured) and `squeezed` (300px, where the page itself gives up air). Text that may or may not
+  // fit in a given language is measured by the webview (`fitTight`), never given a width here.
+  it('switches to the narrow layout at one width', () => {
+    const widths = [...CODE.matchAll(/@(media|container)[^{]*max-width:\s*(\d+)px/g)].map(
+      (m) => `${m[1]} ${m[2]}`,
+    )
+    expect(widths.length).toBeGreaterThan(0)
+    expect([...new Set(widths)].sort()).toEqual(['media 300', 'media 340'])
+  })
+
   // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
   // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
   it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {

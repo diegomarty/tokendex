@@ -58,6 +58,15 @@ let dexRegion: string | undefined
  * reaches the host, and it survives a reload through `vscode.setState`.
  */
 const openDrawers = new Set<string>()
+/** The shop opened its balls once, on its first showing (view state). */
+let shopDrawersSeen = false
+/** Each shop drawer's icon: a game item that stands for its group. */
+const SHOP_GROUP_ICONS: Record<PanelState['shop'][number]['group'], string> = {
+  balls: 'poke-ball',
+  berries: 'oran-berry',
+  items: 'rare-candy',
+  eggs: 'egg-icon',
+}
 /**
  * Each wild Pokémon's mood as last drawn, by encounter id and meter: what a new render compares
  * against, so a berry or a miss shows the cells it added or took away. View state only.
@@ -390,7 +399,7 @@ function renderHome(state: PanelState): string {
     : `<div id="lid-detail" hidden></div>`
   const wallet = compact
     ? ''
-    : `<div class="wallet-bar device-casing${usageOpen ? ' open' : ''}">
+    : `<div class="wallet-bar device-casing${usageOpen ? ' open' : ''}" data-fit>
         <button class="brand lid-toggle" data-drawer="usage" aria-expanded="${usageOpen}" aria-controls="lid-detail"
           aria-label="${escapeHTML(lid.toggleLabel)}" aria-describedby="lid-usage">
           <span class="device-lens"></span>
@@ -398,7 +407,7 @@ function renderHome(state: PanelState): string {
           <span class="brand-text">
             <span class="brand-name">TOKEN<b>DEX</b></span>
             <span class="lid-usage-line">
-              <span class="lid-usage" id="lid-usage"><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
+              <span class="lid-usage" id="lid-usage" data-fit-text><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
               <i class="codicon codicon-chevron-down lid-chevron" aria-hidden="true"></i>
             </span>
           </span>
@@ -466,22 +475,50 @@ function renderDrawers(state: PanelState): string {
         tab === undefined
           ? ''
           : `<button class="drawer-link" data-tab="${tab}">${escapeHTML(state.strings.tabs[tab])} →</button>`
-      return `<div class="drawer drawer-${escapeHTML(d.id)}${d.attention ? ' attention' : ''}${open ? ' open' : ''}">
-          <button class="drawer-row" data-drawer="${escapeHTML(d.id)}" aria-expanded="${open}" aria-controls="drawer-${escapeHTML(d.id)}">
-            <span class="drawer-led" aria-hidden="true"></span>
-            <img class="drawer-icon${sheet}" src="${itemSpriteURL(icon)}" alt="">
-            <span class="drawer-title">${escapeHTML(d.title)}</span>
-            <span class="drawer-summary">${escapeHTML(d.summary)}</span>
-            <i class="codicon codicon-chevron-right drawer-chevron" aria-hidden="true"></i>
-          </button>
-          ${open ? `<div class="drawer-detail" id="drawer-${escapeHTML(d.id)}" role="region" aria-label="${escapeHTML(d.title)}">${drawerDetail(state, d.id)}${link}</div>` : ''}
-        </div>`
+      return drawerHTML({
+        id: d.id,
+        title: d.title,
+        summary: d.summary,
+        icon,
+        iconClass: sheet,
+        attention: d.attention,
+        open,
+        detail: () => `${drawerDetail(state, d.id)}${link}`,
+      })
     })
     .join('')
   return `<section class="drawers device-casing">
       <div class="drawers-hinge" aria-hidden="true"><i></i><i></i></div>
       ${rows}
     </section>`
+}
+
+/**
+ * One drawer — Home's systems and the shop's groups alike: the row (LED, a game item's icon, the
+ * title, the summary, the chevron) and, open, its detail. The one component, so a drawer looks
+ * and behaves the same wherever it is. `detail` is built only when open.
+ */
+function drawerHTML(d: {
+  id: string
+  title: string
+  summary: string
+  icon: string
+  iconClass?: string
+  attention: boolean
+  open: boolean
+  detail: () => string
+}): string {
+  const id = escapeHTML(d.id)
+  return `<div class="drawer drawer-${id}${d.attention ? ' attention' : ''}${d.open ? ' open' : ''}">
+      <button class="drawer-row" data-drawer="${id}" aria-expanded="${d.open}" aria-controls="drawer-${id}">
+        <span class="drawer-led" aria-hidden="true"></span>
+        <img class="drawer-icon${d.iconClass ?? ''}" src="${itemSpriteURL(d.icon)}" alt="">
+        <span class="drawer-title">${escapeHTML(d.title)}</span>
+        <span class="drawer-summary">${escapeHTML(d.summary)}</span>
+        <i class="codicon codicon-chevron-right drawer-chevron" aria-hidden="true"></i>
+      </button>
+      ${d.open ? `<div class="drawer-detail" id="drawer-${id}" role="region" aria-label="${escapeHTML(d.title)}">${d.detail()}</div>` : ''}
+    </div>`
 }
 
 /** The detail of one drawer, from data the panel already carries — one piece per system. */
@@ -537,8 +574,8 @@ function renderStarters(state: PanelState, starters: NonNullable<PanelState['sta
  */
 function renderEggs(state: PanelState): string {
   const eggs = state.eggs
-  if (state.companion?.speciesID === undefined) return ''
-  if (eggs.count === 0 && eggs.incubateText === undefined) return ''
+  // The three slots always show, empty ones included, so the drawer says what the stock holds
+  // and what it can hold (Diego). With none, a line says how the next one arrives.
   const slots = Array.from(
     { length: eggs.max },
     (_, i) =>
@@ -546,7 +583,7 @@ function renderEggs(state: PanelState): string {
   ).join('')
   return `<div class="egg-stock${eggs.paused ? ' paused' : ''}">
       <span class="egg-slots" role="img" aria-label="${escapeHTML(eggs.stockText)}">${slots}</span>
-      <span class="egg-text">${escapeHTML(eggs.stockText)}</span>
+      <span class="egg-text">${escapeHTML(eggs.stockText)}${eggs.emptyText === undefined ? '' : `<span class="egg-empty">${escapeHTML(eggs.emptyText)}</span>`}</span>
       ${eggs.incubateText === undefined ? '' : `<button class="btn primary egg-incubate" data-incubate>${escapeHTML(eggs.incubateText)}</button>`}
     </div>`
 }
@@ -958,9 +995,9 @@ function playerPlate(state: PanelState): string {
   const meta = [c.stageText, c.rarityText, c.natureText].filter(
     (part): part is string => part !== undefined && part !== '',
   )
-  return `<div class="plate plate-player">
+  return `<div class="plate plate-player" data-fit>
       <div class="plate-head">
-        <span class="plate-name">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        <span class="plate-name" data-fit-text>${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
         ${
           // Stage, rarity and nature, behind the same glyph as the wild plate's temperament:
           // what the plate is for is the road to the next stage, not the card's details.
@@ -1256,13 +1293,18 @@ function renderShop(state: PanelState): string {
       </div>`
   }
 
-  // The wallet on top: every price below is judged against this number, so making the reader
-  // hop back to Home to know it is a dead end.
-  // Drawn as the Pokédex lid's screen on Home, so the balance looks the same wherever it is read.
+  // The head as the Pokédex's: the device's casing, its lens, the tab's name — and the balance on
+  // the lid's own screen, since every price below is judged against it (Diego: the shop follows
+  // Home's style).
   const wallet = `
-    <div class="shop-wallet lcd">
-      <span class="label">${escapeHTML(state.strings.spendable)}</span>
-      <span class="value">${escapeHTML(state.spendableText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>
+    <div class="dex-head device-casing shop-head">
+      <span class="device-lens" aria-hidden="true"></span>
+      <span class="dex-title">${escapeHTML(state.strings.tabs.shop)}</span>
+      <span class="wallet-badge lcd shop-balance" title="${escapeHTML(state.strings.spendable)}"
+            aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
+        <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
+        <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
+      </span>
     </div>`
 
   // `note` is what every card in the group would otherwise repeat. Only the eggs have one so
@@ -1273,22 +1315,37 @@ function renderShop(state: PanelState): string {
     { id: 'items', title: state.strings.shopItems },
     { id: 'eggs', title: state.strings.shopEggs, note: state.strings.shopEggsNote },
   ]
-  // Each group is its own element, with its own row list inside it. Flat, the wide layout's
-  // auto-fill grid swallowed the headings as cells: "ITEMS" landed in a column beside a ball,
-  // and rows sat under a heading they did not belong to.
-  const sections = groups
-    .map((group) => {
-      const items = state.shop.filter((item) => item.group === group.id)
-      if (items.length === 0) return ''
-      const note = group.note === undefined ? '' : `<p class="section-note">${escapeHTML(group.note)}</p>`
-      return `<section class="shop-group">
-        <h2 class="section">${escapeHTML(group.title)}</h2>${note}
-        <div class="shop-rows">${items.map(row).join('')}</div>
-      </section>`
+  // The groups fold into drawers inside the device's casing, as Home's do — the same row, LED,
+  // icon, summary and chevron — so the shop reads as part of the same object. The balls open
+  // the first time the shop is seen; after that each drawer keeps what the player left it.
+  if (!shopDrawersSeen) {
+    shopDrawersSeen = true
+    if (![...openDrawers].some((id) => id.startsWith('shop-'))) openDrawers.add('shop-balls')
+  }
+  const drawers = state.shopGroups
+    .map((g) => {
+      const group = groups.find((x) => x.id === g.id)
+      const items = state.shop.filter((item) => item.group === g.id)
+      const id = `shop-${g.id}`
+      const open = openDrawers.has(id)
+      const note =
+        group?.note === undefined ? '' : `<p class="section-note">${escapeHTML(group.note)}</p>`
+      return drawerHTML({
+        id,
+        title: g.title,
+        summary: g.summary,
+        icon: SHOP_GROUP_ICONS[g.id],
+        attention: false,
+        open,
+        detail: () => `${note}<div class="shop-rows">${items.map(row).join('')}</div>`,
+      })
     })
     .join('')
 
-  return `${wallet}${sections}`
+  return `${wallet}<section class="drawers device-casing shop-drawers">
+      <div class="drawers-hinge" aria-hidden="true"><i></i><i></i></div>
+      ${drawers}
+    </section>`
 }
 
 /**
@@ -1297,7 +1354,12 @@ function renderShop(state: PanelState): string {
  * used from here. Which pocket and which item are view state; the contents all come from the core.
  */
 function renderBag(state: PanelState): string {
-  if (state.bag.length === 0) return `<p class="empty">${escapeHTML(state.strings.bagEmpty)}</p>`
+  if (state.bag.length === 0) {
+    return emptyState(
+      state.strings.emptyBag,
+      `<button class="btn primary" data-tab="shop">${escapeHTML(state.strings.emptyBag.action)}</button>`,
+    )
+  }
 
   const pockets: { id: PanelState['bag'][number]['pocket']; label: string }[] = [
     { id: 'balls', label: state.strings.shopBalls },
@@ -1583,10 +1645,13 @@ function renderDex(state: PanelState): string {
         <span class="desc">${escapeHTML(summary.progressText)}</span>
         ${gameMeter(summary.percent, { surface: 'casing', hidden: true })}
       </div>`
-    const hint =
-      summary.owned === 0
-        ? `<p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
-      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
+    // The Shinydex says how a shiny is earned; the collection, how a first Pokémon is had.
+    const hint = shinydex
+      ? summary.shinyRegistered === 0
+        ? emptyState(state.strings.emptyShinydex)
+        : ''
+      : summary.owned === 0
+        ? emptyState(state.strings.emptyCollection)
         : ''
 
     // 649 cells is ~217 rows in a sidebar. Scrolling to a species is not something anyone does
@@ -1700,9 +1765,7 @@ function renderDex(state: PanelState): string {
 
   const head = dexHead(state, '')
   if (state.dexLog.length === 0) {
-    return `${head}${segments}
-      <p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
-      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
+    return `${head}${segments}${emptyState(state.strings.emptyLog)}`
   }
 
   // Rarity chips, counted by the core. The log itself stays chronological — this is the
@@ -1933,6 +1996,22 @@ function placeSpans(root: HTMLElement): void {
   }
 }
 
+/**
+ * Whether a line fits is a question of its words, its figures and the language, never of one
+ * panel width: each `[data-fit]` measures its `[data-fit-text]` at full length and takes `.tight`
+ * when it does not fit, for the stylesheet to give the short form (the lid's line) or to drop
+ * what stands beside it (the player plate's percentage).
+ */
+function fitTight(): void {
+  for (const box of document.querySelectorAll<HTMLElement>('[data-fit]')) {
+    box.classList.remove('tight')
+    const text = box.querySelector<HTMLElement>('[data-fit-text]')
+    if (text !== null && text.scrollWidth > text.clientWidth + 1) box.classList.add('tight')
+  }
+}
+// A resize changes what fits without a render.
+new ResizeObserver(() => fitTight()).observe(document.body)
+
 function paintBars(root: HTMLElement): void {
   for (const fillElement of root.querySelectorAll<HTMLElement>('[data-fill]')) {
     const raw = Number(fillElement.dataset['fill'])
@@ -2022,6 +2101,8 @@ function render(): void {
   if (pendingWallet !== undefined && tab === 'home') playWalletChange(pendingWallet)
   pendingWallet = undefined
   paintPCBox()
+  typeDialogs()
+  fitTight()
 }
 
 /**
@@ -2190,6 +2271,7 @@ document.addEventListener('click', (event) => {
     if (openDrawers.has(id)) openDrawers.delete(id)
     else openDrawers.add(id)
     invalidate('home')
+    invalidate('shop') // the shop's groups are drawers too
     render()
     return
   }
@@ -2618,6 +2700,11 @@ document.addEventListener(
       img.src = fallback
       return
     }
+    // A tab's item gives way to the codicon under it.
+    if (img.classList.contains('tab-item')) {
+      img.remove()
+      return
+    }
     // Item sprites degrade to their emoji — set as text, never markup, so nothing re-enters HTML.
     const emoji = img.dataset['emojiFallback']
     if (emoji !== undefined) {
@@ -2629,6 +2716,29 @@ document.addEventListener(
   },
   true,
 )
+
+/**
+ * The tabs are the device's buttons, each drawn with a game item (plan 08 §7): the item from
+ * PokéAPI at runtime like every sprite, never bundled. The codicon from the shell stays under it
+ * and shows again if the sprite does not load (the `error` handler above removes the image).
+ * The developer tab keeps its beaker: it is no part of the game.
+ */
+const TAB_ITEMS: Partial<Record<TabID, string>> = {
+  home: 'town-map',
+  shop: 'coin-case',
+  bag: 'explorer-kit',
+  dex: 'poke-radar',
+  settings: 'vs-seeker',
+}
+for (const [id, item] of Object.entries(TAB_ITEMS)) {
+  const button = document.getElementById(`tab-${id}`)
+  if (button === null || button.querySelector('.tab-item') !== null) continue
+  const img = document.createElement('img')
+  img.className = 'tab-item'
+  img.alt = ''
+  img.src = itemSpriteURL(item)
+  button.prepend(img)
+}
 
 window.addEventListener(
   'message',
@@ -2915,4 +3025,91 @@ function listTools(o: {
   return `<input ${o.searchAttr} class="list-search" type="search" value="${escapeHTML(o.query)}"
                  placeholder="${escapeHTML(o.placeholder)}" aria-label="${escapeHTML(o.placeholder)}">
           <select ${o.sortAttr} class="list-sort" aria-label="${escapeHTML(o.sorts.map((s) => s.label).join(' / '))}">${options}</select>`
+}
+
+// MARK: - Dialog, letter by letter
+
+/**
+ * The dialog box writes its line the way the games do, letter by letter (Diego: fast, ~60 a
+ * second). Run after every render on each `.dialog-text`:
+ *
+ *  - The line a screen reader hears is the whole one, at once: it goes to a visually-hidden
+ *    copy inside the live region, and the letters being written are `aria-hidden`.
+ *  - A line already written stays written; a re-render mid-line carries on from the letter it
+ *    had reached rather than starting over.
+ *  - A click or a key finishes it at once; with reduced motion (or a hidden panel) it is
+ *    written whole.
+ */
+const DIALOG_CHARS_PER_SECOND = 60
+let typing: { text: string; shown: number; timer: ReturnType<typeof setInterval> } | undefined
+const writtenLines = new Set<string>()
+
+function typeDialogs(): void {
+  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+    const text = el.dataset['line'] ?? el.textContent ?? ''
+    el.dataset['line'] = text
+    if (text === '' || motionOff() || writtenLines.has(text)) continue
+    if (typing === undefined || typing.text !== text) {
+      if (typing !== undefined) {
+        clearInterval(typing.timer)
+        writtenLines.add(typing.text)
+      }
+      typing = {
+        text,
+        shown: 0,
+        timer: setInterval(stepDialog, 1000 / DIALOG_CHARS_PER_SECOND),
+      }
+    }
+    paintDialogLine(el, typing.shown)
+  }
+}
+
+/** One element's line with `shown` letters written; the whole line for the screen reader. */
+function paintDialogLine(el: HTMLElement, shown: number): void {
+  const text = el.dataset['line'] ?? ''
+  el.innerHTML = `<span class="visually-hidden">${escapeHTML(text)}</span><span aria-hidden="true">${escapeHTML(
+    [...text].slice(0, shown).join(''),
+  )}</span>`
+}
+
+function stepDialog(): void {
+  if (typing === undefined) return
+  const letters = [...typing.text].length
+  typing.shown += 1
+  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+    if (el.dataset['line'] === typing.text) paintDialogLine(el, typing.shown)
+  }
+  if (typing.shown >= letters) finishDialog()
+}
+
+/** Writes the line whole and stops: on its last letter, or at a click or a key. */
+function finishDialog(): void {
+  if (typing === undefined) return
+  clearInterval(typing.timer)
+  const text = typing.text
+  // Remembered so a re-render does not write it again; bounded, as lines are many over a day.
+  if (writtenLines.size > 64) writtenLines.clear()
+  writtenLines.add(text)
+  typing = undefined
+  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+    if (el.dataset['line'] === text) el.textContent = text
+  }
+}
+
+// A click anywhere or any key completes the line being written, as the games' A button does.
+document.addEventListener('pointerdown', () => finishDialog(), true)
+document.addEventListener('keydown', () => finishDialog(), true)
+
+// MARK: - Empty states
+
+/**
+ * One empty view, drawn one way everywhere (plan 08 §7): what it is, and how it fills — with the
+ * way there as a button when there is one. Texts are the core's.
+ */
+function emptyState(empty: { title: string; hint: string }, action = ''): string {
+  return `<div class="empty-state">
+      <p class="empty-title">${escapeHTML(empty.title)}</p>
+      <p class="empty-hint">${escapeHTML(empty.hint)}</p>
+      ${action}
+    </div>`
 }

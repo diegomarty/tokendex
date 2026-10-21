@@ -1476,10 +1476,15 @@ body.paused .wild-scene *::after {
 .device-leds i:nth-child(3) {
   background: var(--device-led-green);
 }
-/* The narrowest sidebar keeps the lens; the lights are the first thing to go. */
+/* The narrowest sidebar keeps the lens; the lights are the first thing to go, then the logo's
+   air — its letter spacing and two pixels — so the name still reads whole. */
 @media (max-width: 300px) {
   .device-leds {
     display: none;
+  }
+  .brand-name {
+    font-size: var(--fs-l);
+    letter-spacing: 0;
   }
 }
 /* A dark screen: glass, phosphor-green digits and faint scanlines. */
@@ -1521,7 +1526,6 @@ body.paused .wild-scene *::after {
    does. Everything around it — the plates, the dialog box, the menu — borrows the games' own
    vernacular, and the rest of the panel stays quiet. */
 .battle {
-  container-type: inline-size;
   margin-bottom: 14px;
   border-radius: 12px;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
@@ -2113,11 +2117,10 @@ body.paused .meter .meter-icon {
 body.vscode-dark .exp-figures {
   color: color-mix(in srgb, var(--exp) 65%, #fff);
 }
-/* At 300px or less the name needs the room: the EXP line under it already says the figure. */
-@media (max-width: 300px) {
-  .plate-player .plate-pct {
-    display: none;
-  }
+/* When the name does not fit beside it, the pill gives way: the EXP line under it already says
+   the figure. Measured by `fitTight()` in main.ts — the width depends on the name and language. */
+.plate-player.tight .plate-pct {
+  display: none;
 }
 
 /* Already yours: the Poké Ball the games print beside a species you have caught — the same
@@ -2675,7 +2678,7 @@ button.command.info {
 }
 /* Three across in a narrow sidebar: each icon over its name, as the ball cells above stand, so
    no name clips in any language (measured in the bench: "Pokémon" needs 90px of a 79px third). */
-@container (max-width: 320px) {
+@media (max-width: 340px) {
   .command-row > .command:not(.info) {
     flex-direction: column;
     gap: 0;
@@ -2780,16 +2783,17 @@ button.command.ball.none:hover .ball-name,
 
 /* A narrow sidebar: the plates take more of the width so the name is not the thing that gives,
    and the follower steps closer to the trainer, out from under the plate. */
-@container (max-width: 310px) {
-  /* Taller, so the wild Pokémon can stand below its plate instead of behind it. */
+@media (max-width: 340px) {
+  /* Taller, so the wild Pokémon can stand below its plate instead of behind it — just below it,
+     and with its platform clear of your plate (test/scene-geometry.test.ts). */
   .battle .wild-scene.has-wild {
-    height: 300px;
+    height: 288px;
   }
   .battle .wild-scene.has-wild .wild-mon {
-    top: 104px;
+    top: 82px;
   }
   .battle .wild-scene.has-wild .pad-wild {
-    top: 186px;
+    top: 164px;
   }
   .battle .plate-wild {
     width: 72%;
@@ -3212,7 +3216,7 @@ body.paused .stage.celebrate img {
 }
 
 /* ---- very narrow: a squeezed sidebar. Everything keeps its data; it gives up air. */
-@media (max-width: 250px) {
+@media (max-width: 300px) {
   body {
     padding: 8px;
   }
@@ -3413,20 +3417,6 @@ body.compact .row-stat .label {
    The balance and every price are drawn on the same screen as the wallet on the Pokédex lid —
    dark glass, phosphor digits, the Nugget — so a price reads as the currency it is paid in.
    Every price below is read against the balance at the top. */
-.shop-wallet {
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  margin-bottom: 14px;
-  border-radius: var(--r-l);
-  box-shadow:
-    inset 0 0 0 1px rgb(141 255 176 / 0.18),
-    inset 0 2px 8px rgb(0 0 0 / 0.6),
-    0 2px 0 var(--paper-edge);
-}
 button.btn.priced::before {
   content: '';
   position: absolute;
@@ -3435,20 +3425,9 @@ button.btn.priced::before {
   pointer-events: none;
   background: repeating-linear-gradient(180deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 3px);
 }
-.shop-wallet .label {
-  font-size: 0.92em;
-  font-weight: 600;
-  opacity: 0.7;
-}
-.shop-wallet .value {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
 /* One balance, one look: the lid's badge on Home and the shop's screen draw the number with the
    same rule, so the figure never changes size between the two places it is read. */
-.wallet-badge .wallet-value,
-.shop-wallet .value {
+.wallet-badge .wallet-value {
   font-size: var(--fs-xl);
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -3456,9 +3435,6 @@ button.btn.priced::before {
   font-variant-numeric: tabular-nums;
 }
 
-#shop {
-  container: shop / inline-size;
-}
 /* An icon cut from a 96px sheet (the egg): its middle 28×30 at ×1, not the sheet shrunk. */
 #shop .row .icon img.sheet {
   width: 28px;
@@ -3554,7 +3530,7 @@ button.btn.priced .save {
   opacity: 0.7;
 }
 /* Too narrow for a column of tags beside the name: they move under it, side by side. */
-@container shop (max-width: 300px) {
+@media (max-width: 340px) {
   #shop .row.shop-item {
     grid-template-columns: 38px minmax(0, 1fr);
     row-gap: 7px;
@@ -3591,12 +3567,10 @@ button.btn.priced:not(:has(.verb)) .cost {
   justify-content: center;
 }
 @media (forced-colors: active) {
-  :is(#shop, .lcd-actions) .cost,
-  .shop-wallet .value {
+  :is(#shop, .lcd-actions) .cost {
     text-shadow: none;
   }
-  button.btn.priced::before,
-  .shop-wallet::after {
+  button.btn.priced::before {
     content: none;
   }
 }
@@ -3837,7 +3811,6 @@ button.btn.priced:not(:has(.verb)) .cost {
 }
 
 @media (forced-colors: active) {
-  .shop-wallet,
   .pockets,
   .segments,
   .bag-list,
@@ -4348,6 +4321,18 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   min-width: 0;
   font-size: 0.9em;
   opacity: 0.8;
+}
+/* With the stock empty, how the next egg arrives: under the count, a step quieter. */
+.egg-empty {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  opacity: 0.85;
+}
+/* An empty slot reads as a place for an egg, not as a gap: a dashed outline. */
+.egg-slot:not(.full) {
+  outline: 1px dashed color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+  outline-offset: -1px;
 }
 .egg-stock .egg-incubate {
   flex: 1 0 auto;
@@ -4891,13 +4876,13 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
 .lid-short {
   display: none;
 }
-@media (max-width: 300px) {
-  .lid-long {
-    display: none;
-  }
-  .lid-short {
-    display: inline;
-  }
+/* When the long line does not fit the lid, the short one stands in: measured by `fitTight()`,
+   since where that happens depends on the figures and the language. */
+.wallet-bar.tight .lid-long {
+  display: none;
+}
+.wallet-bar.tight .lid-short {
+  display: inline;
 }
 /* The lights read the official limits: green fine, amber at 80%, red spent; dark with none. */
 .device-leds i.led-off {
@@ -5003,7 +4988,7 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   color: var(--lcd-ink);
   white-space: nowrap;
 }
-@media (max-width: 300px) {
+@media (max-width: 340px) {
   .lid-screen table {
     font-size: var(--fs-xs);
   }
@@ -5272,7 +5257,7 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   text-align: right;
   cursor: pointer;
 }
-@media (max-width: 300px) {
+@media (max-width: 340px) {
   .drawer-summary {
     font-size: var(--fs-xs);
   }
@@ -5472,4 +5457,55 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   z-index: 41;
   max-height: 80vh;
   overflow-y: auto;
+}
+
+/* ── Empty states (plan 08 §7) ─────────────────────────────────────────────────────────────
+   What a view is and how it fills, on paper, centred: one look for every empty view. */
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 18px auto;
+  max-width: 34ch;
+  padding: 16px 14px;
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+  border-radius: var(--r-m);
+}
+.empty-state .empty-title {
+  margin: 0;
+  font-weight: 700;
+}
+.empty-state .empty-hint {
+  margin: 0;
+  font-size: var(--fs-s);
+  opacity: 0.8;
+}
+.empty-state .btn {
+  margin-top: 4px;
+}
+
+/* ── The shop, in Home's style (Diego) ──────────────────────────────────────────────────────
+   The head is the Pokédex's casing with the lid's balance screen on its right; the groups are
+   Home's drawers (`drawerHTML`), their rows paper cards inside. */
+.shop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shop-head .dex-title {
+  flex: 1;
+  min-width: 0;
+}
+.shop-head .shop-balance {
+  cursor: default;
+}
+.shop-drawers .drawer-detail .shop-rows {
+  display: grid;
+  gap: 6px;
+}
+.shop-drawers .drawer-detail .section-note {
+  margin: 0 0 6px;
+  font-size: var(--fs-s);
+  opacity: 0.8;
 }
