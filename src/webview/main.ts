@@ -2566,21 +2566,13 @@ function render(): void {
   // of a sidebar — for a grid nobody was looking at.
   if (!painted.has(tab)) {
     const section = el(tab)
-    // The scene's sprites are animated GIFs. A repaint that recreates them restarts every
-    // animation at frame one, which reads as the whole stage flickering — so a sprite whose
-    // source did not change keeps its node across the repaint.
-    const kept = tab === 'home' ? sceneSprites(section) : new Map<string, HTMLImageElement>()
     const previousTerrain = section.querySelector<HTMLElement>('.wild-scene')?.dataset['terrain']
     const focused = focusInside(section)
     keepScrolls(section)
-    section.innerHTML = RENDERERS[tab](state)
+    keepingPictures(section, () => {
+      section.innerHTML = RENDERERS[tab](state)
+    })
     restoreFocus(focused)
-    if (kept.size > 0) {
-      for (const [key, fresh] of sceneSprites(section)) {
-        const old = kept.get(key)
-        if (old !== undefined && old.src === fresh.src) fresh.replaceWith(old)
-      }
-    }
     changeTerrain(section, previousTerrain)
     painted.add(tab)
     paintBars(section)
@@ -2707,19 +2699,39 @@ function changeTerrain(root: HTMLElement, previous: string | undefined): void {
   scene.dataset['terrain'] = next
 }
 
-/** The scene's sprites by role, so a repaint can tell which of them are the same picture. */
-function sceneSprites(root: HTMLElement): Map<string, HTMLImageElement> {
-  const roles: [string, string][] = [
-    ['wild', '.wild-scene .wild-mon img'],
-    ['companion', '.wild-scene .companion-mon img'],
-    ['trainer', '.wild-scene img.trainer'],
-  ]
-  const found = new Map<string, HTMLImageElement>()
-  for (const [role, selector] of roles) {
-    const img = root.querySelector<HTMLImageElement>(selector)
-    if (img !== null) found.set(role, img)
+/**
+ * Repaints `root` keeping every picture whose source did not change: the old `<img>` node takes
+ * the new one's place, with the new one's attributes. A recreated picture is reloaded — blank
+ * for a frame — and an animated GIF restarts at frame one: on the scene that read as the stage
+ * flickering, and in the Pokédex as the card and the 649 cells behind its veil flashing at every
+ * button the card answered (Diego). Pictures pair up by source, in document order.
+ */
+function keepingPictures(root: HTMLElement, paint: () => void): void {
+  const pool = new Map<string, HTMLImageElement[]>()
+  for (const img of root.querySelectorAll('img')) {
+    const src = img.dataset['fellFrom'] ?? img.getAttribute('src')
+    if (src === null) continue
+    const same = pool.get(src)
+    if (same === undefined) pool.set(src, [img])
+    else same.push(img)
   }
-  return found
+  paint()
+  if (pool.size === 0) return
+  for (const fresh of root.querySelectorAll('img')) {
+    const old = pool.get(fresh.getAttribute('src') ?? '')?.shift()
+    if (old === undefined) continue
+    // A picture already on its fallback keeps showing it: its source is not the one asked for.
+    const settled = new Set(
+      old.dataset['fellFrom'] === undefined ? [] : ['src', 'data-fallback', 'data-fell-from'],
+    )
+    for (const { name } of [...old.attributes]) {
+      if (!fresh.hasAttribute(name) && !settled.has(name)) old.removeAttribute(name)
+    }
+    for (const { name, value } of [...fresh.attributes]) {
+      if (!settled.has(name) && old.getAttribute(name) !== value) old.setAttribute(name, value)
+    }
+    fresh.replaceWith(old)
+  }
 }
 
 /**
@@ -3285,6 +3297,9 @@ document.addEventListener(
     const fallback = img.dataset['fallback']
     if (fallback !== undefined) {
       delete img.dataset['fallback']
+      // Remembered so a repaint asking for the same missing picture keeps this one
+      // (`keepingPictures`) instead of failing — and flashing — all over again.
+      img.dataset['fellFrom'] = img.getAttribute('src') ?? ''
       img.src = fallback
       return
     }
@@ -3643,11 +3658,15 @@ function paintPCBox(): void {
     const signature = `card:${cardOpen}:${JSON.stringify(sp)}:${dexEntries.has(`${current.language}:${cardOpen}`)}:${phase.awaiting}`
     if (layer.dataset['state'] !== signature) {
       layer.dataset['state'] = signature
-      layer.innerHTML =
-        sp === undefined
-          ? ''
-          : `<div class="pc-backdrop" data-modal-close></div>
-             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(current, sp, close, true, phase)}</div>`
+      const host = layer
+      const state = current
+      keepingPictures(host, () => {
+        host.innerHTML =
+          sp === undefined
+            ? ''
+            : `<div class="pc-backdrop" data-modal-close></div>
+             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(state, sp, close, true, phase)}</div>`
+      })
     }
     paintBars(layer)
     return
@@ -3755,7 +3774,10 @@ function repaintPCTools(pressed: HTMLElement): void {
 function repaintPCGrid(): void {
   const wrap = document.querySelector<HTMLElement>('#pc-layer .pc-grid-wrap')
   if (wrap === null || current === undefined) return
-  wrap.innerHTML = pcGrid(current)
+  const state = current
+  keepingPictures(wrap, () => {
+    wrap.innerHTML = pcGrid(state)
+  })
   paintBars(wrap)
 }
 
