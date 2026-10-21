@@ -2049,7 +2049,11 @@ function renderDex(state: PanelState): string {
       if (dexOwnedOnly && shinydex && sp?.shiny === 'none') return false
       if (query === '') return true
       if (numeric !== undefined) return String(id).includes(numeric)
-      return sp !== undefined && sp.name.toLowerCase().includes(query)
+      // Every species can be found by name — one not met yet by the core's list of names, while
+      // its card keeps the silhouette: the search finds it, the card does not give it away
+      // (Diego). "Obtained only" above is what narrows the search to what is had.
+      const name = sp?.name ?? summary.names[id]
+      return name !== undefined && name.toLowerCase().includes(query)
     }
 
     // Search, order, "obtained only" and the regions, on the device's own screen under its

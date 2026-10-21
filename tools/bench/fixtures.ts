@@ -80,6 +80,9 @@ const NAMES: Record<number, string> = {
   8: 'Wartortle',
   9: 'Blastoise',
   10: 'Caterpie',
+  16: 'Pidgey',
+  17: 'Pidgeotto',
+  18: 'Pidgeot',
   25: 'Pikachu',
   26: 'Raichu',
   39: 'Jigglypuff',
@@ -457,6 +460,9 @@ function scene(options: SceneOptions = {}): PanelState {
     }),
     state,
     line: options.line,
+    // Every name the bench knows, as the worker hands the core the whole index's: what the
+    // Pokédex's search matches a species not met yet by.
+    speciesNames: Object.fromEntries(Object.keys(NAMES).map((id) => [Number(id), names(Number(id))])),
     isCelebrating: false,
     now: EPOCH,
     locale: LOCALE,
