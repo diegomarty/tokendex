@@ -120,6 +120,17 @@ import { panelStrings } from '../i18n/panelStrings.js'
  *  and the panel's picker — three copies would drift. */
 export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
 
+/**
+ * A collection's completion, for its bar: rounded, but never 0 with something in it (four of 649
+ * is a sliver, not an empty bar) and never 100 with something missing (646–648 of 649 used to
+ * read complete; code review 9.12 #13).
+ */
+export function completion(done: number, total: number): number {
+  if (done <= 0 || total <= 0) return 0
+  if (done >= total) return 100
+  return Math.min(99, Math.max(1, Math.round((100 * done) / total)))
+}
+
 /** How many waiting encounters Home's Wild drawer lists behind the one on stage (plan 9.4). */
 export const WILD_QUEUE_SHOWN = 3
 
@@ -724,7 +735,7 @@ function dexSummary(
     owned,
     registered,
     total,
-    percent: Math.min(100, Math.round((100 * registered) / total)),
+    percent: completion(registered, total),
     progressText: D.dexProgressText(registered, total),
     speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
     logSegmentText: D.countedLabel(strings.segmentLog, logCount),
@@ -739,17 +750,17 @@ function dexSummary(
         name: D.regionName(lang, r.id),
         registered: r.registered,
         total: r.total,
-        percent: Math.min(100, Math.round((100 * r.registered) / r.total)),
+        percent: completion(r.registered, r.total),
         progressText: D.dexProgressText(r.registered, r.total),
         shinyRegistered: r.shinyRegistered,
-        shinyPercent: Math.min(100, Math.round((100 * r.shinyRegistered) / r.total)),
+        shinyPercent: completion(r.shinyRegistered, r.total),
         shinyProgressText: D.dexProgressText(r.shinyRegistered, r.total),
         from: region.from,
         to: region.to,
       }
     }),
     shinyRegistered,
-    shinyPercent: Math.min(100, Math.round((100 * shinyRegistered) / total)),
+    shinyPercent: completion(shinyRegistered, total),
     shinyProgressText: D.dexProgressText(shinyRegistered, total),
     shinySegmentText: D.countedLabel(D.shinydexLabel(lang), shinyRegistered),
   }

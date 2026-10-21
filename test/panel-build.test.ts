@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REFRESH_PRESETS, buildPanelState, catchBanner } from '../src/core/panel/build.js'
+import { REFRESH_PRESETS, buildPanelState, catchBanner, completion } from '../src/core/panel/build.js'
 import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
@@ -869,7 +869,7 @@ describe('the Pokédex summary', () => {
       owned: 2,
       registered: 1,
       total: ANIMATED_SPECIES_MAX,
-      percent: 0,
+      percent: 1, // one registered is a sliver, never an empty bar (9.12 #13)
       progressText: `1 / ${ANIMATED_SPECIES_MAX}`,
       speciesSegmentText: `${panel.strings.segmentSpecies} (2)`,
       logSegmentText: `${panel.strings.segmentLog} (0)`,
@@ -993,7 +993,7 @@ describe('the shiny bar in the Pokédex', () => {
     const summary = build({ state: s }).dexSummary
     expect(summary).toMatchObject({
       shinyRegistered: 1,
-      shinyPercent: Math.min(100, Math.round(100 / ANIMATED_SPECIES_MAX)),
+      shinyPercent: completion(1, ANIMATED_SPECIES_MAX),
       shinyProgressText: D.dexProgressText(1, ANIMATED_SPECIES_MAX),
     })
     expect(summary.shinySegmentText).toContain('(1)')
@@ -1094,6 +1094,21 @@ describe('medals and regions in the panel', () => {
     expect(kanto.name).toBe(D.regionName('en', 'kanto'))
   })
 
+  // [trigger branch] Code review 9.12 #13: rounded, 646–648 of 649 read 100% and drew the head's
+  // bar full with species still missing. Complete only when nothing is.
+  it('never reads complete before the last species', () => {
+    const species = Object.fromEntries(
+      Array.from({ length: 648 }, (_, i) => [
+        i + 1,
+        speciesEntry({ unlocked: true, registered: true, shinyRegistered: true }),
+      ]),
+    )
+    const summary = build({ state: state({ species }) }).dexSummary
+    expect(summary.percent).toBe(99)
+    expect(summary.shinyPercent).toBe(99)
+    expect(summary.regions.find((r) => r.id === 'unova')!.percent).toBe(99)
+  })
+
   // [trigger branch] Diego: the Shinydex's region chips counted the normal registrations
   // (Kanto 6 / 151 with one shiny). Each region carries its shiny count too, formatted here.
   it('counts each region’s shinies apart from its registrations', () => {
@@ -1106,7 +1121,7 @@ describe('medals and regions in the panel', () => {
     })
     const [kanto, johto] = build({ state: s }).dexSummary.regions
     expect(kanto).toMatchObject({ registered: 2, shinyRegistered: 1, shinyProgressText: '1 / 151' })
-    expect(kanto!.shinyPercent).toBe(Math.round(100 / 151))
+    expect(kanto!.shinyPercent).toBe(1)
     expect(johto).toMatchObject({ registered: 1, shinyRegistered: 0, shinyProgressText: '0 / 100' })
   })
 })
