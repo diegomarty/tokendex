@@ -68,7 +68,9 @@
   Pokédex grid is a list of entry cards that scrolls on its own and keeps its place between
   Collection and Shinydex.
 - Every experience and registration bar is the companion plate's EXP bar: Pokédex cells, the
-  species card, the PC box, the catch card and the news.
+  species card, the PC box, the catch card and the news. A registered species' bar turns green.
+- The species card opens over a veiled Pokédex: its facts and evolution line first, the game's
+  part next, its Pokédex text and base stats last.
 
 ### Fixed
 
