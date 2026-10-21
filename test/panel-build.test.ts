@@ -25,6 +25,7 @@ import { compact } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
 import { MEDALS } from '../src/core/companion/medals.js'
+import { EncounterBalance } from '../src/core/companion/encounters.js'
 import { isoWeekKey } from '../src/core/companion/challenges.js'
 import {
   StreakBalance,
@@ -1107,7 +1108,7 @@ describe('Home’s drawers', () => {
   it('orders the drawers and gives each a title and a summary line', () => {
     const s = state({ active: activeMon, eggStock: { count: 2 } })
     const ids = build({ state: s }).drawers.map((d) => d.id)
-    expect(ids).toEqual(['incubator', 'wild', 'streak', 'usage'])
+    expect(ids).toEqual(['incubator', 'wild', 'streak'])
     for (const d of build({ state: s }).drawers) {
       expect(d.title.trim()).not.toBe('')
       expect(d.summary.trim()).not.toBe('')
@@ -1196,6 +1197,30 @@ describe('Home’s drawers', () => {
     const wildDrawer = drawer(state({ wild: [wild()], lure }), 'wild')!
     expect(wildDrawer.summary).toContain(D.lureActiveText('en', '#5', 1))
     expect(wildDrawer.attention).toBe(true)
-    expect(drawer(state(), 'usage')?.summary).toBe(D.usageSummary('en', '0', '0'))
+    expect(drawer(state(), 'usage')).toBeUndefined() // usage lives in the lid now
+    expect(drawer(state(), 'wild')?.summary).toBe(
+      D.nextEncounterShort('en', compact(EncounterBalance.firstThreshold)),
+    )
+  })
+})
+
+describe('the lid', () => {
+  // Usage folded into the lid (Diego): the full line, and a short one for a narrow sidebar.
+  it('carries the usage totals, full and short', () => {
+    const lid = build().lid
+    expect(lid.usageText).toBe(D.usageSummary('en', '0', '0'))
+    expect(lid.usageShortText).toBe(D.usageShortText('en', '0'))
+  })
+
+  // [trigger branch] The three lights read the official limits: ok, warn at their warn
+  // severity, crit at 100%; a light with no limit behind it is off.
+  it('lights one LED per official limit, by its severity', () => {
+    const limits = [
+      { label: '5h', value: '42%', percent: 42, severity: 'normal' as const },
+      { label: 'Weekly', value: '85%', percent: 85, severity: 'warn' as const },
+    ]
+    const lid = build({ usage: { ...usage(), limits } as never }).lid
+    expect(lid.lights).toEqual(['ok', 'warn', 'off'])
+    expect(build().lid.lights).toEqual(['off', 'off', 'off'])
   })
 })

@@ -169,10 +169,20 @@ export interface PanelLureOffer {
   enabled: boolean
 }
 
+/** The lid: usage folded in, expanded on click to the counter; three lights for the limits. */
+export interface PanelLid {
+  /** "Today 253M · This month 4.8B". */
+  usageText: string
+  /** "Today 253M", for a sidebar of 300 px or less. */
+  usageShortText: string
+  /** One per light, left to right: the first three official limits' severity; `off` without one. */
+  lights: ('off' | 'ok' | 'warn' | 'crit')[]
+}
+
 /** One of Home's drawers. Everything formatted in the core; open/closed is view state. */
 export interface PanelDrawer {
   /** Which detail it opens; also a style token. */
-  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak' | 'usage'
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak'
   /** "Incubator". */
   title: string
   /** The one line shown folded: "Egg at 40% · 2 in stock". */
@@ -681,6 +691,8 @@ export interface PanelState {
    * totals). Plan 08 §8. A drawer with nothing to say is absent, never empty.
    */
   drawers: PanelDrawer[]
+  /** The lid (Diego): usage folded into it, and its three lights reading the official limits. */
+  lid: PanelLid
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */

@@ -947,8 +947,26 @@ export function trailTitle(lang: AppLanguage): string {
 
 /** How long a trail stays warm. `hours` is rounded up so "0 h" never shows while it is still there. */
 export function trailExpiresText(lang: AppLanguage, hours: number): string {
-  const h = Math.max(1, Math.ceil(hours))
-  return t(lang, `${h}시간 남음`, `${h} h left`, `のこり${h}時間`, `Quedan ${h} h`)
+  return timeLeftText(lang, hours)
+}
+
+/**
+ * How long is left, the one way the game says it: hours under a day, days and hours past it
+ * ("2 d 19 h left"), lower case because it follows a name after "·". Rounded up to the hour.
+ */
+export function timeLeftText(lang: AppLanguage, hours: number): string {
+  const total = Math.max(1, Math.ceil(hours))
+  const days = Math.floor(total / 24)
+  const h = total % 24
+  const span = (d: string, hr: string) =>
+    days === 0 ? `${h} ${hr}` : h === 0 ? `${days} ${d}` : `${days} ${d} ${h} ${hr}`
+  return t(
+    lang,
+    `${span('일', '시간')} 남음`,
+    `${span('d', 'h')} left`,
+    `のこり ${span('日', '時間')}`,
+    `quedan ${span('d', 'h')}`,
+  )
 }
 
 export function trackLabel(lang: AppLanguage, price: string): string {
@@ -1630,13 +1648,14 @@ export function lureConfirmTitle(lang: AppLanguage, name: string, replaces: bool
 
 /** The lure running, on Home: "Luring Charmander · 5 h left". */
 export function lureActiveText(lang: AppLanguage, name: string, hoursLeft: number): string {
-  return t(
+  const luring = t(
     lang,
-    `${name} 유인 중 · ${hoursLeft}시간 남음`,
-    `Luring ${name} · ${hoursLeft} h left`,
-    `${name}を おびきよせ中 · のこり ${hoursLeft}じかん`,
-    `Atrayendo a ${name} · quedan ${hoursLeft} h`,
+    `${name} 유인 중`,
+    `Luring ${name}`,
+    `${name}を おびきよせ中`,
+    `Atrayendo a ${name}`,
   )
+  return `${luring} · ${timeLeftText(lang, hoursLeft)}`
 }
 
 /** A lure that no longer fits: the wallet moved, or the species was obtained meanwhile. */
@@ -1885,7 +1904,7 @@ export { challengeReward }
 /** A drawer's title. */
 export function drawerTitle(
   lang: AppLanguage,
-  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak' | 'usage',
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak',
 ): string {
   switch (id) {
     case 'incubator':
@@ -1900,8 +1919,6 @@ export function drawerTitle(
       return t(lang, '발견한 물건', 'Finds', 'みつけた どうぐ', 'Hallazgos')
     case 'streak':
       return t(lang, '연속 기록', 'Streak', 'れんぞく きろく', 'Racha')
-    case 'usage':
-      return t(lang, '사용량', 'Usage', 'しようりょう', 'Uso')
   }
 }
 
@@ -1943,8 +1960,24 @@ export function usageSummary(lang: AppLanguage, today: string, month: string): s
   return t(
     lang,
     `오늘 ${today} · 이번 달 ${month}`,
-    `Today ${today} · Month ${month}`,
+    `Today ${today} · This month ${month}`,
     `きょう ${today} · こんげつ ${month}`,
-    `Hoy ${today} · Mes ${month}`,
+    `Hoy ${today} · Este mes ${month}`,
+  )
+}
+
+/** The usage folded into a narrow lid: today only. */
+export function usageShortText(lang: AppLanguage, today: string): string {
+  return t(lang, `오늘 ${today}`, `Today ${today}`, `きょう ${today}`, `Hoy ${today}`)
+}
+
+/** The wild drawer folded with nothing waiting: "Next in 700K", short enough for 280 px. */
+export function nextEncounterShort(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `다음까지 ${amount}`,
+    `Next in ${amount}`,
+    `つぎまで ${amount}`,
+    `Siguiente en ${amount}`,
   )
 }

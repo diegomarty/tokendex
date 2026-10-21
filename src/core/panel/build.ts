@@ -528,6 +528,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
 
   const panel: PanelState = {
     drawers: [],
+    lid: { usageText: '', usageShortText: '', lights: [] },
     totals: {
       todayText: compact(usage.totals.todayTokens),
       todayExactText: grouped(usage.totals.todayTokens, locale),
@@ -612,6 +613,15 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     }
   }
   panel.drawers = homeDrawers(state, panel, lang)
+  panel.lid = {
+    usageText: D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText),
+    usageShortText: D.usageShortText(lang, panel.totals.todayText),
+    lights: [0, 1, 2].map((i) => {
+      const limit = panel.limits[i]
+      if (limit === undefined) return 'off' as const
+      return limit.severity === 'crit' ? 'crit' : limit.severity === 'warn' ? 'warn' : 'ok'
+    }),
+  }
   if (inputs.dev !== undefined) panel.dev = inputs.dev
   return panel
 }
@@ -788,7 +798,8 @@ function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage
   }
 
   const waiting = state.wild.length
-  const wildLine = waiting > 0 ? panel.wild.waitingText : panel.wild.nextText
+  const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
+  const wildLine = waiting > 0 ? panel.wild.waitingText : D.nextEncounterShort(lang, compact(toNext))
   drawer('wild', panel.lure === undefined ? wildLine : `${wildLine} · ${panel.lure.text}`, waiting > 0)
 
   // Finds wait to be picked up: their own drawer, flagged while there is something to collect.
@@ -797,7 +808,6 @@ function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage
   if (finds > 0) drawer('finds', D.findsText(lang, finds), true)
 
   drawer('streak', panel.wild.streak.text, false)
-  drawer('usage', D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText), false)
   return drawers
 }
 

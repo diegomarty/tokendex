@@ -557,3 +557,16 @@ describe('one way to write a figure', () => {
     expect(source.match(/[\d}] %/g) ?? []).toEqual([])
   })
 })
+
+describe('time left', () => {
+  // One way to say how long is left: hours under a day, days and hours past it, lower case
+  // because it always follows a name after "·".
+  it('says hours under a day and days with hours past it', () => {
+    expect(d.timeLeftText('en', 5)).toBe('5 h left')
+    expect(d.timeLeftText('es', 5)).toBe('quedan 5 h')
+    expect(d.timeLeftText('en', 67)).toBe('2 d 19 h left')
+    expect(d.timeLeftText('es', 48)).toBe('quedan 2 d')
+    expect(d.trailExpiresText('en', 67)).toBe(d.timeLeftText('en', 67))
+    expect(d.lureActiveText('es', '#5', 5)).toContain(d.timeLeftText('es', 5))
+  })
+})
