@@ -13,6 +13,7 @@ import type {
   PanelState,
   PanelEncounterResult,
   PanelDexSpecies,
+  PanelDrawer,
   PanelMoodMeter,
   PanelWildEncounter,
   PanelWalletChange,
@@ -49,6 +50,11 @@ let dexQuery = ''
 let dexOwnedOnly = false
 /** The region the Pokédex grid is narrowed to (`kanto`…), or none. View state only. */
 let dexRegion: string | undefined
+/**
+ * Home's drawers that are open — the lid's usage (`usage`) among them. View state: it never
+ * reaches the host, and it survives a reload through `vscode.setState`.
+ */
+const openDrawers = new Set<string>()
 /** Catch-log rarity chip: 'all', or a rarity token matching `PanelDexEntry.rarity`. */
 let dexLogFilter = 'all'
 /**
@@ -321,7 +327,7 @@ function renderHome(state: PanelState): string {
         : renderStarters(state, state.starters)
       : compact
         ? renderCompanion(state) + renderWildStrip(state)
-        : renderGame(state) + renderLure(state) + renderEggs(state) + renderChallenges(state)
+        : renderGame(state) + renderDrawers(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -341,14 +347,23 @@ function renderHome(state: PanelState): string {
   // its screen. It is the currency every action on this screen is paid in, and the number that
   // moves when an attack takes tokens or a scan brings some in. The Explorer card is a glance and
   // keeps the plain row.
+  // The lid carries the usage folded: today and this month under the name, and the official limits
+  // on its three lights. A click drops the counter's detail right under it — the tool hanging off
+  // the device, in VS Code's own style.
+  const lid = state.lid
+  const usageOpen = openDrawers.has('usage')
+  const lights = lid.lights.map((light) => `<i class="led-${escapeHTML(light)}"></i>`).join('')
   const wallet = compact
     ? ''
     : `<div class="wallet-bar device-casing">
-        <span class="brand" role="img" aria-label="Tokendex">
+        <button class="brand lid-toggle" data-drawer="usage" aria-expanded="${usageOpen}" aria-controls="lid-detail">
           <span class="device-lens"></span>
-          <span class="device-leds"><i></i><i></i><i></i></span>
-          <span class="brand-name">TOKEN<b>DEX</b></span>
-        </span>
+          <span class="device-leds">${lights}</span>
+          <span class="brand-text">
+            <span class="brand-name">TOKEN<b>DEX</b></span>
+            <span class="lid-usage"><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
+          </span>
+        </button>
         <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
           aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
           <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
@@ -363,9 +378,7 @@ function renderHome(state: PanelState): string {
       </div>`
     : ''
 
-  return `
-    ${wallet}
-    <div class="game">${game}</div>
+  const counter = `
     <div class="stats">
       <div class="stat-tiles">
         ${statTile(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
@@ -375,6 +388,82 @@ function renderHome(state: PanelState): string {
     </div>
     ${renderLimits(state)}
     ${breakdown}`
+
+  // The compact card keeps the counter in the open; the panel folds it into the lid.
+  if (compact) return `<div class="game">${game}</div>${counter}`
+  return `
+    ${wallet}
+    ${usageOpen ? `<div class="lid-detail" id="lid-detail">${counter}</div>` : `<div id="lid-detail" hidden></div>`}
+    <div class="game">${game}</div>`
+}
+
+// MARK: - Drawers
+
+/** The game item each drawer is drawn with, from PokéAPI at runtime like every sprite. */
+const DRAWER_ICONS: Record<PanelDrawer['id'], string> = {
+  incubator: 'egg',
+  challenges: 'exp-share',
+  trail: 'poke-radar',
+  wild: 'poke-ball',
+  finds: 'dowsing-machine',
+  streak: 'soothe-bell',
+}
+
+/** Where a drawer leads for the whole system, when it has a tab of its own. */
+const DRAWER_TABS: Partial<Record<PanelDrawer['id'], TabID>> = { incubator: 'shop', finds: 'bag' }
+
+/**
+ * Home's drawers: the bottom half of the Pokédex, under the scene. Each one a line — its LED,
+ * its item, its title and the core's one-line summary — that opens on its detail, drawn with the
+ * same pieces as anywhere else. All folded until opened; the green LED says where to look.
+ */
+function renderDrawers(state: PanelState): string {
+  const drawers = state.drawers ?? []
+  if (drawers.length === 0) return ''
+  const rows = drawers
+    .map((d) => {
+      const open = openDrawers.has(d.id)
+      const icon = DRAWER_ICONS[d.id]
+      const sheet = itemSpriteIsSheet(icon) ? ' sheet' : ''
+      const tab = DRAWER_TABS[d.id]
+      const link =
+        tab === undefined
+          ? ''
+          : `<button class="drawer-link" data-tab="${tab}">${escapeHTML(state.strings.tabs[tab])} →</button>`
+      return `<div class="drawer drawer-${escapeHTML(d.id)}${d.attention ? ' attention' : ''}${open ? ' open' : ''}">
+          <button class="drawer-row" data-drawer="${escapeHTML(d.id)}" aria-expanded="${open}" aria-controls="drawer-${escapeHTML(d.id)}">
+            <span class="drawer-led" aria-hidden="true"></span>
+            <img class="drawer-icon${sheet}" src="${itemSpriteURL(icon)}" alt="">
+            <span class="drawer-title">${escapeHTML(d.title)}</span>
+            <span class="drawer-summary">${escapeHTML(d.summary)}</span>
+            <i class="codicon codicon-chevron-right drawer-chevron" aria-hidden="true"></i>
+          </button>
+          ${open ? `<div class="drawer-detail" id="drawer-${escapeHTML(d.id)}" role="region" aria-label="${escapeHTML(d.title)}">${drawerDetail(state, d.id)}${link}</div>` : ''}
+        </div>`
+    })
+    .join('')
+  return `<section class="drawers device-casing">
+      <div class="drawers-hinge" aria-hidden="true"><i></i><i></i></div>
+      ${rows}
+    </section>`
+}
+
+/** The detail of one drawer, from data the panel already carries — one piece per system. */
+function drawerDetail(state: PanelState, id: PanelDrawer['id']): string {
+  switch (id) {
+    case 'incubator':
+      return renderEggs(state)
+    case 'challenges':
+      return renderChallenges(state)
+    case 'trail':
+      return renderTrail(state.wild)
+    case 'wild':
+      return `${renderLure(state)}<p class="desc drawer-note">${escapeHTML(state.wild.nextText)}</p>`
+    case 'finds':
+      return renderFinds(state.wild)
+    case 'streak':
+      return streakRow(state.wild.streak)
+  }
 }
 
 // MARK: - Starters and the egg stock
@@ -710,7 +799,6 @@ function renderGame(state: PanelState): string {
             <span class="pct">${wild.progressPercent}%</span>
           </div>
           ${gameMeter(wild.progressPercent, { surface: 'dialog', hidden: true })}
-          ${streakRow(wild.streak)}
         </div>`
       : ''
   const prompt = selected === undefined ? undefined : strings.commandPrompt
@@ -722,12 +810,10 @@ function renderGame(state: PanelState): string {
 
   if (selected === undefined) {
     const line = c === undefined ? '' : renderLine(c.line)
-    return `<div class="battle">${scene}${dialog}${line === '' ? '' : `<div class="evo-strip">${line}</div>`}</div>
-      ${renderFindsAndTrail(wild)}`
+    return `<div class="battle">${scene}${dialog}${line === '' ? '' : `<div class="evo-strip">${line}</div>`}</div>`
   }
 
-  return `<div class="battle">${scene}${dialog}${commandMenu(state, selected)}</div>
-    ${renderFindsAndTrail(wild)}`
+  return `<div class="battle">${scene}${dialog}${commandMenu(state, selected)}</div>`
 }
 
 /** The glyph beside each mood gauge: a flame for anger, a pulse for nerves, a heart for trust. */
@@ -925,11 +1011,10 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
 }
 
 /** Items lying in the wild area, and legendaries that can still be tracked back. */
-function renderFindsAndTrail(wild: PanelState['wild']): string {
-  const finds =
-    wild.finds.length === 0
-      ? ''
-      : `<section class="wild-finds">
+function renderFinds(wild: PanelState['wild']): string {
+  return wild.finds.length === 0
+    ? ''
+    : `<section class="wild-finds">
         <div class="finds-head">
           <h2 class="section">${escapeHTML(wild.findsText ?? '')}</h2>
           <button class="link" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
@@ -946,10 +1031,13 @@ function renderFindsAndTrail(wild: PanelState['wild']): string {
           )
           .join('')}</div>
       </section>`
-  const trail =
-    wild.trail.length === 0
-      ? ''
-      : `<section class="wild-trail">
+}
+
+/** Legendaries that got away and can still be tracked, each with its price. */
+function renderTrail(wild: PanelState['wild']): string {
+  return wild.trail.length === 0
+    ? ''
+    : `<section class="wild-trail">
         <h2 class="section">${escapeHTML(wild.trailTitle)}</h2>
         ${wild.trail
           .map(
@@ -966,7 +1054,6 @@ function renderFindsAndTrail(wild: PanelState['wild']): string {
           )
           .join('')}
       </section>`
-  return `${finds}${trail}`
 }
 
 /**
@@ -1799,7 +1886,7 @@ function render(): void {
     button.title = label
     button.setAttribute('aria-label', label)
   }
-  vscode.setState({ tab, dexSegment, dexSelected })
+  vscode.setState({ tab, dexSegment, dexSelected, drawers: [...openDrawers] })
 
   if (scroller !== null && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop
 
@@ -1960,6 +2047,15 @@ document.addEventListener('click', (event) => {
   if (target.closest('[data-dex-close]') !== null) {
     dexSelected = undefined
     invalidate('dex')
+    render()
+    return
+  }
+  const drawerButton = target.closest('[data-drawer]')
+  if (drawerButton !== null) {
+    const id = (drawerButton as HTMLElement).dataset['drawer'] ?? ''
+    if (openDrawers.has(id)) openDrawers.delete(id)
+    else openDrawers.add(id)
+    invalidate('home')
     render()
     return
   }
@@ -2401,7 +2497,12 @@ window.addEventListener(
 // Restore the tab the user was on when the panel was serialised. A compact surface (the
 // Explorer's mini card) has no tab strip, so it always renders Home.
 const saved = vscode.getState() as
-  { tab?: string; dexSegment?: DexSegment; dexSelected?: number } | undefined
+  { tab?: string; dexSegment?: DexSegment; dexSelected?: number; drawers?: unknown } | undefined
+// Strings only, and only as many as there could be: a drawer the core no longer sends is simply
+// never drawn, so an unknown id costs nothing.
+if (Array.isArray(saved?.drawers)) {
+  for (const id of saved.drawers.slice(0, 16)) if (typeof id === 'string') openDrawers.add(id)
+}
 // Validated, not cast: a session serialised before a tab was removed (the old Wild tab) would
 // otherwise restore into a tab that no longer exists and hide every section.
 if (saved?.tab !== undefined && (PANEL_TABS as readonly string[]).includes(saved.tab)) {
