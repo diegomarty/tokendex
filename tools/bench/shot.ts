@@ -92,6 +92,29 @@ if (autoThrow !== null) {
   }
 }
 
+/**
+ * The species card asks the host for its Pokédex entry (`{ type: 'dexEntry', speciesID }`); this
+ * page answers as the host does, with the fixture's entry, a little later. A species the fixture
+ * has no entry for gets no answer, and its card stays in the loading state, as offline.
+ */
+{
+  const inner = window.acquireVsCodeApi
+  window.acquireVsCodeApi = () => {
+    const api = inner()
+    return {
+      ...api,
+      postMessage: (message: unknown) => {
+        const m = message as { type?: string; speciesID?: number }
+        const entry =
+          m.type === 'dexEntry' ? fixture.dexEntries?.find((e) => e.speciesID === m.speciesID) : undefined
+        if (entry !== undefined)
+          setTimeout(() => window.postMessage({ type: 'dexEntry', entry }, '*'), 60)
+        return api.postMessage(message)
+      },
+    }
+  }
+}
+
 const script = document.createElement('script')
 script.src = '/dist/webview.js'
 script.addEventListener('load', () => {

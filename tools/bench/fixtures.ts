@@ -22,6 +22,7 @@ import type {
   PanelDevControl,
   PanelEncounterResult,
   PanelState,
+  PanelPokedexEntry,
   PanelWalletChange,
 } from '../../src/webview/protocol.js'
 import {
@@ -50,6 +51,7 @@ import { ensureChallenges } from '../../src/core/companion/challenges.js'
 import { MEDALS, medalProgress } from '../../src/core/companion/medals.js'
 import * as D from '../../src/core/i18n/dispatch.js'
 import { buildPanelState, catchBanner } from '../../src/core/panel/build.js'
+import { pokedexEntry } from '../../src/core/panel/dexEntry.js'
 import { todayKey } from '../../src/core/usage/entry.js'
 import {
   type CompanionView,
@@ -571,6 +573,39 @@ export interface Fixture {
     spendableText?: string
     walletChange?: PanelWalletChange
   }
+  /**
+   * What the bench's stand-in host answers to the species card's `dexEntry` request, built by the
+   * core's own `pokedexEntry` from PokéAPI's details, so the card shows what the extension does.
+   * A species absent here stays in its loading state, as it would offline.
+   */
+  dexEntries?: PanelPokedexEntry[]
+}
+
+/**
+ * Charizard as PokéAPI describes it (`/pokemon-species/6`, `/pokemon/6`), for the README's
+ * Pokédex shot: the line registered, so the card shows everything an obtained species does.
+ */
+function charizardEntry(): PanelPokedexEntry {
+  const state: CompanionState = { ...freshCompanionState('en'), language: 'en' }
+  for (const id of [4, 5, 6])
+    state.species[id] = { ...freshSpeciesProgress(), seen: true, unlocked: true, registered: true }
+  return pokedexEntry(
+    state,
+    6,
+    {
+      id: 6,
+      captureRate: 45,
+      genus: { en: 'Flame Pokémon' },
+      flavor: {
+        en: 'Spits fire that is hot enough to melt boulders. Known to cause forest fires unintentionally.',
+      },
+      heightDm: 17,
+      weightHg: 905,
+      types: ['fire', 'flying'],
+      stats: { hp: 78, attack: 84, defense: 78, specialAttack: 109, specialDefense: 85, speed: 100 },
+    },
+    evoLine([4, 5, 6]),
+  )
 }
 
 /** Every case worth eyeballing after a UI change. Add one rather than editing another. */
@@ -750,6 +785,7 @@ export const FIXTURES: Fixture[] = [
   {
     id: 'dex-full',
     label: 'Populated Pokédex (25 species, 12 catches)',
+    dexEntries: [charizardEntry()],
     state: scene({
       mon: mon([147, 148, 149], 1),
       line: evoLine([147, 148, 149]),
