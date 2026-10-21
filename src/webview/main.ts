@@ -298,13 +298,13 @@ function renderHome(state: PanelState): string {
   // keeps the plain row.
   const wallet = compact
     ? ''
-    : `<div class="wallet-bar">
+    : `<div class="wallet-bar device-casing">
         <span class="brand" role="img" aria-label="Tokendex">
-          <span class="brand-lens"></span>
-          <span class="brand-leds"><i></i><i></i><i></i></span>
+          <span class="device-lens"></span>
+          <span class="device-leds"><i></i><i></i><i></i></span>
           <span class="brand-name">TOKEN<b>DEX</b></span>
         </span>
-        <button class="wallet-badge" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
+        <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
           aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
           <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
           <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
@@ -518,11 +518,11 @@ function renderCatchBanner(): string {
   // lens, lights and the entry's number, the Pokémon on the screen, and its registration bar
   // with the share just earned marked as a span [from, to] — placed by `placeSpans` after the
   // paint, since the CSP allows no inline style.
-  return `<div class="catch-banner new rich${entering}" aria-hidden="true">
+  return `<div class="catch-banner new rich device-casing${entering}" aria-hidden="true">
       <span class="catch-shine"></span>
       <div class="dexcard-top">
-        <span class="brand-lens"></span>
-        <span class="brand-leds"><i></i><i></i><i></i></span>
+        <span class="device-lens small"></span>
+        <span class="device-leds"><i></i><i></i><i></i></span>
         <span class="dexcard-num">${dexNumber(reg.speciesID)}</span>
       </div>
       <div class="dexcard-body">
@@ -1030,7 +1030,7 @@ function renderShop(state: PanelState): string {
   // hop back to Home to know it is a dead end.
   // Drawn as the Pokédex lid's screen on Home, so the balance looks the same wherever it is read.
   const wallet = `
-    <div class="shop-wallet">
+    <div class="shop-wallet lcd">
       <span class="label">${escapeHTML(state.strings.spendable)}</span>
       <span class="value">${escapeHTML(state.spendableText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>
     </div>`
@@ -1132,7 +1132,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
   if (sp === undefined || sp.status === 'seen') {
     return `
     <div class="dex-detail locked">
-      <div class="dex-entry-head">
+      <div class="dex-entry-head device-casing flush">
         <span class="num">${dexNumber(dexSelected)}</span>
         <span class="dex-entry-name">?????</span>
         ${close}
@@ -1162,7 +1162,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
 
   return `
     <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
-      <div class="dex-entry-head">
+      <div class="dex-entry-head device-casing flush">
         <span class="num">${dexNumber(sp.id)}</span>
         <span class="dex-entry-name">${sp.name === `#${sp.id}` ? '' : escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
         ${close}
@@ -1403,8 +1403,8 @@ function renderDex(state: PanelState): string {
  * along it is. The one accent this tab spends; everything under it stays the editor's.
  */
 function dexHead(state: PanelState, progress: string): string {
-  return `<div class="dex-head">
-      <span class="dex-lens" aria-hidden="true"></span>
+  return `<div class="dex-head device-casing">
+      <span class="device-lens" aria-hidden="true"></span>
       <span class="dex-title">${escapeHTML(state.strings.tabs.dex)}</span>
       ${progress}
     </div>`

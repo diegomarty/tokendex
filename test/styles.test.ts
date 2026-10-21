@@ -43,7 +43,7 @@ describe('the stylesheet', () => {
     const literals = declarations
       .filter((d) => !d.property.startsWith('--'))
       .flatMap((d) => d.value.match(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/g) ?? [])
-    expect(literals.length).toBeLessThanOrEqual(121)
+    expect(literals.length).toBeLessThanOrEqual(115)
   })
 
   it('takes pixel font sizes from the type scale, and their number only falls', () => {
