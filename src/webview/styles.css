@@ -2221,10 +2221,11 @@ body.vscode-dark .exp-figures {
   font-size: 13px;
   font-weight: 800;
 }
+/* A `.tag`: its fill and ink are the pill's own (plan 9.9: painting its text green on a green
+   pill left an empty pill). Only its type is set here. */
 .catch-detail {
   font-size: var(--fs-s);
   font-weight: 700;
-  color: color-mix(in srgb, var(--exp) 70%, var(--ink));
   font-variant-numeric: tabular-nums;
 }
 .catch-banner.new {
@@ -2239,9 +2240,6 @@ body.vscode-dark .exp-figures {
 .catch-banner.new .catch-headline {
   font-size: var(--fs-l);
   letter-spacing: 0.01em;
-}
-.catch-banner.new .catch-detail {
-  color: var(--gain);
 }
 .catch-banner.new::before,
 .catch-banner.new::after {
@@ -2389,10 +2387,10 @@ body.vscode-dark .exp-figures {
 .catch-banner.rich.entering .catch-detail {
   animation: catch-detail-in 260ms ease-out 700ms backwards;
 }
-.catch-banner.rich.entering .gain {
+.catch-banner.rich.entering .game-meter .gain {
   animation: catch-gain-in 320ms ease-out 760ms backwards;
 }
-.catch-banner.rich.entering .gain b {
+.catch-banner.rich.entering .game-meter .gain b {
   animation: catch-gain-fill 650ms ease-in-out 1250ms backwards;
 }
 @keyframes catch-shine {
@@ -2474,8 +2472,8 @@ body.vscode-dark .exp-figures {
   .catch-banner.new.entering,
   .catch-banner.rich.entering .catch-mon,
   .catch-banner.rich.entering .catch-detail,
-  .catch-banner.rich.entering .gain,
-  .catch-banner.rich.entering .gain b,
+  .catch-banner.rich.entering .game-meter .gain,
+  .catch-banner.rich.entering .game-meter .gain b,
   .catch-banner.rich.entering .catch-shine::before,
   .catch-banner.rich.entering .catch-mon-wrap::after {
     animation: none;
