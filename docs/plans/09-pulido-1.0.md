@@ -101,6 +101,40 @@ la tienda» (`emptyBagAction`). El Amuleto Iris ya va a `items` cuando se tiene 
 UI (@helper): ninguna bolsillo se deshabilita (1379); un bolsillo vacío muestra ese estado vacío
 con el botón a la tienda.
 
+## 9.7 La ficha de especie como una entrada de Pokédex (Diego, 21 oct)
+
+La ficha (`speciesCard`, la misma desde el botón Pokémon del combate, la Pokédex, la Shinydex y la
+caja del PC) hoy es un contenedor con barra y estado. Pasa a ser una **entrada de Pokédex**, y con
+más datos de PokéAPI que ya descargamos y tirábamos.
+
+Núcleo (yo):
+- `pokeapi.ts`: `SpeciesDTO` lee `genera` y `flavor_text_entries`; `/pokemon/{id}` lee `height` y
+  `weight`. Nuevo `dexDetails(id)`: categoría y descripción por idioma (la entrada más reciente de
+  cada idioma; japonés en kana `ja-Hrkt` como el resto de la UI; espacios y `\f` limpios), altura,
+  peso, tipos, estadísticas base y ratio de captura. Caché en memoria y en disco
+  (`dex-details.json`, con versión), para que una ficha vista se abra sin red. La línea evolutiva
+  sale de `line(id)`, que ya existe y funciona desde cualquier forma.
+- `src/core/panel/dexEntry.ts`: `PanelDexEntry` ya formateado: `genusText`, `flavorText`,
+  `heightText`/`weightText` con la marca decimal del idioma, `types` (`{id, label}`), `stats`
+  (`{key, label, value, percent}` sobre 255, nombres de los juegos: PS, Ataque, Defensa, At. Esp.,
+  Def. Esp., Velocidad) y `statTotalText`, `line` (`{id, name, status, isThis}` con «???» para lo
+  no visto), y `unavailableText` si no hay red ni caché. Como en los juegos, una especie solo
+  **vista** muestra categoría y tipos; la descripción, medidas y estadísticas llegan al obtenerla
+  (con una línea que lo dice).
+- Petición bajo demanda: webview `{type:'dexEntry', speciesID}` → host → worker (fuera de la cola
+  serializada, es solo lectura y red) → respuesta → host `{type:'dexEntry', entry}` a la superficie
+  que la pidió. Nunca dentro de `PanelState`.
+- Tests: parseo de la DTO (idioma, kana, limpieza, más reciente), caché en disco sin red, vista vs
+  obtenida, formato decimal es/en, nombres no vistos ocultos.
+
+UI (@helper): la ficha como un aparato: cabecera roja con lente y luces, número y nombre en la
+tapa; a la izquierda una pantalla LCD con cuadrícula con el sprite (animado; shiny si está
+registrada); a la derecha la categoría, los tipos como insignias de color, altura y peso en
+lecturas LCD; la descripción en el cuadro de diálogo escrita letra a letra (`typeDialogs`); las
+estadísticas en barras (`gameMeter`); la línea evolutiva con sprites y silueta para lo no visto
+(clic abre esa ficha); y debajo la parte de juego que ya existe (registro, shiny, señuelo, elegir
+compañero). Mientras llega la entrada, un estado de carga; sin red, `unavailableText`.
+
 ## Orden
 
 1. 9.0 versión (yo). 2. Mando a @helper 9.2, 9.3, 9.5 (sin núcleo) en paralelo. 3. Núcleo de 9.1,
