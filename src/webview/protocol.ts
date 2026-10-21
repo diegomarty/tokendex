@@ -152,6 +152,27 @@ export interface PanelDexSpecies {
    * for a species not registered.
    */
   shinyBar?: PanelShinyBar
+  /** A lure on this species can be bought (seen, not obtained, not legendary). */
+  lure?: PanelLureOffer
+}
+
+/** The Pokédex detail's lure button. Everything decided and formatted in the core. */
+export interface PanelLureOffer {
+  /** Button text: "Lure · 24 h". */
+  text: string
+  priceText: string
+  /** Accessible name: "Lure Charmander for 24 hours, 150M tokens". */
+  label: string
+  /** Native modal title; says so when it replaces the lure running. */
+  confirmTitle: string
+  /** False when the wallet is short; the button shows, greyed, with the price. */
+  enabled: boolean
+}
+
+/** The lure running, for Home: "Luring Charmander · 5 h left". */
+export interface PanelLure {
+  speciesID: number
+  text: string
 }
 
 /** A registered species' shiny bar: how full, the sentence, and what the wallet can buy. */
@@ -576,6 +597,8 @@ export interface PanelState {
    * an obtained species still unregistered (`false`, the default).
    */
   keepCompletedCompanion: boolean
+  /** The lure running, if any. */
+  lure?: PanelLure
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */
@@ -613,6 +636,7 @@ export type PanelMessage =
   | { type: 'setTrainer'; trainerID: string }
   | { type: 'setKeepCompleted'; keep: boolean }
   /** `title`/`priceText`/`confirmLabel` only label the native confirmation modal. */
+  | { type: 'setLure'; speciesID: number; title: string; priceText: string; confirmLabel?: string }
   | {
       type: 'boostShiny'
       speciesID: number

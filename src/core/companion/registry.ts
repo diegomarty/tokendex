@@ -25,6 +25,7 @@ import {
   type MonState,
   type Rarity,
   type SpeciesProgress,
+  type WildLine,
 } from './model.js'
 
 /** Tokens that register a species at `stageIndex` of a `totalForms`-form line of `rarity`. */
@@ -160,11 +161,23 @@ export function retireCompanion(state: CompanionState): CompanionState {
   return { ...state, species: { ...state.species, [id]: next } }
 }
 
-/** Marks a species as met in the wild. Idempotent. */
-export function markSeen(state: CompanionState, speciesID: number): CompanionState {
+/**
+ * Marks a species as met in the wild. With the encounter's `line` (an index with forms), it also
+ * records where the species sits and its line's rarity — the Pokédex knows what it saw, and a
+ * lure has something to price — without obtaining it. Idempotent.
+ */
+export function markSeen(state: CompanionState, speciesID: number, line?: WildLine): CompanionState {
   const current = progressOf(state, speciesID)
-  if (current.seen) return state
-  return { ...state, species: { ...state.species, [speciesID]: { ...current, seen: true } } }
+  const position = line !== undefined && current.lineRarity === undefined
+  if (current.seen && !position) return state
+  const next: SpeciesProgress = { ...current, seen: true }
+  if (position) {
+    next.baseID = line.baseID
+    next.stageIndex = line.stageIndex
+    next.totalForms = line.totalForms
+    next.lineRarity = line.rarity
+  }
+  return { ...state, species: { ...state.species, [speciesID]: next } }
 }
 
 /**

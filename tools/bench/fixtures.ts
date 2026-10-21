@@ -318,6 +318,8 @@ interface SceneOptions extends UsageOptions {
   fresh?: boolean
   /** The balance before this panel, so the builder emits the wallet chip for the change. */
   walletFrom?: number
+  /** A lure running. */
+  lure?: CompanionState['lure']
 }
 
 /** The registry a fixture implies, with the bar of the form on stage at `progress`. */
@@ -382,6 +384,7 @@ function scene(options: SceneOptions = {}): PanelState {
     state.active = { ...mon, usedAtStage: Math.round((options.companion?.progress ?? 0.5) * threshold) }
   }
   if (options.eggStock !== undefined) state.eggStock = options.eggStock
+  if (options.lure !== undefined) state.lure = options.lure
   if (options.fresh !== true) {
     state.species = options.species ?? impliedSpecies(state, options.companion?.progress ?? 0.5)
     // An egg fixture is an egg under way, not a new game: give it the usage its bar shows.
@@ -959,6 +962,46 @@ export const FIXTURES: Fixture[] = [
         },
         130: { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'common' },
       },
+    }),
+  })),
+  ...(['lure-offer', 'lure-broke', 'lure-active'] as const).map((id) => ({
+    id,
+    label:
+      id === 'lure-offer'
+        ? 'Lure: species met in the wild, with the balance to lure them'
+        : id === 'lure-broke'
+          ? 'Lure: the same with an empty wallet (greyed, price shown)'
+          : 'Lure: one running (Home) and another to lure (replaces it)',
+    state: scene({
+      spendable: id === 'lure-broke' ? 0 : 1_204_000_000,
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      wild: [wild(147)],
+      species: {
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'common' },
+        5: { ...freshSpeciesProgress(), unlocked: true, xp: 5_950_000, threshold: 17_000_000 },
+        // Met, not owned, with their line known: the two a lure can aim at.
+        7: {
+          ...freshSpeciesProgress(),
+          seen: true,
+          lineRarity: 'common',
+          baseID: 7,
+          stageIndex: 0,
+          totalForms: 3,
+        },
+        147: {
+          ...freshSpeciesProgress(),
+          seen: true,
+          lineRarity: 'rare',
+          baseID: 147,
+          stageIndex: 0,
+          totalForms: 3,
+        },
+      },
+      ...(id === 'lure-active'
+        ? { lure: { speciesID: 147, baseID: 147, stageIndex: 0, until: EPOCH + 5 * 3_600_000 } }
+        : {}),
     }),
   })),
   {

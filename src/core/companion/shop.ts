@@ -379,3 +379,44 @@ export function boostShiny(
   // Filling the bar registers the shiny through the one path (`registerShiny`).
   return shinyXP >= shinyTarget(p.lineRarity!) ? registerShiny(out, speciesID) : out
 }
+
+// MARK: - The lure
+
+/**
+ * What a lure on this species costs, or `undefined` when it cannot be lured: it must have been
+ * seen (its line and rarity known from the encounter), not yet obtained, and of a line that is
+ * not legendary — those have their own roads.
+ */
+export function lurePrice(state: CompanionState, speciesID: number): number | undefined {
+  const p = progressOf(state, speciesID)
+  if (!p.seen || p.unlocked || p.lineRarity === undefined) return undefined
+  if (p.baseID === undefined || p.stageIndex === undefined) return undefined
+  // The one already lured: buying it again would only restart its clock at full price.
+  if (state.lure?.speciesID === speciesID) return undefined
+  return EconomyBalance.lure.price[p.lineRarity]
+}
+
+/**
+ * Buys a day aimed at `speciesID`, charged to `spentTokens`. One lure at a time: a new one
+ * replaces the one running (the confirmation says so). `undefined` when it cannot be lured or
+ * the wallet is short.
+ */
+export function setLure(
+  state: CompanionState,
+  speciesID: number,
+  now: number,
+): CompanionState | undefined {
+  const price = lurePrice(state, speciesID)
+  if (price === undefined || spendableBalance(state) < price) return undefined
+  const p = progressOf(state, speciesID)
+  return {
+    ...state,
+    spentTokens: state.spentTokens + price,
+    lure: {
+      speciesID,
+      baseID: p.baseID!,
+      stageIndex: p.stageIndex!,
+      until: now + EconomyBalance.lure.durationMs,
+    },
+  }
+}

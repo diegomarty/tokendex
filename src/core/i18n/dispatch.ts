@@ -1563,3 +1563,62 @@ export function shinyBoostFailedText(lang: AppLanguage): string {
     'Ese impulso ya no cabe. No se ha cobrado nada.',
   )
 }
+
+// MARK: - The lure (phase 6)
+
+/** The lure button: "Lure · 24 h". */
+export function lureButtonText(lang: AppLanguage, hours: number): string {
+  return t(
+    lang,
+    `유인 · ${hours}시간`,
+    `Lure · ${hours} h`,
+    `おびきよせ · ${hours}じかん`,
+    `Atraer · ${hours} h`,
+  )
+}
+
+/** The lure button's accessible name. */
+export function lureLabel(lang: AppLanguage, name: string, hours: number, price: string): string {
+  return t(
+    lang,
+    `${name}을(를) ${hours}시간 유인하기, 토큰 ${price}`,
+    `Lure ${name} for ${hours} hours, ${price} tokens`,
+    `${name}を ${hours}じかん おびきよせる、トークン${price}`,
+    `Atraer a ${name} durante ${hours} h, ${price} tokens`,
+  )
+}
+
+/** The lure's native confirmation title; says so when it replaces the lure running. */
+export function lureConfirmTitle(lang: AppLanguage, name: string, replaces: boolean): string {
+  const base = t(lang, `${name} 유인`, `Lure ${name}`, `${name}を おびきよせる`, `Atraer a ${name}`)
+  if (!replaces) return base
+  return `${base} ${t(
+    lang,
+    '(지금 유인을 대신해요)',
+    '(replaces the lure running)',
+    '(いまの おびきよせと いれかわる)',
+    '(sustituye al señuelo activo)',
+  )}`
+}
+
+/** The lure running, on Home: "Luring Charmander · 5 h left". */
+export function lureActiveText(lang: AppLanguage, name: string, hoursLeft: number): string {
+  return t(
+    lang,
+    `${name} 유인 중 · ${hoursLeft}시간 남음`,
+    `Luring ${name} · ${hoursLeft} h left`,
+    `${name}を おびきよせ中 · のこり ${hoursLeft}じかん`,
+    `Atrayendo a ${name} · quedan ${hoursLeft} h`,
+  )
+}
+
+/** A lure that no longer fits: the wallet moved, or the species was obtained meanwhile. */
+export function lureFailedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 유인할 수 없어요. 아무것도 쓰지 않았어요.',
+    'That lure no longer fits. Nothing was charged.',
+    'いまは おびきよせられない。なにも はらっていない。',
+    'Ese señuelo ya no cabe. No se ha cobrado nada.',
+  )
+}

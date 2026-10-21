@@ -48,4 +48,19 @@ export const EconomyBalance = {
    * so the shiny is always partly played.
    */
   shinyBoostShare: 0.5,
+
+  /**
+   * The lure (phase 6): a day aimed at one seen species. Its line weighs `lineWeight` times in
+   * the wild draw, and inside the line its stage takes `stageShare` of the draws. Priced by the
+   * line's rarity, above the cheapest catch of that band (`test/economy.test.ts`); no legendary
+   * lure — they have their own roads (milestones, streak, trail).
+   */
+  lure: {
+    durationMs: 24 * 3_600_000,
+    lineWeight: 40,
+    stageShare: 0.6,
+    price: { common: 20_000_000, uncommon: 50_000_000, rare: 150_000_000 } as Partial<
+      Record<Rarity, number>
+    >,
+  },
 } as const

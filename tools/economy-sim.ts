@@ -32,6 +32,7 @@ import {
   canBuyItem,
   canUseRareCandy,
   consumeRareCandy,
+  lurePrice,
   shinyBoostRoom,
 } from '../src/core/companion/shop.js'
 import { spendableBalance } from '../src/core/companion/ledger.js'
@@ -49,6 +50,14 @@ for (let i = 2; i < process.argv.length; i += 2) {
 const DAYS = Number(args.get('days') ?? 180)
 const SEED = Number(args.get('seed') ?? 1)
 const PROFILE = args.get('profile') ?? 'all'
+/**
+ * The lure policy, off by default so the baseline matches earlier calibrations. `buy` aims a lure
+ * at the cheapest seen species not yet obtained whenever the wallet has room past the reserve;
+ * `watch` picks the same kind of target but does not buy. Both throw at the target every time it
+ * shows, so the two runs differ only in the lure. Any other value is `off`.
+ */
+const LURE_ARG = args.get('lure') ?? 'off'
+const LURE: 'off' | 'buy' | 'watch' = LURE_ARG === 'buy' || LURE_ARG === 'watch' ? LURE_ARG : 'off'
 
 /** Tokens per working day, by profile. See docs/plans/00-master.md § C6. */
 const PROFILES: Record<string, number> = {
@@ -64,6 +73,8 @@ const ATTEMPT_ONE_IN = 8
 const MAX_THROWS = 5
 /** What the player keeps in the wallet before boosting a shiny bar with the rest. */
 const SHINY_RESERVE = 1_000_000_000
+/** What the player keeps before buying a lure — less than the shiny reserve, so lures come first. */
+const LURE_RESERVE = 100_000_000
 const WORKDAY_MS = 8 * 3_600_000
 const DAY_MS = 24 * 3_600_000
 
@@ -183,6 +194,9 @@ interface Outcome {
   firstLineDay: number | undefined
   registered: number
   shinies: number
+  /** Days from aiming at a target to obtaining it, averaged; and how many targets were obtained. */
+  lureDays: number | undefined
+  lureHits: number
   unlocked: number
   seen: number
   encounters: number
@@ -216,6 +230,8 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
     firstLineDay: undefined,
     registered: 0,
     shinies: 0,
+    lureDays: undefined,
+    lureHits: 0,
     unlocked: 0,
     seen: 0,
     encounters: 0,
@@ -227,6 +243,8 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
     walletMax: 0,
   }
   let graduations = 0
+  let target: { id: number; since: number } | undefined
+  let lureDaysTotal = 0
 
   const ballFor = (rarity: string): BallKind =>
     rarity === 'rare' || rarity === 'legendary' ? 'ultraBall' : 'pokeBall'
@@ -252,7 +270,9 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
       await store.collectAllFinds()
       const state = store.snapshot()
       const head = state.wild[0]
-      if (head !== undefined && rng() % ATTEMPT_ONE_IN === 0) {
+      // The player always tries for the species they aimed at; anything else, now and then.
+      const aimed = head !== undefined && target !== undefined && head.speciesID === target.id
+      if (head !== undefined && (aimed || rng() % ATTEMPT_ONE_IN === 0)) {
         const ball = ballFor(head.rarity)
         for (let t = 0; t < MAX_THROWS; t++) {
           let s = store.snapshot()
@@ -284,6 +304,36 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
           const next = Object.entries(s.species).find(([, p]) => p.unlocked && !p.registered)
           if (next !== undefined) await store.setCompanion(Number(next[0]))
           else if (s.eggStock.count > 0) await store.incubateEgg()
+        }
+      }
+      // Phase 6: aim at the cheapest seen species not yet obtained — buying a lure, or only
+      // watching it (`--lure watch`) — and time how long it takes to obtain it.
+      if (LURE !== 'off') {
+        const s = store.snapshot()
+        if (target !== undefined && s.species[target.id]?.unlocked === true) {
+          lureDaysTotal += (clock - target.since) / DAY_MS
+          out.lureHits++
+          target = undefined
+        }
+        if (target === undefined) {
+          const candidates = Object.keys(s.species)
+            .map(Number)
+            // Not one already waiting in the queue: the question is how long until it comes back.
+            .filter((id) => lurePrice(s, id) !== undefined && !s.wild.some((e) => e.speciesID === id))
+            .sort((a, b) => (lurePrice(s, a) ?? 0) - (lurePrice(s, b) ?? 0) || a - b)
+          const id = candidates[0]
+          if (
+            id !== undefined &&
+            (LURE === 'watch' || spendableBalance(s) - (lurePrice(s, id) ?? 0) > LURE_RESERVE)
+          ) {
+            if (LURE === 'watch' || (await store.setLure(id))) target = { id, since: clock }
+          }
+        } else if (
+          LURE === 'buy' &&
+          s.lure === undefined &&
+          spendableBalance(s) - (lurePrice(s, target.id) ?? 0) > LURE_RESERVE
+        ) {
+          await store.setLure(target.id) // the day ran out before the catch: aim again
         }
       }
       // Phase 5: with nothing left to register, keep the companion for its shiny bar, and spend
@@ -330,6 +380,7 @@ async function simulate(profile: string, tokensPerDay: number): Promise<Outcome>
   const final = store.snapshot()
   out.registered = Object.values(final.species).filter((p) => p.registered).length
   out.shinies = Object.values(final.species).filter((p) => p.shinyRegistered === true).length
+  if (out.lureHits > 0) out.lureDays = lureDaysTotal / out.lureHits
   out.unlocked = Object.values(final.species).filter((p) => p.unlocked).length
   out.seen = Object.values(final.species).filter((p) => p.seen).length
   out.encounters = final.encountersSeen
@@ -361,6 +412,7 @@ function row(o: Outcome): string {
     days(o.firstLineDay).padStart(6),
     String(o.registered).padStart(5),
     String(o.shinies).padStart(6),
+    (o.lureDays === undefined ? '—' : `${o.lureDays.toFixed(1)}d×${o.lureHits}`).padStart(10),
     String(o.unlocked).padStart(5),
     `${o.caught}/${o.encounters}`.padStart(9),
     compact(o.walletEnd).padStart(7),
@@ -383,6 +435,7 @@ console.log(
     '1st line',
     'regd',
     'shiny',
+    'lure→catch',
     'unlkd',
     'caught',
     'wallet',

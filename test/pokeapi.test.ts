@@ -13,6 +13,7 @@ import {
   type WildStatus,
 } from '../src/core/pokeapi.js'
 import { rarityFrom } from '../src/core/companion/model.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
 
 const index: BaseSpecies[] = [
   { id: 1, captureRate: 45 }, // rare
@@ -434,5 +435,47 @@ describe('the REST-built index', () => {
     await new PokeAPIClient(file).buildBaseIndexViaREST()
     const written = JSON.parse(readFileSync(file, 'utf8')) as { version: number }
     expect(written.version).toBe(2)
+  })
+})
+
+describe('the lure in the wild draw', () => {
+  const missing = (): WildStatus => 'missing'
+  const line = (id: number): BaseSpecies => ({
+    id,
+    captureRate: 45,
+    lineForms: 2,
+    forms: [{ id: id + 1, stage: 1, captureRate: 45, totalForms: 2 }],
+  })
+
+  // [trigger branch] The lured line weighs `lineWeight` times its own: over one draw per line
+  // weight across two equal lines, the lured one takes `lineWeight` of `lineWeight + 1`.
+  it('weighs the lured line by the lure’s weight', () => {
+    const lure = { speciesID: 21, baseID: 20, stageIndex: 1 }
+    const unit = 4 * 45
+    const k = EconomyBalance.lure.lineWeight
+    let lured = 0
+    for (let r = 0; r < unit * (k + 1); r += unit) {
+      const pick = chooseWildFromIndex([line(10), line(20)], missing, rng(r, 99, 0), undefined, lure)!
+      if (pick.line?.baseID === 20) lured++
+    }
+    expect(lured).toBe(k)
+  })
+
+  // [trigger branch] Inside the lured line the target's stage takes 60%, the rest share 40%.
+  it('gives the lured stage 60% of its line', () => {
+    const lure = { speciesID: 21, baseID: 20, stageIndex: 1 }
+    let target = 0
+    for (let r = 0; r < 100; r++) {
+      if (chooseWildFromIndex([line(20)], missing, rng(0, r, 0), undefined, lure)!.speciesID === 21)
+        target++
+    }
+    expect(target).toBe(60)
+  })
+
+  it('leaves the draw alone without a lure', () => {
+    let evolved = 0
+    for (let r = 0; r < 100; r++)
+      if (chooseWildFromIndex([line(20)], missing, rng(0, r, 0))!.speciesID === 21) evolved++
+    expect(evolved).toBe(25)
   })
 })

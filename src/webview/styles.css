@@ -3371,7 +3371,7 @@ body.compact .row-stat .label {
 
 /* Price tags: paper and ink, filled in when pointed at. The verb and the price read as one
    object, which is what a tag on a shelf is. */
-:is(#shop, .shiny-boosts) button.action {
+:is(#shop, .lcd-actions) button.action {
   background: var(--paper);
   color: var(--ink);
   border: 2px solid var(--ink);
@@ -3382,13 +3382,13 @@ body.compact .row-stat .label {
     background 120ms ease,
     color 120ms ease;
 }
-:is(#shop, .shiny-boosts) button.action:hover:not(:disabled),
-:is(#shop, .shiny-boosts) button.action:focus-visible {
+:is(#shop, .lcd-actions) button.action:hover:not(:disabled),
+:is(#shop, .lcd-actions) button.action:focus-visible {
   background: var(--ink);
   color: var(--paper);
   outline: none;
 }
-:is(#shop, .shiny-boosts) button.action:disabled {
+:is(#shop, .lcd-actions) button.action:disabled {
   opacity: 0.35;
   cursor: default;
 }
@@ -3414,7 +3414,7 @@ body.compact .row-stat .label {
     0 2px 0 var(--paper-edge);
 }
 .shop-wallet::after,
-:is(#shop, .shiny-boosts) button.action.priced::before {
+:is(#shop, .lcd-actions) button.action.priced::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -3483,7 +3483,7 @@ body.compact .row-stat .label {
 /* A price tag is the wallet's screen from edge to edge: dark glass, scanlines, the quantity in
    pale ink and the price in phosphor green. Pointed at, the glass lights up rather than
    inverting, so the price stays readable under the cursor. */
-:is(#shop, .shiny-boosts) button.action.priced {
+:is(#shop, .lcd-actions) button.action.priced {
   position: relative;
   display: flex;
   align-items: center;
@@ -3496,21 +3496,21 @@ body.compact .row-stat .label {
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 5px rgb(0 0 0 / 0.55);
 }
-:is(#shop, .shiny-boosts) button.action.priced:hover:not(:disabled),
-:is(#shop, .shiny-boosts) button.action.priced:focus-visible {
+:is(#shop, .lcd-actions) button.action.priced:hover:not(:disabled),
+:is(#shop, .lcd-actions) button.action.priced:focus-visible {
   background: radial-gradient(120% 160% at 25% 0%, #265d67 0%, #11303a 70%);
   color: #f2fff6;
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.45),
     0 0 8px rgb(141 255 176 / 0.35);
 }
-:is(#shop, .shiny-boosts) button.action.priced .price-tag {
+:is(#shop, .lcd-actions) button.action.priced .price-tag {
   position: relative;
   display: flex;
   margin-left: auto;
 }
 /* The price on the wallet's screen, inside the tag that pays it. */
-:is(#shop, .shiny-boosts) .cost {
+:is(#shop, .lcd-actions) .cost {
   display: inline-flex;
   align-items: center;
   gap: 1px;
@@ -3525,7 +3525,7 @@ body.compact .row-stat .label {
    nugget drawn in its middle 14px, so the box is that 14px and `object-fit: none` shows the
    middle of the sheet at native size — every pixel whole, and nothing left for the chip's
    height to crop (negative margins did, wherever the editor's font made the chip shorter). */
-:is(#shop, .shiny-boosts) .cost .coin {
+:is(#shop, .lcd-actions) .cost .coin {
   flex: none;
   width: 14px;
   height: 14px;
@@ -3535,18 +3535,18 @@ body.compact .row-stat .label {
   image-rendering: pixelated;
 }
 /* Unaffordable: the screen's digits dim and lean, never struck through. */
-:is(#shop, .shiny-boosts) .cost.cant {
+:is(#shop, .lcd-actions) .cost.cant {
   color: color-mix(in srgb, var(--lcd-ink) 45%, var(--lcd-glass));
   font-style: italic;
   text-shadow: none;
   opacity: 1;
 }
-:is(#shop, .shiny-boosts) button.action.priced:disabled {
+:is(#shop, .lcd-actions) button.action.priced:disabled {
   opacity: 0.55;
 }
 /* The pack's saving, small on the top-right corner of the price it discounts. Without it,
    grouping the ×1 and the ×10 onto one row would hide the only reason to prefer the pack. */
-:is(#shop, .shiny-boosts) button.action.priced .save {
+:is(#shop, .lcd-actions) button.action.priced .save {
   position: absolute;
   top: -11px;
   right: -5px;
@@ -3578,37 +3578,37 @@ body.compact .row-stat .label {
     /* The ×10 tag carries the saving as well as a longer price, so it takes the larger share. */
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
-  :is(#shop, .shiny-boosts) button.action.priced {
+  :is(#shop, .lcd-actions) button.action.priced {
     min-width: 0;
     padding-left: 6px;
   }
   /* The wallet above carries the Nugget; at this width the price tags give it up for digits. */
-  :is(#shop, .shiny-boosts) .cost .coin {
+  :is(#shop, .lcd-actions) .cost .coin {
     display: none;
   }
-  :is(#shop, .shiny-boosts) .cost {
+  :is(#shop, .lcd-actions) .cost {
     padding-left: 6px;
   }
 }
 /* A tag that is only a price: the screen fills it, centred. */
-:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) {
+:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) {
   justify-content: center;
   padding: 3px;
 }
-:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) .price-tag {
+:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) .price-tag {
   margin-left: 0;
   flex: 1;
 }
-:is(#shop, .shiny-boosts) button.action.priced:not(:has(.verb)) .cost {
+:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) .cost {
   flex: 1;
   justify-content: center;
 }
 @media (forced-colors: active) {
-  :is(#shop, .shiny-boosts) .cost,
+  :is(#shop, .lcd-actions) .cost,
   .shop-wallet .value {
     text-shadow: none;
   }
-  :is(#shop, .shiny-boosts) button.action.priced::before,
+  :is(#shop, .lcd-actions) button.action.priced::before,
   .shop-wallet::after {
     content: none;
   }
@@ -4701,4 +4701,43 @@ body.paused .wallet-badge .coin {
 /* The Shinydex completion, on the casing like the Pokédex's, in gold. */
 .dex-head .dex-progress .bar.shiny i {
   background: linear-gradient(90deg, var(--shiny-light), var(--shiny));
+}
+
+/* ---- the lure ----
+   In the Pokédex detail of a species met but not owned: a price tag beside the silhouette. On
+   Home, while one runs: the game's Lure and how long it has left, under the scene. */
+/* Beside the silhouette where it fits; under it, centred, in a narrow sidebar. */
+.dex-detail.locked .dex-entry-body {
+  flex-wrap: wrap;
+}
+.lure-actions {
+  flex: 1 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  align-self: center;
+}
+.lure-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -6px 0 12px;
+  padding: 3px 12px 3px 4px;
+  width: fit-content;
+  max-width: 100%;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--rarity-legendary) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rarity-legendary) 45%, transparent);
+  font-size: var(--fs-s);
+  font-weight: 700;
+}
+/* The Lure item's 30px sheet, its middle shown at native size. */
+.lure-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  object-fit: none;
+  image-rendering: pixelated;
+}
+.lure-text {
+  min-width: 0;
 }

@@ -9,6 +9,7 @@ import {
   type MonState,
 } from '../src/core/companion/model.js'
 import {
+  markSeen,
   rareCandyXP,
   registerShiny,
   registerXP,
@@ -175,5 +176,24 @@ describe('registering a shiny', () => {
   it('never dresses a Ditto in disguise', () => {
     const disguised = { ...charmander, dittoDisguise: 4 }
     expect(registerShiny(state({ active: disguised, species: owned }), 4).active?.isShiny).toBe(false)
+  })
+})
+
+describe('marking a species seen', () => {
+  // [trigger branch] Seen with its place in the line (an index with forms): the Pokédex knows its
+  // line and rarity from then on — what a lure is priced by — without it being obtained.
+  it('records where a seen species sits in its line, without unlocking it', () => {
+    const line = { baseID: 4, stageIndex: 1, totalForms: 3, rarity: 'rare' as const }
+    const seen = markSeen(state(), 5, line)
+    expect(seen.species[5]).toMatchObject({
+      seen: true,
+      unlocked: false,
+      baseID: 4,
+      stageIndex: 1,
+      totalForms: 3,
+      lineRarity: 'rare',
+    })
+    expect(markSeen(seen, 5, line)).toBe(seen)
+    expect(markSeen(state(), 5).species[5]?.lineRarity).toBeUndefined()
   })
 })

@@ -863,6 +863,17 @@ export interface DexEntry {
   source?: 'wild'
 }
 
+/**
+ * A lure: the species aimed at, where it sits in its line (what the wild draw weighs), and when
+ * it stops (epoch ms). It also stops when its species is caught.
+ */
+export interface Lure {
+  speciesID: number
+  baseID: number
+  stageIndex: number
+  until: number
+}
+
 /** A wild form's place in its line: see `WildEncounter.line`. */
 export interface WildLine {
   baseID: number
@@ -1079,6 +1090,8 @@ export interface CompanionState {
    * default Diego chose.
    */
   keepCompletedCompanion?: boolean
+  /** The lure running, if any (`setLure` in `shop.ts`): one at a time, for a day. */
+  lure?: Lure
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**

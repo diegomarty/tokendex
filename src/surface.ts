@@ -31,6 +31,7 @@ export type PanelRequestKind =
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setKeepCompleted'; keep: boolean }
+  | { kind: 'setLure'; speciesID: number; title: string; priceText: string; confirmLabel?: string }
   | {
       kind: 'boostShiny'
       speciesID: number
@@ -176,6 +177,17 @@ export class PanelSurface {
       case 'setKeepCompleted':
         this.onRequest({ kind: 'setKeepCompleted', keep: message.keep === true })
         break
+      case 'setLure': {
+        const request: PanelRequestKind = {
+          kind: 'setLure',
+          speciesID: message.speciesID,
+          title: message.title,
+          priceText: message.priceText,
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
       // Forwarded as sent; the host guards the numbers and the worker re-checks the room.
       case 'boostShiny': {
         const request: PanelRequestKind = {

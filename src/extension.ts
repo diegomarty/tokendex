@@ -575,6 +575,7 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'setTrainer',
   'setKeepCompleted',
   'boostShiny',
+  'setLure',
   'setCompanion',
   'chooseStarter',
   'incubateEgg',
@@ -718,6 +719,21 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     case 'setKeepCompleted': {
       if (typeof request.keep !== 'boolean') return
       response = await requestAction({ action: 'setKeepCompleted', keep: request.keep }, true)
+      break
+    }
+
+    // A purchase like any other: a native modal labelled with the core's text (length-capped),
+    // and the worker re-checks in the hold that charges it.
+    case 'setLure': {
+      if (!isSpeciesID(request.speciesID)) return
+      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
+      const confirm = await vscode.window.showWarningMessage(
+        `${String(request.title).slice(0, 120)} — ${String(request.priceText).slice(0, 20)}`,
+        { modal: true },
+        confirmLabel,
+      )
+      if (confirm !== confirmLabel) return
+      response = await requestAction({ action: 'setLure', speciesID: request.speciesID }, true)
       break
     }
 

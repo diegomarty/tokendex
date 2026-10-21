@@ -1273,3 +1273,21 @@ describe('catching an evolved form', () => {
     expect(result.state.earnedTokens).toBe(EconomyBalance.duplicateReward.uncommon)
   })
 })
+
+describe('catching the lured species', () => {
+  // [trigger branch] The lure has done its job: catching its target ends it, while catching
+  // anything else leaves it running.
+  it('ends the lure on catching its target, and only then', () => {
+    const lure = { speciesID: 10, baseID: 10, stageIndex: 0, until: NOW + 1_000_000 }
+    const go = (s: CompanionState, target: WildEncounter) =>
+      takeTurn(
+        { ...s, inventory: { masterBall: 1 }, wild: [target] },
+        target.id,
+        { kind: 'throw', ball: 'masterBall' },
+        sequence(STAY),
+        NOW,
+      )
+    expect(go(state({ lure }), wild()).state.lure).toBeUndefined()
+    expect(go(state({ lure }), wild({ speciesID: 11 })).state.lure).toEqual(lure)
+  })
+})

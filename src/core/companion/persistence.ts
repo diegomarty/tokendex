@@ -25,6 +25,7 @@ import {
   type TrailEntry,
   type WildEncounter,
   type WildLine,
+  type Lure,
   type WildFind,
   freshCompanionState,
   freshSpeciesProgress,
@@ -157,6 +158,27 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
   // original meaning, so a save written before encounters existed needs no migration.
   if (value['source'] === 'wild') entry.source = 'wild'
   return entry
+}
+
+/** All or nothing: a lure aimed at an impossible species, or with no end, is dropped. */
+function decodeLure(value: unknown): Lure | undefined {
+  if (!isObject(value)) return undefined
+  const speciesID = lenientOptional(value, 'speciesID', isInt)
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  const until = lenientOptional(value, 'until', isNumber)
+  if (
+    speciesID === undefined ||
+    baseID === undefined ||
+    stageIndex === undefined ||
+    until === undefined
+  ) {
+    return undefined
+  }
+  if (speciesID <= 0 || baseID <= 0 || stageIndex < 0) return undefined
+  // As a wild line's: a base is its own line's base, an evolved form is not.
+  if ((stageIndex === 0) !== (baseID === speciesID)) return undefined
+  return { speciesID, baseID, stageIndex, until }
 }
 
 /**
@@ -475,6 +497,8 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   const trainerID = lenientOptional(value, 'trainerID', isString)
   if (trainerID !== undefined) state.trainerID = trainerID
   if (value['keepCompletedCompanion'] === true) state.keepCompletedCompanion = true
+  const lure = decodeLure(value['lure'])
+  if (lure !== undefined) state.lure = lure
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 

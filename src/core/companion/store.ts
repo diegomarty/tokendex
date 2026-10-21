@@ -116,6 +116,7 @@ import {
   creditSpeciesXP,
   markSeen,
   meterStart,
+  progressOf,
   registerShiny,
   rareCandyXP,
   retireCompanion,
@@ -124,7 +125,8 @@ import {
 } from './registry.js'
 import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
 import { isStarterID } from './starters.js'
-import { boostShiny } from './shop.js'
+import { boostShiny, setLure } from './shop.js'
+import { EconomyBalance } from './economy.js'
 
 export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
 
@@ -680,6 +682,21 @@ export class CompanionStore {
     // that has wandered off has to free its slot *this* pass — otherwise the tokens earned in
     // the same refresh are held back against room that is no longer occupied.
     this.state = expireQueue(this.state, this.now)
+    // A lure whose day is over, or whose species was obtained by any path (a catch, a hatch, an
+    // evolution, a starter), leaves the save, so nothing reads it as running. One that ends
+    // further than a day away — an edited save, a clock that jumped back — is capped to a day.
+    const lure = this.state.lure
+    if (lure !== undefined) {
+      if (lure.until <= this.now || progressOf(this.state, lure.speciesID).unlocked) {
+        this.state = { ...this.state }
+        delete this.state.lure
+      } else if (lure.until > this.now + EconomyBalance.lure.durationMs) {
+        this.state = {
+          ...this.state,
+          lure: { ...lure, until: this.now + EconomyBalance.lure.durationMs },
+        }
+      }
+    }
 
     if (delta > 0) {
       // Before crediting, so the day is recorded from the same fact the growth meter moves on:
@@ -831,7 +848,7 @@ export class CompanionStore {
         owedLegendaryEncounters: this.state.owedLegendaryEncounters - 1,
         wild: enqueueEncounter(this.state.wild, reward),
       }
-      this.state = markSeen(this.state, reward.speciesID)
+      this.state = markSeen(this.state, reward.speciesID, reward.line)
       this.noteEncounterAppeared(reward)
       room -= 1
     }
@@ -846,7 +863,7 @@ export class CompanionStore {
         this.state = { ...this.state, ...paid, finds: [...this.state.finds, spawn.find] }
       } else {
         this.state = { ...this.state, ...paid, wild: enqueueEncounter(this.state.wild, spawn.encounter) }
-        this.state = markSeen(this.state, spawn.encounter.speciesID)
+        this.state = markSeen(this.state, spawn.encounter.speciesID, spawn.encounter.line)
         this.noteEncounterAppeared(spawn.encounter)
       }
       room -= 1
@@ -895,7 +912,9 @@ export class CompanionStore {
 
     // `tier` is a floor, and the granted-legendary reward is the only caller that passes one: the
     // same draw narrowed to the pool, with the same shiny roll, flee rules, 24h window and toast.
-    const pick = chooseWildFromIndex(index, status, this.rng, tier)
+    const lure =
+      this.state.lure !== undefined && this.state.lure.until > this.now ? this.state.lure : undefined
+    const pick = chooseWildFromIndex(index, status, this.rng, tier, tier === undefined ? lure : undefined)
     if (pick === undefined) return undefined
     const speciesID = pick.speciesID
 
@@ -1144,6 +1163,22 @@ export class CompanionStore {
         this.pendingEvents.push({ kind: 'shinyRegistered', speciesID, name: this.speciesName(speciesID) })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /**
+   * Buys a day aimed at a seen species (`setLure` in `shop.ts`), in one hold against the save as
+   * it is now. `false` when it cannot be lured or the wallet is short; nothing is charged.
+   */
+  async setLure(speciesID: number): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = setLure(this.state, speciesID, this.now)
+      if (next === undefined) return false
+      this.state = next
       return true
     })
     if (!result.acquired) throw new SaveBusyError()

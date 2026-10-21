@@ -15,6 +15,7 @@ import {
 } from '../src/core/companion/model.js'
 import { encodeCompanionState } from '../src/core/companion/persistence.js'
 import type { BaseSpecies, PokeProviding } from '../src/core/pokeapi.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
 import { BACKUP_FILE_PREFIX } from '../src/core/companion/saveTransfer.js'
 import {
   EncounterBalance,
@@ -1815,6 +1816,75 @@ describe('companion choice, starters and the egg stock', () => {
     expect(await s.boostShiny(7, half)).toBe(true)
     expect(s.snapshot().spentTokens).toBe(half)
     expect(s.snapshot().species[7]).toMatchObject({ shinyXP: half, shinyBoosted: half })
+  })
+
+  // [trigger branch] Bought through the store, then a day later it is gone — the draw is back to
+  // normal and the save no longer carries it.
+  it('sets a lure for a day, and drops it once the day is over', async () => {
+    let clock = 1_700_000_000_000
+    const s = store({ now: () => clock })
+    await s.update(obs(0))
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        usedSinceInstall: 10_000_000_000,
+        species: {
+          ...tx.state.species,
+          5: {
+            ...freshSpeciesProgress(),
+            seen: true,
+            baseID: 4,
+            stageIndex: 1,
+            totalForms: 3,
+            lineRarity: 'rare',
+          },
+        },
+      }),
+    )
+    expect(await s.setLure(5)).toBe(true)
+    expect(s.snapshot().lure).toMatchObject({
+      speciesID: 5,
+      until: clock + EconomyBalance.lure.durationMs,
+    })
+    expect(await s.setLure(600)).toBe(false) // obtained already: nothing to lure
+    clock += EconomyBalance.lure.durationMs
+    await s.update(obs(1))
+    expect(s.snapshot().lure).toBeUndefined()
+  })
+
+  // [trigger branch] Obtained by any path other than a catch (a hatch, an evolution, a starter):
+  // the lure has nothing left to do and stops. And a lure ending further away than one day — an
+  // edited save, a clock that jumped — is brought back to a day from now.
+  it('ends a lure on a species obtained any way, and caps one that ends too far away', async () => {
+    const clock = 1_700_000_000_000
+    const s = store({ now: () => clock })
+    await s.update(obs(0))
+    const seen = {
+      ...freshSpeciesProgress(),
+      seen: true,
+      baseID: 4,
+      stageIndex: 1,
+      totalForms: 3,
+      lineRarity: 'rare' as const,
+    }
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        species: { ...tx.state.species, 5: { ...seen, unlocked: true } },
+        lure: { speciesID: 5, baseID: 4, stageIndex: 1, until: clock + 3_600_000 },
+      }),
+    )
+    await s.update(obs(1))
+    expect(s.snapshot().lure).toBeUndefined()
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        species: { ...tx.state.species, 6: { ...seen, baseID: 4 } },
+        lure: { speciesID: 6, baseID: 4, stageIndex: 1, until: 1e15 },
+      }),
+    )
+    await s.update(obs(2))
+    expect(s.snapshot().lure?.until).toBe(clock + EconomyBalance.lure.durationMs)
   })
 
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {

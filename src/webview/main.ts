@@ -276,7 +276,7 @@ function renderHome(state: PanelState): string {
         : renderStarters(state, state.starters)
       : compact
         ? renderCompanion(state) + renderWildStrip(state)
-        : renderGame(state) + renderEggs(state)
+        : renderGame(state) + renderLure(state) + renderEggs(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -1139,6 +1139,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
       </div>
       <div class="dex-entry-body">
         <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+        ${sp?.lure === undefined ? '' : lureOffer(sp.id, sp.lure)}
       </div>
     </div>`
   }
@@ -1192,6 +1193,31 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
 }
 
 /**
+ * A species met but not yet owned can be lured: a price tag like the shop's, greyed out with its
+ * price still showing when the wallet is short. Every word and figure is the core's.
+ */
+function lureOffer(speciesID: number, offer: NonNullable<PanelDexSpecies['lure']>): string {
+  return `<div class="lcd-actions lure-actions">
+      <button class="action priced" data-lure="${speciesID}" data-title="${escapeHTML(offer.confirmTitle)}"
+              data-price="${escapeHTML(offer.priceText)}" aria-label="${escapeHTML(offer.label)}"
+              ${offer.enabled ? '' : 'disabled'}>
+        <span class="verb">${escapeHTML(offer.text)}</span>
+        <span class="price-tag"><span class="cost${offer.enabled ? '' : ' cant'}">${escapeHTML(offer.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span></span>
+      </button>
+    </div>`
+}
+
+/** The lure running, on Home under the scene: the game's Lure item and the core's line. */
+function renderLure(state: PanelState): string {
+  const lure = state.lure
+  if (lure === undefined) return ''
+  return `<div class="lure-status" role="status">
+      <img class="lure-icon" src="${itemSpriteURL('lure')}" alt="">
+      <span class="lure-text">${escapeHTML(lure.text)}</span>
+    </div>`
+}
+
+/**
  * A registered species' road to its shiny: the gold bar on the device's track, its sentence,
  * and what the wallet can buy of it — the shop's own price tags, because it is the same act of
  * paying tokens for something. Every figure and word is the core's.
@@ -1213,7 +1239,7 @@ function shinySection(speciesID: number, bar: NonNullable<PanelDexSpecies['shiny
         <div class="bar game-meter-track" aria-label="${escapeHTML(bar.text)}"><i data-fill="${bar.percent}"></i></div>
       </div>
       <div class="desc shiny-text">${escapeHTML(bar.text)}</div>
-      ${boosts === '' ? '' : `<div class="shiny-boosts">${boosts}</div>`}
+      ${boosts === '' ? '' : `<div class="shiny-boosts lcd-actions">${boosts}</div>`}
       ${bar.boostHint === undefined ? '' : `<div class="desc shiny-hint">${escapeHTML(bar.boostHint)}</div>`}
     </div>`
 }
@@ -1849,6 +1875,22 @@ document.addEventListener('click', (event) => {
     dexSelected = Number.isInteger(id) && id !== dexSelected ? id : undefined
     invalidate('dex')
     render()
+    return
+  }
+  const lureButton = target.closest('[data-lure]')
+  if (lureButton !== null) {
+    const el = lureButton as HTMLElement
+    const speciesID = Number(el.dataset['lure'])
+    // A native modal on the host, like a purchase; it says when it replaces the lure running.
+    if (Number.isInteger(speciesID) && speciesID > 0 && current !== undefined) {
+      vscode.postMessage({
+        type: 'setLure',
+        speciesID,
+        title: el.dataset['title'] ?? '',
+        priceText: el.dataset['price'] ?? '',
+        confirmLabel: current.strings.buy,
+      })
+    }
     return
   }
   const boost = target.closest('[data-boost]')

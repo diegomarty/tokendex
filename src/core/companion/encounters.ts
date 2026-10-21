@@ -988,6 +988,11 @@ export function takeTurn(
         },
         encounter,
       )
+      // The lure has done its job once its species is caught.
+      if (filed.state.lure?.speciesID === encounter.speciesID) {
+        filed.state = { ...filed.state }
+        delete filed.state.lure
+      }
       const outcome: TurnOutcome = { kind: 'caught', shakes: roll.shakes, refunded }
       if (filed.registeredPercent !== undefined) outcome.registeredPercent = filed.registeredPercent
       if (filed.reward !== undefined) outcome.reward = filed.reward

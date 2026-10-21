@@ -16,6 +16,8 @@ import {
   shopEntries,
   useMint,
   boostShiny,
+  lurePrice,
+  setLure,
   shinyBoostOffers,
   shinyBoostRoom,
 } from '../src/core/companion/shop.js'
@@ -535,5 +537,65 @@ describe('the shiny boost', () => {
     expect(shinyBoostOffers(wallet(registered()), 7)).toEqual([target / 10, cap])
     expect(shinyBoostOffers(wallet(registered(), target / 20), 7)).toEqual([target / 20])
     expect(shinyBoostOffers(wallet(registered({ registered: false })), 7)).toEqual([])
+  })
+})
+
+describe('the lure', () => {
+  const seen = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    seen: true,
+    baseID: 4,
+    stageIndex: 1,
+    totalForms: 3,
+    lineRarity: 'rare',
+    ...over,
+  })
+  const wallet = (species: SpeciesProgress, tokens = 10_000_000_000) =>
+    state({ usedSinceInstall: tokens, species: { 5: species } })
+  const NOW = 1_700_000_000_000
+
+  it('prices a seen species by its line’s rarity', () => {
+    expect(lurePrice(wallet(seen()), 5)).toBe(EconomyBalance.lure.price.rare)
+    expect(lurePrice(wallet(seen({ lineRarity: 'common' })), 5)).toBe(EconomyBalance.lure.price.common)
+  })
+
+  // [trigger branch] Each condition alone refuses: never seen (no line to price), already
+  // obtained, a legendary line, a line not known.
+  it('offers no lure for what cannot be lured', () => {
+    expect(lurePrice(wallet(seen({ seen: false })), 5)).toBeUndefined()
+    expect(lurePrice(wallet(seen({ unlocked: true })), 5)).toBeUndefined()
+    expect(lurePrice(wallet(seen({ lineRarity: 'legendary' })), 5)).toBeUndefined()
+    const unknown = seen()
+    delete unknown.lineRarity
+    expect(lurePrice(wallet(unknown), 5)).toBeUndefined()
+  })
+
+  // [trigger branch] Buying the lure that is already running would only restart its clock and
+  // charge the full price again: it is not offered.
+  it('offers no second lure on the species already lured', () => {
+    const first = setLure(wallet(seen()), 5, NOW)!
+    expect(lurePrice(first, 5)).toBeUndefined()
+    expect(setLure(first, 5, NOW + 1)).toBeUndefined()
+  })
+
+  it('charges the price and sets a lure for a day', () => {
+    const next = setLure(wallet(seen()), 5, NOW)!
+    expect(next.spentTokens).toBe(EconomyBalance.lure.price.rare)
+    expect(next.lure).toEqual({
+      speciesID: 5,
+      baseID: 4,
+      stageIndex: 1,
+      until: NOW + EconomyBalance.lure.durationMs,
+    })
+  })
+
+  it('refuses without the tokens, and replaces a lure that is active', () => {
+    expect(setLure(wallet(seen(), 1), 5, NOW)).toBeUndefined()
+    const first = setLure(wallet(seen()), 5, NOW)!
+    const other = {
+      ...first,
+      species: { ...first.species, 7: seen({ baseID: 7, stageIndex: 0, lineRarity: 'common' }) },
+    }
+    expect(setLure(other, 7, NOW)!.lure?.speciesID).toBe(7)
   })
 })

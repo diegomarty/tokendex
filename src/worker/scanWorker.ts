@@ -103,6 +103,7 @@ export type WorkerAction =
   | { action: 'setTrainer'; trainerID: string }
   | { action: 'setKeepCompleted'; keep: boolean }
   | { action: 'boostShiny'; speciesID: number; amount: number }
+  | { action: 'setLure'; speciesID: number }
   | { action: 'setCompanion'; speciesID: number }
   | { action: 'chooseStarter'; speciesID: number }
   | { action: 'incubateEgg' }
@@ -781,6 +782,12 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
 
     case 'setKeepCompleted':
       await companion.setKeepCompletedCompanion(payload.keep)
+      return undefined
+
+    case 'setLure':
+      if (!(await companion.setLure(payload.speciesID))) {
+        throw new Error(D.lureFailedText(companion.snapshot().language))
+      }
       return undefined
 
     case 'boostShiny':

@@ -407,6 +407,15 @@ describe('the registry', () => {
     expect(mergeSaves(remote, local).state.species[4]?.nature).toBe('bold')
   })
 
+  // The lure is bought with the winner's wallet, so it travels with the winner's spend.
+  it('keeps the winner’s lure', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
+    const local = save({ revision: { [A]: 4, [B]: 7 }, lure })
+    const remote = save({ revision: { [A]: 2, [B]: 7 } })
+    expect(mergeSaves(local, remote).state.lure).toEqual(lure)
+    expect(mergeSaves(remote, local).state.lure).toEqual(lure)
+  })
+
   it('keeps the winner’s payouts, as it keeps its spend', () => {
     const local = save({ revision: { [A]: 4, [B]: 7 }, earnedTokens: 30 })
     const remote = save({ revision: { [A]: 2, [B]: 7 }, earnedTokens: 999 })

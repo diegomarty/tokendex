@@ -21,7 +21,9 @@ import {
   meetsRarityFloor,
   pokemonTypes,
   rarityFrom,
+  type Lure,
 } from './companion/model.js'
+import { EconomyBalance } from './companion/economy.js'
 
 /**
  * A hatch candidate: the start of an evolution line, plus its official rarity signals.
@@ -585,13 +587,20 @@ export function chooseWildFromIndex(
   status: (id: number) => WildStatus,
   rng: RNG,
   tier?: Rarity,
+  lure?: Pick<Lure, 'speciesID' | 'baseID' | 'stageIndex'>,
 ): WildPick | undefined {
   const pool =
     tier === undefined
       ? index
       : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
   if (pool.length === 0) return undefined
-  const base = weightedPick(pool, (e) => wildLineWeight(e, status), rng)
+  // A lure weighs its line `lineWeight` times (phase 6); everything else draws as usual.
+  const lured = (e: BaseSpecies) => lure !== undefined && e.id === lure.baseID
+  const base = weightedPick(
+    pool,
+    (e) => wildLineWeight(e, status) * (lured(e) ? EconomyBalance.lure.lineWeight : 1),
+    rng,
+  )
   const rarity = rarityFrom(base.captureRate, base.isLegendary === true, base.isMythical === true)
   const atBase = (): WildPick =>
     base.lineForms === undefined
@@ -602,7 +611,10 @@ export function chooseWildFromIndex(
         }
   if (tier !== undefined || base.lineForms === undefined) return atBase()
 
-  const odds = WILD_STAGE_ODDS[Math.min(Math.max(1, base.lineForms), 3)] ?? [100]
+  const odds = luredOdds(
+    WILD_STAGE_ODDS[Math.min(Math.max(1, base.lineForms), 3)] ?? [100],
+    lured(base) ? lure : undefined,
+  )
   let roll = rng() % 100
   let stage = 0
   for (; stage < odds.length - 1; stage++) {
@@ -611,11 +623,27 @@ export function chooseWildFromIndex(
   }
   const atStage = (base.forms ?? []).filter((f) => f.stage === stage)
   if (stage === 0 || atStage.length === 0) return atBase()
-  const form = weightedPick(atStage, (f) => WILD_STATUS_WEIGHT[status(f.id)], rng)
+  // The lured form wins among branches of its stage; otherwise the one the player has least of.
+  const target = lured(base) ? atStage.find((f) => f.id === lure!.speciesID) : undefined
+  const form = target ?? weightedPick(atStage, (f) => WILD_STATUS_WEIGHT[status(f.id)], rng)
   return {
     speciesID: form.id,
     line: { baseID: base.id, stageIndex: form.stage, totalForms: form.totalForms, rarity },
   }
+}
+
+/**
+ * The stage odds under a lure: its stage takes `stageShare` (60%), the other stages share the
+ * rest in proportion to their own odds. Unchanged without a lure, or with one on a stage the
+ * line does not have.
+ */
+function luredOdds(odds: number[], lure: Pick<Lure, 'stageIndex'> | undefined): number[] {
+  if (lure === undefined || lure.stageIndex >= odds.length || odds.length < 2) return odds
+  const share = 100 * EconomyBalance.lure.stageShare
+  const others = odds.reduce((sum, o, i) => (i === lure.stageIndex ? sum : sum + o), 0)
+  // No other stage has any odds to share the rest: the lured stage takes all of it.
+  if (others <= 0) return odds.map((_, i) => (i === lure.stageIndex ? 100 : 0))
+  return odds.map((o, i) => (i === lure.stageIndex ? share : ((100 - share) * o) / others))
 }
 
 /** One weighted draw: `rng() % total`, walked in order. `items` must not be empty. */

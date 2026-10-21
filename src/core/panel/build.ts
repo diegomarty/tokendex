@@ -22,6 +22,8 @@ import type {
   PanelEggs,
   PanelEncounterResult,
   PanelMoodMeter,
+  PanelLure,
+  PanelLureOffer,
   PanelShinyBar,
   PanelShopAction,
   PanelShopItem,
@@ -68,6 +70,7 @@ import {
   candyRoomLeft,
   itemCount,
   ownedItems,
+  lurePrice,
   shinyBoostCapLeft,
   shinyBoostOffers,
 } from '../companion/shop.js'
@@ -384,6 +387,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       // stage is already chosen.
       canChoose: sp.status !== 'seen' && !isCompanion,
       isCompanion,
+      ...lureOffer(state, sp.id, now, lang),
       ...(sp.status === 'registered' || sp.shiny === 'registered'
         ? { shinyBar: shinyBarFor(state, sp.id, sp.name, lang) }
         : {}),
@@ -550,6 +554,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     wild,
     trainerID: trainerIDOrDefault(state.trainerID),
     keepCompletedCompanion: state.keepCompletedCompanion === true,
+    ...lureRunning(state, now, lang),
     trainers: [...TRAINER_IDS],
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
@@ -669,6 +674,51 @@ function dexSummary(
     shinyProgressText: D.dexProgressText(shinyRegistered, total),
     shinySegmentText: D.countedLabel(D.shinydexLabel(lang), shinyRegistered),
   }
+}
+
+/** The lure running, for Home, with the hours left rounded up; nothing once its day is over. */
+function lureRunning(state: CompanionState, now: number, lang: AppLanguage): { lure?: PanelLure } {
+  const lure = state.lure
+  if (lure === undefined || lure.until <= now) return {}
+  const hoursLeft = Math.ceil((lure.until - now) / 3_600_000)
+  return {
+    lure: {
+      speciesID: lure.speciesID,
+      text: D.lureActiveText(lang, lureName(lure.speciesID), hoursLeft),
+    },
+  }
+}
+
+/**
+ * The lure button on a species that can be lured (`lurePrice`), or nothing. Named by its number:
+ * a lure is only for a species seen and not obtained, whose name the Pokédex keeps hidden.
+ */
+function lureOffer(
+  state: CompanionState,
+  speciesID: number,
+  now: number,
+  lang: AppLanguage,
+): { lure?: PanelLureOffer } {
+  const price = lurePrice(state, speciesID)
+  if (price === undefined) return {}
+  const hours = Math.round(EconomyBalance.lure.durationMs / 3_600_000)
+  const priceText = compact(price)
+  const name = lureName(speciesID)
+  const running = state.lure !== undefined && state.lure.until > now
+  return {
+    lure: {
+      text: D.lureButtonText(lang, hours),
+      priceText,
+      label: D.lureLabel(lang, name, hours, priceText),
+      confirmTitle: D.lureConfirmTitle(lang, name, running),
+      enabled: spendableBalance(state) >= price,
+    },
+  }
+}
+
+/** A lured species' name: its number, as the Pokédex names a species it has no name for. */
+function lureName(speciesID: number): string {
+  return `#${speciesID}`
 }
 
 /**

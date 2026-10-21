@@ -123,3 +123,15 @@ describe('shop prices', () => {
     expect(FreshEgg.price_('rare')).toBeGreaterThan(cheapestCatch('rare') / 2)
   })
 })
+
+describe('the lure', () => {
+  // A lure is worth more than one catch of its band — it steers a whole day of encounters — and
+  // rarer lines cost more. Legendaries have no lure: they have their own roads.
+  it('prices a lure above the cheapest catch of its band, rising with rarity', () => {
+    const bands = ['common', 'uncommon', 'rare'] as const
+    for (const band of bands) expect(EconomyBalance.lure.price[band]).toBeGreaterThan(cheapestCatch(band))
+    const prices = bands.map((b) => EconomyBalance.lure.price[b] ?? 0)
+    expect(prices).toEqual([...prices].sort((a, b) => a - b))
+    expect('legendary' in EconomyBalance.lure.price).toBe(false)
+  })
+})

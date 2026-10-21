@@ -304,6 +304,16 @@ describe('CompanionState decoding', () => {
     expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
   })
 
+  it('keeps a lure that is whole, and drops one that is not', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
+    expect(decodeCompanionState({ lure }).lure).toEqual(lure)
+    expect(decodeCompanionState({ lure: { ...lure, speciesID: -1 } }).lure).toBeUndefined()
+    expect(decodeCompanionState({ lure: { speciesID: 5 } }).lure).toBeUndefined()
+    // A position that contradicts its species, as a wild line's: a base is its own line's base.
+    expect(decodeCompanionState({ lure: { ...lure, baseID: 1, stageIndex: 0 } }).lure).toBeUndefined()
+    expect(decodeCompanionState({ lure: { ...lure, baseID: 5, stageIndex: 2 } }).lure).toBeUndefined()
+  })
+
   it('keeps that the companion on stage was chosen by hand while registered', () => {
     const active = {
       baseID: 1,

@@ -20,6 +20,7 @@ import {
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
 import { candyFullHint } from '../src/core/i18n/dispatch.js'
 import * as D from '../src/core/i18n/dispatch.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
 import { compact } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
@@ -927,5 +928,54 @@ describe('the shiny bar in the Pokédex', () => {
       shinyProgressText: D.dexProgressText(1, ANIMATED_SPECIES_MAX),
     })
     expect(summary.shinySegmentText).toContain('(1)')
+  })
+})
+
+describe('the lure in the panel', () => {
+  const seen = (over: Partial<SpeciesProgress> = {}) =>
+    speciesEntry({ seen: true, baseID: 4, stageIndex: 1, totalForms: 3, lineRarity: 'rare', ...over })
+  const cell = (s: CompanionState, id = 5) => build({ state: s }).dexSpecies.find((c) => c.id === id)!
+  const price = compact(EconomyBalance.lure.price.rare!)
+
+  it('offers a lure on a seen species, priced, and greyed when the wallet is short', () => {
+    const rich = cell(state({ usedSinceInstall: 10_000_000_000, species: { 5: seen() } })).lure!
+    expect(rich).toMatchObject({ priceText: price, enabled: true, text: D.lureButtonText('en', 24) })
+    expect(cell(state({ species: { 5: seen() } })).lure?.enabled).toBe(false)
+    expect(cell(state({ species: { 5: seen({ unlocked: true }) } })).lure).toBeUndefined()
+  })
+
+  // [trigger branch] Buying one while another runs replaces it: the confirmation says so.
+  it('says a new lure replaces the one running', () => {
+    const lure = { speciesID: 7, baseID: 7, stageIndex: 0, until: NOW + 3_600_000 }
+    const s = state({ usedSinceInstall: 10_000_000_000, species: { 5: seen() }, lure })
+    expect(cell(s).lure?.confirmTitle).toBe(D.lureConfirmTitle('en', '#5', true))
+  })
+
+  // [trigger branch] A lure whose day is over, not yet cleared by a refresh, replaces nothing.
+  it('does not warn of replacing a lure whose day is over', () => {
+    const over = { speciesID: 7, baseID: 7, stageIndex: 0, until: NOW }
+    const s = state({ usedSinceInstall: 10_000_000_000, species: { 5: seen() }, lure: over })
+    expect(cell(s).lure?.confirmTitle).toBe(D.lureConfirmTitle('en', '#5', false))
+  })
+
+  // A seen species is shown as "?????" in the Pokédex: the lure names it by number, never by the
+  // name the card keeps hidden.
+  it('names a lured species by its number, as the card hides its name', () => {
+    const s = state({ usedSinceInstall: 10_000_000_000, species: { 5: seen() } })
+    expect(cell(s).lure?.label).toBe(
+      D.lureLabel('en', '#5', 24, compact(EconomyBalance.lure.price.rare!)),
+    )
+  })
+
+  it('shows the lure running on Home with the hours left, and nothing once it is over', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: NOW + 5 * 3_600_000 - 1 }
+    const panel = build({ state: state({ species: { 5: seen() }, lure }) })
+    expect(panel.lure).toEqual({
+      speciesID: 5,
+      text: D.lureActiveText('en', cell(state({ species: { 5: seen() } })).name, 5),
+    })
+    expect(
+      build({ state: state({ species: { 5: seen() }, lure: { ...lure, until: NOW } }) }).lure,
+    ).toBeUndefined()
   })
 })
