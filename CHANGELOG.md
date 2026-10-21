@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Every species has its own registration bar.** The tokens your companion uses are its
+  experience, and filling a species' bar registers it in the Pokédex and evolves the companion
+  into the next form, which starts its own bar; you can always go back to an earlier form. A
+  full Pokédex now costs about 46.5B tokens (every line's total divided by fifteen), so it
+  takes an average user one to two years rather than decades. Tokens still count twice: each
+  one is experience and balance, and spending never takes experience away. A Rare Candy is
+  worth a quarter of the current stage, two per species at most.
+- **You choose your companion.** A new game starts by picking one starter from generations
+  1–5. After that, the companion can be any species you have obtained, or an egg: a free egg
+  arrives every day (up to three in stock) and 5M tokens hatch it. The shop's eggs add a
+  guaranteed tier, and the egg itself can be bought into the stock. A PC box lists every
+  obtained species, unfinished first, with search and sorting, to switch in two clicks.
+- **Catching registers.** A first catch obtains the species and fills 5% of its bar; a
+  duplicate pays tokens instead (2M common, 4M uncommon, 30M rare, 40M legendary). Evolved
+  forms appear in the wild at the games' odds (65/30/5 for three-stage lines, 75/25 for two),
+  weighted toward what you are missing, and a Poké Ball on the wild Pokémon's card marks a
+  species you already have.
+- **Shinies are earned.** Once a species is registered, its experience fills a shiny bar
+  eight times its line's total; tokens can buy up to half of it. Catching or hatching a shiny
+  still completes it at once. A Shinydex counts them.
+- **A lure** aims a day at one species you have seen: its line weighs forty times more in the
+  wild draw for 24 hours (20M common, 50M uncommon, 150M rare; no legendary lure).
+- **Medals, regions and challenges.** Medals for registered species, shinies, catches, a line
+  raised to its end and each region (Kanto to Unova) are announced once. Two daily challenges
+  and one weekly one pay 5M and 40M; they are the same on every machine and paid once, even
+  across merged saves. The Pokédex filters by region.
+
+### Changed
+
+- **Home is one panel.** Eggs, challenges, the legendary trail, wild Pokémon, finds, the
+  streak and the shop fold into drawers with one-line summaries; usage lives on the device's
+  lid, whose lights read the official limits. Tabs are the device's buttons, drawn with game
+  items, and fade between views. Every bar, button and empty state is drawn one way, and every
+  empty view says how it fills.
+- **The battle menu is Pokémon · Bag · Run.** The Pokémon button opens the companion's card
+  over Home; mood bars on the wild plate are icons that animate when they change; the dialog
+  writes letter by letter (instant with reduced motion, and screen readers get the whole line).
+- **Celebrations are drawn in the panel.** A hatch, an evolution, a registration, a medal or a
+  candy grant shows as a card in the panel when it is on screen, one after another; only when
+  no panel is visible does it become a notification.
+- **Shop prices follow the new scale:** tier guarantees 50M and 80M, Rare Candy 150M, mint
+  30M. The economy is tuned with a simulator that drives the real engine.
+- **Existing saves start the new registry at 0%.** Every species you had is obtained, your
+  companion stays the same, and your balance and catch history are untouched.
+- Buttons say what they do: the ways to the shop say "Shop", and Japanese uses the games' verbs
+  (かう, つかう, にげる).
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
