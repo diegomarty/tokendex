@@ -1,15 +1,114 @@
 /*
  * Webview styling.
  *
- * Everything colour-related comes from VS Code's own CSS variables so the panel follows the
- * user's theme instead of imposing one. Hard-coding a palette here is the fastest way to make
- * an extension look broken in half the themes people use.
+ * Three layers, each with one theme rule (the token block below names them): the counter — the
+ * usage tracker — takes VS Code's own CSS variables and follows the user's theme; the paper the
+ * game is drawn on follows it through `--paper`/`--ink`; the device, the Pokédex itself, keeps
+ * its colours in every theme. A colour outside a token is the fastest way to make one of them
+ * look broken in half the themes people use.
  *
  * **Narrow first.** The default surface is a sidebar view, which is ~300 px wide, and the webview
  * viewport equals the view width — so the base rules target 300 px and the wider layouts are
  * `min-width` additions. Designing the other way round is how a sidebar ends up with a table
  * whose columns collide.
  */
+
+/* ---- tokens ----
+   Every colour, size and duration the game draws with, named once (docs/plans/08-ui-unificada.md).
+   Three layers, each with one theme rule:
+   - the DEVICE — the Pokédex itself: casing, lens, lights, LCD screens, the meters' track.
+     Fixed in every theme: an object does not change colour with the editor.
+   - the PAPER — what the games draw on screen: plates, dialog, menu, bag, cards. Follows the
+     theme (`--paper` and `--ink` turn dark below).
+   - the COUNTER — totals, official limits, the per-CLI table: VS Code's own `--vscode-*`.
+   `test/styles.test.ts` keeps literal colours from creeping back outside this block. */
+:root {
+  /* Paper: plates, menus, the shop counter, the bag. */
+  --ink: #1d2433;
+  --paper: #f4f6ef;
+  --paper-edge: #c9d1c0;
+  /* A link drawn on paper, which is not the editor's background. */
+  --paper-link: #2a5bd7;
+  /* A field to type or choose in, a shade off the paper it sits on. */
+  --paper-field: #fff;
+  --dialog: #22304d;
+  --dialog-text: #f5f7fb;
+  --dialog-rule: #8ea6d6;
+
+  /* Device: the Pokédex's casing, lens and lights. */
+  --device-casing: #d4433b;
+  --device-casing-deep: #a72f29;
+  --device-casing-edge: #6e1c17;
+  --device-lens-hi: #d8f3ff;
+  --device-lens: #3fa7e0;
+  --device-lens-lo: #1d6fa8;
+  --device-led-red: #ff6b5e;
+  --device-led-amber: #ffd23f;
+  --device-led-green: #4cd964;
+  /* The panel a device holds (the new-entry card): paper that never changes with the theme. */
+  --device-panel: #f4f6ef;
+  --device-panel-ink: #1d2433;
+  /* Dark LCD: the wallet, the price tags. */
+  --lcd-glass-hi: #1d4a52;
+  --lcd-glass: #0d2228;
+  --lcd-edge: #08171b;
+  --lcd-ink: #8dffb0;
+  --lcd-label: #d9efe2;
+  /* Light LCD: the screen a new entry is shown on. */
+  --lcd-light-hi: #f2fbf2;
+  --lcd-light: #c9e6cc;
+  --lcd-bezel: #2b2f3a;
+  /* The meters' track, as the EXP bar draws it. */
+  --track: #11161e;
+  --track-edge: #10151d;
+  --track-casing: #2a313c;
+
+  /* Game: what the colours mean. */
+  --anger: #e5484d;
+  --nerves: #f2a531;
+  --trust: #3fae5f;
+  --exp: #3d8bfd;
+  --exp-light: #8cc4ff;
+  --exp-label: #f7cf4a;
+  --shiny: #e0a91c;
+  --shiny-light: #ffe58a;
+  --gain: #2f8f4e;
+  --gain-ink: #23703c;
+  --rarity-common: #8a94a3;
+  --rarity-uncommon: #2f8f4e;
+  --rarity-rare: #4b55c4;
+  --rarity-legendary: #9a43d8;
+  --rarity-legendary-from: #7b3fe4;
+  --rarity-legendary-to: #d0479b;
+
+  /* Type scale. */
+  --fs-xs: 10px;
+  --fs-s: 11px;
+  --fs-m: 12.5px;
+  --fs-l: 14px;
+  --fs-xl: 17px;
+  /* Radii: a cell or track, a button or row, a card or plate, a pill. */
+  --r-s: 4px;
+  --r-m: 7px;
+  --r-l: 10px;
+  --r-pill: 999px;
+  /* Time: hover, a change of state, an entrance. */
+  --t-fast: 120ms;
+  --t-mid: 300ms;
+  --t-slow: 600ms;
+}
+/* A dark editor gets dark paper: the menu, the plates, the shop counter and the bag stop being
+   the one white block in a dark window. Every piece drawn in paper and ink follows from these,
+   so nothing else needs a dark variant. The device does not change. */
+body.vscode-dark,
+body.vscode-high-contrast:not(.vscode-high-contrast-light) {
+  --ink: #e6eaf2;
+  --paper: #262c38;
+  --paper-edge: #0e1117;
+  --paper-link: #8fb4ff;
+  --paper-field: #1a1f29;
+  color-scheme: dark;
+}
 
 * {
   box-sizing: border-box;
@@ -119,7 +218,7 @@ nav button.tab[hidden] {
   gap: 10px;
   padding: 18px 14px 14px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  border-radius: var(--r-l);
   margin-bottom: 14px;
   background: var(--vscode-editorWidget-background, transparent);
 }
@@ -345,7 +444,7 @@ td.num {
   gap: 12px;
   padding: 11px 13px;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 7px;
+  border-radius: var(--r-m);
   margin-bottom: 8px;
 }
 .row .icon {
@@ -372,7 +471,7 @@ button.action {
   /* Not `border: 0`: in a high contrast theme a button is supposed to be outlined, and Run
      against a pure black editor was a soft grey rectangle with no edge. Transparent elsewhere. */
   border: 1px solid var(--vscode-contrastBorder, transparent);
-  border-radius: 4px;
+  border-radius: var(--r-s);
   padding: 5px 13px;
   font: inherit;
   cursor: pointer;
@@ -402,7 +501,7 @@ button.action.secondary {
 .dex .cell {
   position: relative;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 7px;
+  border-radius: var(--r-m);
   padding: 8px 4px;
   text-align: center;
   background: transparent;
@@ -429,7 +528,7 @@ button.action.secondary {
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
-  border-radius: 4px;
+  border-radius: var(--r-s);
   padding: 4px 8px;
 }
 .dex-search:focus-visible {
@@ -442,7 +541,7 @@ button.action.secondary {
   color: var(--vscode-foreground);
   background: transparent;
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 3px 10px;
   cursor: pointer;
   opacity: 0.75;
@@ -527,12 +626,12 @@ body.vscode-high-contrast .dex .cell.locked img {
   z-index: 10;
   max-width: 720px;
   margin-inline: auto;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 40px 12px 14px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
+  /* An entry: the device's red band (.dex-entry-head) over the body (.dex-entry-body). */
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-l);
   background: var(--vscode-editor-background);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
   animation: sheet-up 180ms ease-out;
@@ -562,6 +661,12 @@ body.vscode-high-contrast .dex .cell.locked img {
   align-items: center;
   justify-content: center;
   flex: none;
+  /* The pedestal the sprite stands on. */
+  background: radial-gradient(
+    60% 22% at 50% 88%,
+    color-mix(in srgb, var(--vscode-foreground) 16%, transparent),
+    transparent 70%
+  );
 }
 .dex-detail .portrait img {
   image-rendering: pixelated;
@@ -631,7 +736,7 @@ label.setting select {
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);
   border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
+  border-radius: var(--r-s);
   padding: 4px 8px;
   font: inherit;
 }
@@ -684,28 +789,7 @@ label.setting select {
   padding: 0 1px;
 }
 
-/* ---- dex segments ---- */
-.segments {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-.segments .seg {
-  appearance: none;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 14px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  padding: 4px 13px;
-  font: inherit;
-  cursor: pointer;
-  opacity: 0.7;
-}
-.segments .seg[aria-selected='true'] {
-  opacity: 1;
-  background: var(--vscode-button-secondaryBackground);
-  border-color: transparent;
-}
+/* The Pokédex's segments are drawn with the bag's pockets: see `.pockets, .segments`. */
 
 /* A species held only by the Pokémon being raised is not permanent yet, and saying so stops a
    shrinking count from looking like data loss. */
@@ -763,7 +847,7 @@ label.setting select {
   flex: none;
   font: inherit;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--r-s);
   color: var(--vscode-dropdown-foreground);
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
@@ -1203,42 +1287,6 @@ body.paused .wild-scene *::after {
    instead of the editor theme's: the sky says how rare the Pokémon on stage is before its name
    does. Everything around it — the plates, the dialog box, the menu — borrows the games' own
    vernacular, and the rest of the panel stays quiet. */
-/* The game's own palette: paper and ink for plates and menus, the dialog box's blue, the
-   Pokédex's red. Illustration colours, shared by every tab that draws a piece of the game. */
-:root {
-  --ink: #1d2433;
-  --paper: #f4f6ef;
-  --paper-edge: #c9d1c0;
-  --anger: #e5484d;
-  --nerves: #f2a531;
-  --trust: #3fae5f;
-  --exp: #3d8bfd;
-  --dialog: #22304d;
-  --dialog-text: #f5f7fb;
-  --dialog-rule: #8ea6d6;
-  --dex-red: #d4433b;
-  --dex-red-deep: #a72f29;
-  --rarity-common: #8a94a3;
-  --rarity-uncommon: #2f8f4e;
-  --rarity-rare: #4b55c4;
-  --rarity-legendary: #9a43d8;
-  /* A link drawn on paper, which is not the editor's background. */
-  --paper-link: #2a5bd7;
-  /* A field to type or choose in, a shade off the paper it sits on. */
-  --paper-field: #fff;
-}
-/* A dark editor gets dark paper: the menu, the plates, the shop counter and the bag stop being
-   the one white block in a dark window. Every piece drawn in paper and ink follows from these
-   three, so nothing else needs a dark variant. */
-body.vscode-dark,
-body.vscode-high-contrast:not(.vscode-high-contrast-light) {
-  --ink: #e6eaf2;
-  --paper: #262c38;
-  --paper-edge: #0e1117;
-  --paper-link: #8fb4ff;
-  --paper-field: #1a1f29;
-  color-scheme: dark;
-}
 .battle {
   container-type: inline-size;
   margin-bottom: 14px;
@@ -1658,7 +1706,7 @@ body.paused .wild-scene[data-terrain] {
   border: 2px solid var(--ink);
   border-radius: 10px 4px 10px 4px;
   box-shadow: 0 2px 0 var(--paper-edge);
-  font-size: 11px;
+  font-size: var(--fs-s);
   line-height: 1.3;
 }
 .plate-wild {
@@ -1680,7 +1728,7 @@ body.paused .wild-scene[data-terrain] {
 .plate-name {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-m);
   font-weight: 800;
   white-space: nowrap;
   overflow: hidden;
@@ -1700,19 +1748,19 @@ body.paused .wild-scene[data-terrain] {
   flex: none;
   padding: 0 6px;
   border-radius: 8px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: #fff;
   background: #6b7686;
 }
 .rarity-badge.uncommon {
-  background: #2f8f4e;
+  background: var(--rarity-uncommon);
 }
 .rarity-badge.rare {
-  background: #4b55c4;
+  background: var(--rarity-rare);
 }
 .rarity-badge.legendary {
-  background: linear-gradient(90deg, #7b3fe4, #d0479b);
+  background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
 }
 
 /* Where the games put HP: anger, nerves and trust — as gauges of ten cells, each led by its
@@ -1755,7 +1803,7 @@ body.paused .wild-scene[data-terrain] {
   opacity: 1;
 }
 .meter-label {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   opacity: 0.8;
   white-space: nowrap;
@@ -1899,14 +1947,14 @@ body.paused .meter .meter-icon {
   align-items: center;
   gap: 3px;
   padding: 2px 3px 2px 2px;
-  border: 1.5px solid #10151d;
+  border: 1.5px solid var(--track-edge);
   border-radius: 6px;
-  background: #2a313c;
+  background: var(--track-casing);
 }
 .exp-label {
   flex: none;
   padding: 0 3px;
-  color: #f7cf4a;
+  color: var(--exp-label);
   font-size: 8.5px;
   font-weight: 900;
   font-style: italic;
@@ -1918,11 +1966,11 @@ body.paused .meter .meter-icon {
   height: 6px;
   border: none;
   border-radius: 3px;
-  background: #11161e;
+  background: var(--track);
 }
 .plate .bar.exp-track i {
   border-radius: 3px;
-  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
 }
 /* Two figures on one line where they fit; in a narrow plate the second wraps under, right-aligned,
    rather than being cut. */
@@ -1933,7 +1981,7 @@ body.paused .meter .meter-icon {
   gap: 0 6px;
   margin-top: 3px;
   color: color-mix(in srgb, var(--exp) 70%, var(--ink));
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1978,7 +2026,7 @@ body.vscode-dark .exp-figures {
   max-width: calc(100% - 24px);
   padding: 7px 16px 8px;
   border: 2px solid var(--ink);
-  border-radius: 10px;
+  border-radius: var(--r-l);
   background: var(--paper);
   color: var(--ink);
   box-shadow:
@@ -1993,14 +2041,14 @@ body.vscode-dark .exp-figures {
   font-weight: 800;
 }
 .catch-detail {
-  font-size: 11px;
+  font-size: var(--fs-s);
   font-weight: 700;
   color: color-mix(in srgb, var(--exp) 70%, var(--ink));
   font-variant-numeric: tabular-nums;
 }
 .catch-banner.new {
   border-color: #b8860b;
-  background: linear-gradient(180deg, #fff7d6, #ffe58a);
+  background: linear-gradient(180deg, #fff7d6, var(--shiny-light));
   color: #4a3500;
   box-shadow:
     0 2px 0 #c99a1e,
@@ -2008,18 +2056,18 @@ body.vscode-dark .exp-figures {
     0 8px 22px rgb(0 0 0 / 0.3);
 }
 .catch-banner.new .catch-headline {
-  font-size: 14px;
+  font-size: var(--fs-l);
   letter-spacing: 0.01em;
 }
 .catch-banner.new .catch-detail {
-  color: #2f8f4e;
+  color: var(--gain);
 }
 .catch-banner.new::before,
 .catch-banner.new::after {
   content: '✨';
   position: absolute;
   top: -10px;
-  font-size: 14px;
+  font-size: var(--fs-l);
 }
 .catch-banner.new::before {
   left: -8px;
@@ -2040,9 +2088,9 @@ body.vscode-dark .exp-figures {
   padding: 0 5px 5px;
   text-align: left;
   color: #fff;
-  border: 2px solid #6e1c17;
+  border: 2px solid var(--device-casing-edge);
   border-radius: 12px;
-  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  background: linear-gradient(180deg, var(--device-casing), var(--device-casing-deep));
   box-shadow:
     inset 0 -3px 0 rgb(0 0 0 / 0.18),
     inset 0 1px 0 rgb(255 255 255 / 0.25),
@@ -2071,7 +2119,7 @@ body.vscode-dark .exp-figures {
 }
 .dexcard-num {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-s);
   font-weight: 800;
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
@@ -2085,8 +2133,8 @@ body.vscode-dark .exp-figures {
   padding: 7px 12px 8px 7px;
   border-radius: 8px;
   /* Fixed, not the theme's paper: a device looks the same whatever the editor is wearing. */
-  background: #f4f6ef;
-  color: #1d2433;
+  background: var(--device-panel);
+  color: var(--device-panel-ink);
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
 }
 /* The screen: a light LCD in a dark bezel, with the faint scanlines the wallet's screen has. */
@@ -2097,11 +2145,11 @@ body.vscode-dark .exp-figures {
   place-items: center;
   width: 68px;
   height: 68px;
-  border: 3px solid #2b2f3a;
+  border: 3px solid var(--lcd-bezel);
   border-radius: 6px 6px 6px 16px;
   background:
     repeating-linear-gradient(180deg, rgb(0 0 0 / 0.04) 0 1px, transparent 1px 3px),
-    radial-gradient(circle at 50% 45%, #f2fbf2, #c9e6cc 75%);
+    radial-gradient(circle at 50% 45%, var(--lcd-light-hi), var(--lcd-light) 75%);
   box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.25);
   overflow: hidden;
 }
@@ -2130,7 +2178,7 @@ body.vscode-dark .exp-figures {
   min-width: 0;
 }
 .catch-banner.rich .catch-headline {
-  font-size: 14px;
+  font-size: var(--fs-l);
   line-height: 1.15;
   text-wrap: balance;
 }
@@ -2146,9 +2194,9 @@ body.vscode-dark .exp-figures {
   flex: 1;
   min-width: 110px;
   height: 10px;
-  border: 1.5px solid #10151d;
+  border: 1.5px solid var(--track-edge);
   border-radius: 6px;
-  background: #11161e;
+  background: var(--track);
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.5);
   overflow: hidden;
 }
@@ -2156,7 +2204,7 @@ body.vscode-dark .exp-figures {
   position: absolute;
   inset: 0 auto 0 0;
   display: block;
-  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
 }
 /* The share just earned: placed by the webview at [from, to] of the bar (CSSOM, never inline).
    It lights up white, then the blue fills it from the left. */
@@ -2173,15 +2221,15 @@ body.vscode-dark .exp-figures {
   display: block;
   width: 100%;
   height: 100%;
-  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
 }
 /* "+5% registered" as a tag, the green of a good outcome. */
 .catch-banner.rich .catch-detail {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: rgb(47 143 78 / 0.14);
-  color: #23703c;
-  font-size: 11px;
+  color: var(--gain-ink);
+  font-size: var(--fs-s);
 }
 /* A glint sweeping the card once as it lands. Clipped by its own box, so the card's corner
    sparkles can still stand outside it. */
@@ -2319,7 +2367,7 @@ body.vscode-dark .exp-figures {
 .dialog-text {
   flex: 1 1 auto;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-m);
   line-height: 1.45;
   font-weight: 600;
 }
@@ -2328,7 +2376,7 @@ body.vscode-dark .exp-figures {
 }
 .dialog-note {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-s);
   opacity: 0.78;
 }
 .dialog .progress {
@@ -2359,7 +2407,7 @@ body.vscode-dark .exp-figures {
   margin: 0 0 2px;
   padding: 1px 4px 5px;
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
-  font-size: 11px;
+  font-size: var(--fs-s);
 }
 .commands .risk-item {
   background: color-mix(in srgb, var(--ink) 9%, transparent);
@@ -2385,7 +2433,7 @@ body.vscode-dark .exp-figures {
   white-space: nowrap;
 }
 .risk-item .codicon {
-  font-size: 11px;
+  font-size: var(--fs-s);
 }
 .risk-item.flee .codicon {
   color: color-mix(in srgb, var(--nerves) 75%, #fff);
@@ -2394,7 +2442,7 @@ body.vscode-dark .exp-figures {
   color: color-mix(in srgb, var(--anger) 65%, #fff);
 }
 .dialog .progress .meta {
-  font-size: 11px;
+  font-size: var(--fs-s);
   opacity: 0.85;
 }
 .dialog .bar {
@@ -2561,7 +2609,7 @@ button.command:hover:not(:disabled)::before,
   cursor: default;
 }
 .command.info {
-  font-size: 11px;
+  font-size: var(--fs-s);
   font-weight: 500;
   opacity: 0.7;
   cursor: default;
@@ -2614,7 +2662,7 @@ button.command.info {
 /* Wrapped, never cut: a berry's description is the only place its effect is explained, and a
    hover tooltip reaches neither a keyboard nor a touch screen. */
 .command-name small {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   line-height: 1.3;
   opacity: 0.7;
@@ -2654,7 +2702,7 @@ button.command.info {
   background: var(--paper-link);
 }
 .ball-count.shop .codicon {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 13px;
 }
 button.command.ball.none:hover img,
@@ -2793,10 +2841,6 @@ body.vscode-high-contrast-light .wild-scene {
 }
 
 /* Items lying in the wild: chips with a rarity border, and one button to take them all. */
-.wild-finds,
-.wild-trail {
-  margin-bottom: 14px;
-}
 .finds-head {
   display: flex;
   align-items: baseline;
@@ -2887,24 +2931,6 @@ body.vscode-high-contrast-light .wild-scene {
 }
 
 /* ---- shop chrome ---- */
-.shop-wallet {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 7px 0;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-}
-.shop-wallet .label {
-  opacity: 0.7;
-  font-size: 0.85em;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.shop-wallet .value {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
 #shop h2.section {
   margin: 14px 0 8px;
 }
@@ -3030,7 +3056,7 @@ body.paused .stage.celebrate img {
   padding: 2px;
   background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
   border: 2px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--r-l);
   cursor: pointer;
 }
 .trainer-cell:hover {
@@ -3318,29 +3344,6 @@ body.compact .row-stat .label {
    the same pieces: paper-and-ink plates, price tags, the ▸ cursor, the dialog box, and the
    Pokédex's red for the one device that has a colour of its own. */
 
-/* The wallet, as a plate: every price below is read against it. */
-.shop-wallet {
-  align-items: center;
-  padding: 8px 12px;
-  margin-bottom: 14px;
-  background: var(--paper);
-  color: var(--ink);
-  border: 2px solid var(--ink);
-  border-radius: 10px 4px 10px 4px;
-  box-shadow: 0 2px 0 var(--paper-edge);
-}
-.shop-wallet .label {
-  font-size: 0.92em;
-  font-weight: 600;
-  opacity: 0.75;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.shop-wallet .value {
-  font-size: 1.15em;
-  font-weight: 800;
-}
-
 /* Rows are a counter's list, not cards: one rule between products, nothing around them. */
 #shop .shop-rows .row,
 #shop .row {
@@ -3372,7 +3375,7 @@ body.compact .row-stat .label {
   background: var(--paper);
   color: var(--ink);
   border: 2px solid var(--ink);
-  border-radius: 7px;
+  border-radius: var(--r-m);
   padding: 3px 10px;
   font-weight: 700;
   transition:
@@ -3389,21 +3392,22 @@ body.compact .row-stat .label {
   opacity: 0.35;
   cursor: default;
 }
-:is(#shop, .shiny-boosts) button.action.priced .save {
-  background: var(--rarity-uncommon);
-  color: #fff;
-}
-
 /* ---- the shop in the wallet's style ----
    The balance and every price are drawn on the same screen as the wallet on the Pokédex lid —
-   dark glass, phosphor digits, the Nugget — so a price reads as the currency it is paid in. */
+   dark glass, phosphor digits, the Nugget — so a price reads as the currency it is paid in.
+   Every price below is read against the balance at the top. */
 .shop-wallet {
   position: relative;
   overflow: hidden;
-  background: radial-gradient(120% 160% at 25% 0%, #1d4a52 0%, #0d2228 70%);
-  color: #8dffb0;
-  border: 2px solid #08171b;
-  border-radius: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: radial-gradient(120% 160% at 25% 0%, var(--lcd-glass-hi) 0%, var(--lcd-glass) 70%);
+  color: var(--lcd-ink);
+  border: 2px solid var(--lcd-edge);
+  border-radius: var(--r-l);
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 8px rgb(0 0 0 / 0.6),
@@ -3419,6 +3423,8 @@ body.compact .row-stat .label {
   background: repeating-linear-gradient(180deg, rgb(255 255 255 / 0.05) 0 1px, transparent 1px 3px);
 }
 .shop-wallet .label {
+  font-size: 0.92em;
+  font-weight: 600;
   opacity: 0.7;
 }
 .shop-wallet .value {
@@ -3430,7 +3436,7 @@ body.compact .row-stat .label {
    same rule, so the figure never changes size between the two places it is read. */
 .wallet-badge .wallet-value,
 .shop-wallet .value {
-  font-size: 17px;
+  font-size: var(--fs-xl);
   font-weight: 800;
   letter-spacing: 0.02em;
   text-shadow: 0 0 6px rgb(141 255 176 / 0.55);
@@ -3484,8 +3490,8 @@ body.compact .row-stat .label {
   gap: 5px;
   min-width: 108px;
   padding: 3px 3px 3px 9px;
-  background: radial-gradient(120% 160% at 25% 0%, #1d4a52 0%, #0d2228 70%);
-  color: #d9efe2;
+  background: radial-gradient(120% 160% at 25% 0%, var(--lcd-glass-hi) 0%, var(--lcd-glass) 70%);
+  color: var(--lcd-label);
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 5px rgb(0 0 0 / 0.55);
@@ -3509,7 +3515,7 @@ body.compact .row-stat .label {
   align-items: center;
   gap: 1px;
   padding: 1px 3px 1px 4px;
-  color: #8dffb0;
+  color: var(--lcd-ink);
   font-size: 0.92em;
   font-weight: 800;
   text-shadow: 0 0 5px rgb(141 255 176 / 0.5);
@@ -3530,7 +3536,7 @@ body.compact .row-stat .label {
 }
 /* Unaffordable: the screen's digits dim and lean, never struck through. */
 :is(#shop, .shiny-boosts) .cost.cant {
-  color: color-mix(in srgb, #8dffb0 45%, #0d2228);
+  color: color-mix(in srgb, var(--lcd-ink) 45%, var(--lcd-glass));
   font-style: italic;
   text-shadow: none;
   opacity: 1;
@@ -3546,13 +3552,15 @@ body.compact .row-stat .label {
   right: -5px;
   z-index: 1;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   font-size: 0.68em;
   font-weight: 600;
   line-height: 1.35;
   /* In a high contrast theme the badge and the tag can share a colour; the outline keeps the
      badge a separate object either way. */
   outline: 1px solid var(--vscode-contrastBorder, transparent);
+  background: var(--gain);
+  color: #fff;
 }
 /* An owned passive: its tag says so, with no price left to pay. */
 #shop .row.shop-item.owned {
@@ -3713,7 +3721,7 @@ body.compact .row-stat .label {
   margin-top: 8px;
   padding: 4px 14px;
   border: 2px solid var(--dialog-text);
-  border-radius: 7px;
+  border-radius: var(--r-m);
   background: var(--dialog-text);
   color: var(--dialog);
   font: inherit;
@@ -3737,7 +3745,7 @@ body.compact .row-stat .label {
   padding: 10px 14px 12px;
   margin-bottom: 12px;
   color: #fff;
-  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  background: linear-gradient(180deg, var(--device-casing), var(--device-casing-deep));
   border-radius: 12px;
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18);
 }
@@ -3746,7 +3754,12 @@ body.compact .row-stat .label {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #d8f3ff, #3fa7e0 55%, #1d6fa8);
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--device-lens-hi),
+    var(--device-lens) 55%,
+    var(--device-lens-lo)
+  );
   box-shadow:
     0 0 0 3px #fff,
     0 0 0 4px rgba(0, 0, 0, 0.2);
@@ -3814,24 +3827,18 @@ body.compact .row-stat .label {
   background: var(--rarity-rare);
 }
 .dex .cell.rarity-legendary::after {
-  background: linear-gradient(90deg, #7b3fe4, #d0479b);
+  background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
 }
 
-/* The detail sheet becomes an entry: the device's red band with number and name, the sprite on
-   a pedestal, the facts beside it. */
-.dex-detail {
-  display: block;
-  padding: 0;
-  overflow: hidden;
-  border: 2px solid var(--ink);
-}
+/* The detail sheet is an entry: the device's red band with number and name, the sprite on a
+   pedestal, the facts beside it. */
 .dex-entry-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 7px 40px 7px 14px;
   color: #fff;
-  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
+  background: linear-gradient(180deg, var(--device-casing), var(--device-casing-deep));
 }
 .dex-entry-head .num {
   font-weight: 700;
@@ -3851,13 +3858,6 @@ body.compact .row-stat .label {
   align-items: center;
   gap: 14px;
   padding: 10px 14px 12px;
-}
-.dex-detail .portrait {
-  background: radial-gradient(
-    60% 22% at 50% 88%,
-    color-mix(in srgb, var(--vscode-foreground) 16%, transparent),
-    transparent 70%
-  );
 }
 .dex-detail .rarity-badge {
   align-self: flex-start;
@@ -3917,7 +3917,7 @@ body.compact .row-stat .label {
   display: grid;
   place-items: end center;
   height: 92px;
-  border-radius: 10px;
+  border-radius: var(--r-l);
   background:
     radial-gradient(70% 18% at 50% 92%, rgba(29, 36, 51, 0.22), transparent 70%),
     linear-gradient(180deg, #bfe6f6, #e9f6ea);
@@ -3949,7 +3949,7 @@ body.compact .row-stat .label {
   color: var(--ink);
   background: var(--paper-field);
   border: 2px solid var(--ink);
-  border-radius: 7px;
+  border-radius: var(--r-m);
 }
 .trainer-card .tc-field select:focus-visible {
   outline: 2px solid var(--exp);
@@ -3961,7 +3961,7 @@ body.compact .row-stat .label {
   background: var(--paper);
   color: var(--ink);
   border: 2px solid var(--ink);
-  border-radius: 7px;
+  border-radius: var(--r-m);
   font-weight: 700;
 }
 .save-actions .action.secondary:hover,
@@ -3993,7 +3993,7 @@ body.compact .row-stat .label {
 .status {
   padding: 0 6px;
   border-radius: 5px;
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 800;
   color: #fff;
   font-variant-numeric: tabular-nums;
@@ -4046,7 +4046,7 @@ body.compact .row-stat .label {
   display: grid;
   gap: 1px;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-l);
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
   border: 1px solid var(--vscode-contrastBorder, transparent);
 }
@@ -4070,6 +4070,7 @@ body.compact .row-stat .label {
    game rather than as lists that happen to follow the scene. */
 .wild-finds,
 .wild-trail {
+  margin-bottom: 14px;
   padding: 10px 12px;
   border-radius: 12px;
   background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
@@ -4099,8 +4100,8 @@ body.compact .row-stat .label {
   gap: 10px;
   margin-bottom: 10px;
   padding: 6px 7px 6px 10px;
-  background: linear-gradient(180deg, var(--dex-red), var(--dex-red-deep));
-  border: 2px solid #6e1c17;
+  background: linear-gradient(180deg, var(--device-casing), var(--device-casing-deep));
+  border: 2px solid var(--device-casing-edge);
   border-radius: 12px;
   box-shadow:
     inset 0 -3px 0 rgb(0 0 0 / 0.18),
@@ -4118,7 +4119,12 @@ body.compact .row-stat .label {
   height: 22px;
   margin-left: 3px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #d8f3ff, #3fa7e0 55%, #1d6fa8);
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--device-lens-hi),
+    var(--device-lens) 55%,
+    var(--device-lens-lo)
+  );
   box-shadow:
     0 0 0 3px #fff,
     0 0 0 4px rgb(0 0 0 / 0.25);
@@ -4133,13 +4139,13 @@ body.compact .row-stat .label {
   height: 6px;
   border-radius: 50%;
   border: 1px solid rgb(0 0 0 / 0.35);
-  background: #ff6b5e;
+  background: var(--device-led-red);
 }
 .brand-leds i:nth-child(2) {
-  background: #ffd23f;
+  background: var(--device-led-amber);
 }
 .brand-leds i:nth-child(3) {
-  background: #4cd964;
+  background: var(--device-led-green);
 }
 .brand-name {
   min-width: 0;
@@ -4166,15 +4172,15 @@ body.compact .row-stat .label {
   align-items: center;
   gap: 3px;
   padding: 2px 3px 2px 10px;
-  background: radial-gradient(120% 140% at 30% 0%, #1d4a52 0%, #0d2228 70%);
-  color: #8dffb0;
+  background: radial-gradient(120% 140% at 30% 0%, var(--lcd-glass-hi) 0%, var(--lcd-glass) 70%);
+  color: var(--lcd-ink);
   border: 2px solid #3a0f0c;
   border-radius: 8px;
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 6px rgb(0 0 0 / 0.6);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-l);
   font-weight: 800;
   letter-spacing: 0.02em;
   text-shadow: 0 0 6px rgb(141 255 176 / 0.55);
@@ -4218,7 +4224,7 @@ body.compact .row-stat .label {
   margin-top: -10px;
   line-height: 18px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   color: #fff;
   font-size: 12px;
   font-weight: 800;
@@ -4227,7 +4233,7 @@ body.compact .row-stat .label {
   animation: wallet-float 1600ms ease-out forwards;
 }
 .wallet-delta.gain {
-  background: #2f8f4e;
+  background: var(--gain);
 }
 .wallet-delta.loss {
   background: #c8432f;
@@ -4392,7 +4398,7 @@ body.paused .wallet-badge .coin {
   display: inline-block;
   margin-top: 8px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--exp) 22%, transparent);
   font-size: 0.85em;
   font-weight: 600;
@@ -4550,7 +4556,7 @@ body.paused .wallet-badge .coin {
   width: 34px;
   height: 20px;
   margin: 1px 0 0;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--vscode-checkbox-border, var(--vscode-panel-border));
   background: var(
     --vscode-checkbox-background,
@@ -4627,9 +4633,9 @@ body.paused .wallet-badge .coin {
 }
 .game-meter.on-device {
   padding: 2px 3px 2px 2px;
-  border: 1.5px solid #10151d;
+  border: 1.5px solid var(--track-edge);
   border-radius: 6px;
-  background: #2a313c;
+  background: var(--track-casing);
 }
 .game-meter.tone-shiny {
   --meter-tone: #e0a91c;
@@ -4639,7 +4645,7 @@ body.paused .wallet-badge .coin {
   flex: none;
   padding: 0 3px;
   color: var(--meter-tone-light);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   line-height: 1;
 }
 .game-meter .bar.game-meter-track {
@@ -4647,7 +4653,7 @@ body.paused .wallet-badge .coin {
   height: 7px;
   border: none;
   border-radius: 3px;
-  background: #11161e;
+  background: var(--track);
   overflow: hidden;
 }
 .game-meter .bar.game-meter-track i {
@@ -4681,10 +4687,10 @@ body.paused .wallet-badge .coin {
 }
 /* The Shinydex cell's bar: the same thin bar, in gold. */
 .reg-bar.shiny i {
-  background: #e0a91c;
+  background: var(--shiny);
 }
 .reg-bar.shiny.full i {
-  background: linear-gradient(90deg, #e0a91c, #ffe58a, #e0a91c);
+  background: linear-gradient(90deg, var(--shiny), var(--shiny-light), var(--shiny));
 }
 @media (forced-colors: active) {
   .game-meter.on-device {
@@ -4694,5 +4700,5 @@ body.paused .wallet-badge .coin {
 }
 /* The Shinydex completion, on the casing like the Pokédex's, in gold. */
 .dex-head .dex-progress .bar.shiny i {
-  background: linear-gradient(90deg, #ffe58a, #e0a91c);
+  background: linear-gradient(90deg, var(--shiny-light), var(--shiny));
 }
