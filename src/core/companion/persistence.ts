@@ -122,6 +122,7 @@ export function decodeMonState(value: unknown): MonState | undefined {
   if (nature !== undefined) mon.nature = nature
   const disguise = lenientOptional(value, 'dittoDisguise', isInt)
   if (disguise !== undefined) mon.dittoDisguise = disguise
+  if (value['disguiseUnlocked'] === true) mon.disguiseUnlocked = true
   if (value['chosenWhenRegistered'] === true) mon.chosenWhenRegistered = true
   return mon
 }

@@ -332,11 +332,13 @@ export function applyUsage(
       // had from a real life of its own stays where it was.
       const moved = Math.min(entry(disguisedAsSpeciesID).xp, current.usedAtStage)
       const prior = entry(disguisedAsSpeciesID)
-      // The hatch unlocked the disguise species; if nothing else ever did — no catch, no bar of
-      // its own — the reveal takes that unlock back, or the first real one caught would be paid
-      // as a duplicate of a Pokémon the player never had.
+      // When the hatch is what unlocked the disguise species and nothing else has since — no
+      // catch, no bar of its own — the reveal takes that unlock back, or the first real one
+      // caught would be paid as a duplicate of a Pokémon the player never had. A species owned
+      // before the hatch is never taken (code review 9.12 #3).
       const left = prior.xp - moved
-      const onlyByDisguise = left === 0 && prior.caught === 0 && !prior.registered
+      const onlyByDisguise =
+        current.disguiseUnlocked === true && left === 0 && prior.caught === 0 && !prior.registered
       put(disguisedAsSpeciesID, { ...prior, xp: left, unlocked: prior.unlocked && !onlyByDisguise })
       current = revealedDitto(current)
       credit(PokemonOdds.dittoSpeciesID, moved)

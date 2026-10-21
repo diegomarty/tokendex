@@ -775,6 +775,11 @@ export interface MonState {
   nature?: PokemonNature
   /** undefined = ordinary. Set = really a Ditto, disguised as this species. */
   dittoDisguise?: number
+  /**
+   * The disguise's hatch is what unlocked the species it shows (it was not owned before). Only
+   * then may the reveal take that unlock back; absent = it was owned, or a save from before.
+   */
+  disguiseUnlocked?: boolean
   dittoRevealed: boolean
   /**
    * The player put this one on stage by hand while its form was already registered — to raise

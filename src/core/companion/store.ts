@@ -1564,7 +1564,11 @@ export class CompanionStore {
       nature,
       dittoRevealed: false,
     }
-    if (disguised) mon.dittoDisguise = PokemonOdds.dittoSpeciesID
+    if (disguised) {
+      mon.dittoDisguise = PokemonOdds.dittoSpeciesID
+      // Whether the reveal may take the shown species back: only if this hatch unlocks it.
+      if (this.state.species[baseID]?.unlocked !== true) mon.disguiseUnlocked = true
+    }
 
     let next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
     // The hatchling is obtained, and whatever the egg carried over is its experience already.

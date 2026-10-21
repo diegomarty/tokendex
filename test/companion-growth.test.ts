@@ -313,7 +313,7 @@ describe('applyUsage', () => {
   // [trigger branch] The disguise species was unlocked by the hatch alone — never caught, never
   // raised. The reveal takes that back, or its first real catch would count as a duplicate.
   it('takes back an unlock the disguise alone gave', () => {
-    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0 })
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0, disguiseUnlocked: true })
     const byHatch = {
       1: { xp: 0, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
     }
@@ -324,6 +324,19 @@ describe('applyUsage', () => {
     expect(applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), caught).species[1]?.unlocked).toBe(
       true,
     )
+  })
+
+  // [trigger branch] Code review 9.12 #3: a species owned before the hatch at 0 xp (every
+  // species of a migrated save, a starter set aside) looked exactly like one the disguise alone
+  // unlocked, and the reveal took it away. Only the hatch's own unlock is ever taken back.
+  it('never takes back a species that was owned before the disguise hatched', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0, disguiseUnlocked: false })
+    const ownedBefore = {
+      1: { xp: 0, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), ownedBefore)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]?.unlocked).toBe(true)
   })
 
   it('returns the very same registry when a zero delta settles nothing', () => {
