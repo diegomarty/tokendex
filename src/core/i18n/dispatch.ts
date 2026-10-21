@@ -2266,3 +2266,8 @@ export function dexEntryUnavailableText(lang: AppLanguage): string {
     'La entrada necesita conexión la primera vez que se abre.',
   )
 }
+
+/** How many of an item, as a ball, a berry, a find or a bag row prints it: `×7`, every language. */
+export function itemCountText(count: number): string {
+  return `×${count}`
+}

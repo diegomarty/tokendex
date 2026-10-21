@@ -131,6 +131,8 @@ export interface PanelBagItem {
   title: string
   description: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   usable: boolean
   hint?: string
   /** The bag pocket it lives in, as in the games. Decided by the core from the item kind. */
@@ -418,6 +420,8 @@ export interface PanelDexFilter {
   id: string
   label: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
 }
 
 /** One queued wild encounter, ready to draw. */
@@ -481,6 +485,8 @@ export interface PanelBerryOption {
   kind: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   sprite: string
   /** What it does, for the button's tooltip and accessible name. */
   effectText: string
@@ -491,6 +497,8 @@ export interface PanelFind {
   id: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   sprite?: string
   emoji: string
   /** Style token, like the encounters'. */
@@ -522,6 +530,8 @@ export interface PanelBallOption {
   kind: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   /** PokéAPI item sprite filename (`poke-ball`); the webview builds the URL. */
   sprite: string
   /** Chance this ball catches the encounter on stage, formatted ("27%"). Absent = no stage. */

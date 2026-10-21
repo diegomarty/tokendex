@@ -357,6 +357,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       title: D.itemName(lang, item.kind),
       description: D.itemDescription(lang, item.kind),
       count: item.count,
+      countText: D.itemCountText(item.count),
       usable,
       pocket: isBallKind(item.kind) ? 'balls' : isBerryKind(item.kind) ? 'berries' : 'items',
     }
@@ -393,12 +394,16 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   // meant, and `dexCount` is the counter written for it. A tier with nothing in it is left out
   // rather than shown as a zero: an empty chip is a control that does nothing.
   const dexLogFilters: PanelDexFilter[] = [
-    { id: 'all', label: D.dexFilterAllLabel(lang), count: dexLog.length },
-    ...RARITIES.map((rarity) => ({
-      id: rarity,
-      label: D.rarityLabel(lang, rarity),
-      count: dexCount(state, line, rarity),
-    })).filter((chip) => chip.count > 0),
+    {
+      id: 'all',
+      label: D.dexFilterAllLabel(lang),
+      count: dexLog.length,
+      countText: String(dexLog.length),
+    },
+    ...RARITIES.map((rarity) => {
+      const count = dexCount(state, line, rarity)
+      return { id: rarity, label: D.rarityLabel(lang, rarity), count, countText: String(count) }
+    }).filter((chip) => chip.count > 0),
   ]
 
   const companionSpeciesID = state.active === undefined ? undefined : currentSpeciesID(state.active)
@@ -500,6 +505,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         kind,
         name: D.itemName(lang, kind),
         count: itemCount(state, kind),
+        countText: D.itemCountText(itemCount(state, kind)),
         sprite: itemSpriteName(kind) ?? 'poke-ball',
       }
       if (staged !== undefined) {
@@ -516,6 +522,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       kind,
       name: D.itemName(lang, kind),
       count: itemCount(state, kind),
+      countText: D.itemCountText(itemCount(state, kind)),
       sprite: itemSpriteName(kind) ?? 'oran-berry',
       effectText: D.itemDescription(lang, kind),
     })),
@@ -525,6 +532,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         id: find.id,
         name,
         count: find.count,
+        countText: D.itemCountText(find.count),
         emoji: itemEmoji(find.item),
         rarity: find.rarity,
         rarityText: D.rarityLabel(lang, find.rarity),

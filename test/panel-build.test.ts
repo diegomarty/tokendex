@@ -587,7 +587,7 @@ describe('catch-log rarity chips', () => {
   })
 
   it('offers only the all chip for an empty log', () => {
-    expect(build().dexLogFilters).toEqual([{ id: 'all', label: 'All', count: 0 }])
+    expect(build().dexLogFilters).toEqual([{ id: 'all', label: 'All', count: 0, countText: '0' }])
   })
 
   // The webview narrows on this token; `rarityText` is the localised label and must never be
@@ -613,7 +613,12 @@ describe('catch-log rarity chips', () => {
       },
     })
     const panel = build({ state: raising })
-    expect(panel.dexLogFilters).toContainEqual({ id: 'uncommon', label: 'Uncommon', count: 1 })
+    expect(panel.dexLogFilters).toContainEqual({
+      id: 'uncommon',
+      label: 'Uncommon',
+      count: 1,
+      countText: '1',
+    })
   })
 })
 
@@ -1474,5 +1479,24 @@ describe('the shop’s drawers', () => {
 
   it('leaves out a group with nothing in it', () => {
     expect(build().shopGroups.map((g) => g.id)).not.toContain('eggs') // before the starter
+  })
+})
+
+// Code review 9.12 #15, the rest: every count the panel prints comes formatted from the core —
+// the battle's balls and berries, the finds, the bag, the catch log's chips.
+describe('the counts the panel prints', () => {
+  it('formats each as it is shown', () => {
+    const panel = build({
+      state: state({
+        inventory: { pokeBall: 7, oranBerry: 3 },
+        wild: [wild()],
+        finds: [{ id: 'f1', item: 'greatBall', count: 2, rarity: 'uncommon', appearedAt: NOW }],
+      }),
+    })
+    expect(panel.wild.balls.find((b) => b.kind === 'pokeBall')!.countText).toBe('×7')
+    expect(panel.wild.berries.find((b) => b.kind === 'oranBerry')!.countText).toBe('×3')
+    expect(panel.wild.finds[0]!.countText).toBe('×2')
+    expect(panel.bag.find((i) => i.id === 'item:pokeBall')!.countText).toBe('×7')
+    expect(panel.dexLogFilters[0]!.countText).toBe(String(panel.dexLogFilters[0]!.count))
   })
 })
