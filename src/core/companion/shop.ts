@@ -10,6 +10,7 @@ import {
   type CandyGrant,
   type CandyWindow,
   type CompanionState,
+  EGG_STOCK_MAX,
   FreshEgg,
   ITEM_KINDS,
   type ItemKind,
@@ -30,7 +31,7 @@ import type { RNG } from './growth.js'
 import { progressOf, registerShiny, shinyTarget } from './registry.js'
 import { EconomyBalance } from './economy.js'
 import { spendableBalance } from './ledger.js'
-import { eggOnStage } from './eggs.js'
+import { eggOnStage, isFreshGame } from './eggs.js'
 
 // MARK: - Inventory
 
@@ -70,9 +71,10 @@ export function shopEntries(state: CompanionState): ShopEntry[] {
       quantity: Pokeball.bundleSize,
     })),
   )
-  // Egg guarantees are only offered while an egg is incubating — they are bought *for* it.
-  if (eggOnStage(state)) {
-    entries.push(...FreshEgg.shopTiers.map((tier) => ({ kind: 'egg' as const, tier })))
+  // The egg itself and its guarantees, once the game has begun; `canBuyEgg` says which can be
+  // bought now (a guarantee needs an egg incubating, the egg needs room in the stock).
+  if (!isFreshGame(state)) {
+    entries.push(...[undefined, ...FreshEgg.shopTiers].map((tier) => ({ kind: 'egg' as const, tier })))
   }
   return entries.sort((a, b) => {
     const aDone = isPurchasedPassive(state, a)
@@ -143,6 +145,14 @@ export function eggGuarantee(state: CompanionState): Rarity | undefined {
  * never consumed — the tokens would be gone with no way back.
  */
 export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): boolean {
+  // No tier is the egg itself, for the stock (Diego): once the game has begun, while there is room.
+  if (tier === undefined) {
+    return (
+      !isFreshGame(state) &&
+      state.eggStock.count < EGG_STOCK_MAX &&
+      spendableBalance(state) >= FreshEgg.price
+    )
+  }
   if (!FreshEgg.shopTiers.includes(tier)) return false
   return eggOnStage(state) && spendableBalance(state) >= FreshEgg.price_(tier)
 }
@@ -158,6 +168,14 @@ export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): bool
  */
 export function buyEgg(state: CompanionState, tier: Rarity | undefined): CompanionState | undefined {
   if (!canBuyEgg(state, tier)) return undefined
+  // The egg itself goes to the stock, where the free daily ones wait; nothing on stage changes.
+  if (tier === undefined) {
+    return {
+      ...state,
+      spentTokens: state.spentTokens + FreshEgg.price,
+      eggStock: { ...state.eggStock, count: state.eggStock.count + 1 },
+    }
+  }
   const next: CompanionState = {
     ...state,
     spentTokens: state.spentTokens + FreshEgg.price_(tier),

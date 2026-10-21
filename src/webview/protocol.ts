@@ -358,6 +358,8 @@ export interface PanelEggs {
   incubateText?: string
   /** An egg is paused (a companion was chosen while one incubated). */
   paused: boolean
+  /** With the stock empty: how the next egg arrives. Absent while there are eggs. */
+  emptyText?: string
 }
 
 /** A row in the catch log. */

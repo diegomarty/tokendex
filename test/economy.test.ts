@@ -111,9 +111,12 @@ describe('shop prices', () => {
   })
 
   // Eggs arrive free, one a day; the shop sells only the guarantee on the one incubating.
-  it('sells only guarantees with a tier', () => {
+  // The guarantees are tiers; the egg itself is the untiered entry, priced at the base — above
+  // the cheapest catch (an egg hatches something new) and below every guarantee.
+  it('prices the egg itself under every guarantee and above the cheapest catch', () => {
     expect(FreshEgg.shopTiers).not.toContain(undefined)
-    expect(FreshEgg.shopTiers.length).toBeGreaterThan(0)
+    expect(FreshEgg.price).toBeGreaterThan(cheapestCatch('common'))
+    for (const tier of FreshEgg.shopTiers) expect(FreshEgg.price).toBeLessThan(FreshEgg.price_(tier))
   })
 
   // A guaranteed rare is a shortcut, limited by the one egg a day — cheaper than the cheapest

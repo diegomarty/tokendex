@@ -396,11 +396,11 @@ describe('the shop', () => {
   it('leaves each egg only its guarantee, with the shared clause on the heading', () => {
     const panel = build({ state: incubating })
     const eggs = panel.shop.filter((item) => item.group === 'eggs')
-    expect(eggs).toHaveLength(FreshEgg.shopTiers.length)
+    expect(eggs).toHaveLength(FreshEgg.shopTiers.length + 1) // the egg itself, then its guarantees
     const lines = eggs.map((e) => e.description!)
     expect(new Set(lines).size).toBe(eggs.length)
     // The shared clause lives once, on the group note.
-    expect(panel.strings.shopEggsNote).toContain('egg you are incubating')
+    expect(panel.strings.shopEggsNote).toContain('incubating')
     for (const line of lines) {
       expect(panel.strings.shopEggsNote).not.toContain(line)
       // Short enough to sit on the one line a card now gets.
@@ -413,20 +413,33 @@ describe('the shop', () => {
   // the fallback for a sprite that fails to load.
   it('gives every egg row the egg sprite, with the emoji behind it', () => {
     const eggs = build({ state: incubating }).shop.filter((item) => item.group === 'eggs')
-    expect(eggs).toHaveLength(FreshEgg.shopTiers.length)
+    expect(eggs).toHaveLength(FreshEgg.shopTiers.length + 1)
     for (const egg of eggs) {
       expect(egg.sprite).toBe('egg-icon') // the menu egg, at the item sprites' scale
       expect(egg.emoji).toBe('🥚')
     }
   })
 
-  // [trigger branch] A guarantee is for the egg on stage: none with a companion there, none on a
-  // new game before the starter.
-  it('lists guarantees only while an egg is incubating', () => {
-    expect(build({ state: incubating }).shop.some((item) => item.group === 'eggs')).toBe(true)
-    expect(
-      build({ state: state({ active: activeMon }) }).shop.some((item) => item.group === 'eggs'),
-    ).toBe(false)
+  // [trigger branch] The eggs are always on the shelf once the game has begun (Diego): the egg to
+  // the stock, and the guarantees greyed out until an egg is incubating — they are for that egg.
+  // Nothing before the starter.
+  it('lists the egg and its guarantees, the guarantees live only while one incubates', () => {
+    const rich = { ...incubating, usedSinceInstall: 10_000_000_000 }
+    const withCompanion = { ...rich, active: activeMon, eggUsage: 0 }
+    const enabled = (s: CompanionState) =>
+      build({ state: s })
+        .shop.filter((item) => item.group === 'eggs')
+        .map((item) => [item.id, item.actions[0]!.enabled])
+    expect(enabled(rich)).toEqual([
+      ['egg:any', true],
+      ['egg:uncommon', true],
+      ['egg:rare', true],
+    ])
+    expect(enabled(withCompanion)).toEqual([
+      ['egg:any', true],
+      ['egg:uncommon', false],
+      ['egg:rare', false],
+    ])
     expect(build().shop.some((item) => item.group === 'eggs')).toBe(false)
   })
 
@@ -1297,5 +1310,17 @@ describe('the Pokédex sorts', () => {
     expect(panel.dexSummary.sorts[0]?.label).toBe(D.pcSortLabel('en', 'number'))
     for (const cell of panel.dexSpecies)
       expect(cell.rarityRank).toBe(RARITIES.indexOf(cell.rarity as never))
+  })
+})
+
+describe('the empty incubator', () => {
+  // [trigger branch] With no eggs in stock the drawer still has something to say (Diego): how the
+  // next one arrives, and where to buy one.
+  it('says how eggs arrive when the stock is empty, and nothing when it is not', () => {
+    const empty = build({ state: state({ active: activeMon, eggStock: { count: 0 } }) }).eggs
+    expect(empty.emptyText).toBe(D.eggsEmptyText('en'))
+    expect(
+      build({ state: state({ active: activeMon, eggStock: { count: 1 } }) }).eggs.emptyText,
+    ).toBeUndefined()
   })
 })

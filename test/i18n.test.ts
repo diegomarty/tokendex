@@ -118,7 +118,8 @@ describe('switch-dispatched entries', () => {
 
   it('describes an unguaranteed egg differently from a guaranteed one', () => {
     expect(d.eggDescription('en', undefined)).not.toBe(d.eggDescription('en', 'rare'))
-    expect(d.eggDescription('en', 'common')).toBe(d.eggDescription('en', undefined))
+    // Untiered is the egg itself, for the stock: not "any rarity", which a common guarantee says.
+    expect(d.eggDescription('en', undefined)).not.toBe(d.eggDescription('en', 'common'))
     expect(d.eggDescription('en', 'rare')).toContain(d.rarityLabel('en', 'rare'))
   })
 

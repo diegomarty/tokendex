@@ -285,10 +285,11 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     if (sprite !== undefined) row.sprite = sprite
     shop.push(row)
   }
-  // Guarantees are sold for the egg on stage, so they are listed only while there is one — the
-  // same rule `canBuyEgg` enforces, not a card shown greyed out next to a companion.
-  if (eggOnStage(state)) {
-    for (const tier of FreshEgg.shopTiers) {
+  // The eggs are on the shelf once the game has begun (Diego): the egg itself, for the stock, and
+  // the guarantees after it — those greyed out (`canBuyEgg`) until an egg is incubating, since
+  // they are bought for that egg.
+  if (!isFreshGame(state)) {
+    for (const tier of [undefined, ...FreshEgg.shopTiers]) {
       const name = D.eggName(lang, tier)
       const priceText = compact(FreshEgg.price_(tier))
       shop.push({
@@ -684,6 +685,7 @@ function eggsPanel(state: CompanionState, lang: AppLanguage): PanelEggs {
   const count = state.eggStock.count
   const paused = eggIsPaused(state)
   const eggs: PanelEggs = { count, max: EGG_STOCK_MAX, stockText: D.eggStockText(lang, count), paused }
+  if (count === 0) eggs.emptyText = D.eggsEmptyText(lang)
   if (paused) eggs.incubateText = D.resumeEggText(lang)
   else if (state.active !== undefined && count > 0) eggs.incubateText = D.incubateEggText(lang)
   return eggs

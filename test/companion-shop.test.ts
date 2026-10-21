@@ -34,6 +34,7 @@ import {
 import {
   type CandyWindow,
   type CompanionState,
+  EGG_STOCK_MAX,
   FreshEgg,
   ITEM_KINDS,
   Mint,
@@ -71,10 +72,14 @@ const rich = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, ac
 
 describe('shop listing', () => {
   // Eggs arrive one a day for free; the shop sells the guarantee on the one incubating.
-  it('offers egg guarantees only while an egg is incubating', () => {
+  // The eggs are listed once the game has begun, with a companion on stage too (Diego); which can
+  // be bought is `canBuyEgg`'s — a guarantee only for an egg incubating.
+  it('lists the egg and its guarantees once the game has begun', () => {
     const begun = state({ species: { 1: { ...freshSpeciesProgress(), unlocked: true } } })
-    expect(shopEntries(begun).some((e) => e.kind === 'egg')).toBe(true)
-    expect(shopEntries(state({ active: mon() })).some((e) => e.kind === 'egg')).toBe(false)
+    expect(shopEntries(begun).filter((e) => e.kind === 'egg')).toHaveLength(FreshEgg.shopTiers.length + 1)
+    const withCompanion = state({ active: mon(), usedSinceInstall: 10_000_000_000 })
+    expect(shopEntries(withCompanion).some((e) => e.kind === 'egg')).toBe(true)
+    expect(canBuyEgg(withCompanion, 'rare')).toBe(false)
   })
 
   // [trigger branch] No companion, but no egg either: a new game before its starter. A
@@ -233,9 +238,23 @@ describe('buying eggs', () => {
   })
 
   // [trigger branch] With eggs free, "no guarantee" bought nothing but a reroll: not sold.
-  it('refuses a guarantee with no tier', () => {
-    expect(canBuyEgg(incubating(), undefined)).toBe(false)
-    expect(buyEgg(incubating(), undefined)).toBeUndefined()
+  // [trigger branch] No tier is the egg itself (Diego): it goes to the stock — with a companion
+  // on stage or an egg incubating — and is refused once the stock is full or before the starter.
+  it('sells an egg to the stock, up to its capacity', () => {
+    const begun = state({
+      usedSinceInstall: 10_000_000_000,
+      active: mon(),
+      species: { 1: { ...freshSpeciesProgress(), unlocked: true } },
+    })
+    expect(canBuyEgg(begun, undefined)).toBe(true)
+    const after = buyEgg(begun, undefined)!
+    expect(after.eggStock.count).toBe(1)
+    expect(after.spentTokens).toBe(FreshEgg.price)
+    expect(after.eggTier).toBeUndefined()
+    const full = state({ ...begun, eggStock: { count: EGG_STOCK_MAX } })
+    expect(canBuyEgg(full, undefined)).toBe(false)
+    expect(canBuyEgg(state({ usedSinceInstall: 10_000_000_000 }), undefined)).toBe(false) // before the starter
+    expect(canBuyEgg(state({ ...begun, usedSinceInstall: 1 }), undefined)).toBe(false) // short
   })
 
   // Buying an unsatisfiable guarantee would leave both roll paths with zero candidates: the

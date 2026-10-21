@@ -334,7 +334,10 @@ export function eggName(lang: AppLanguage, tier: Rarity | undefined): string {
  * sentence, so they cannot drift apart.
  */
 export function eggDescription(lang: AppLanguage, tier: Rarity | undefined): string {
-  if (tier === undefined || tier === 'common') {
+  if (tier === undefined) {
+    return t(lang, '보관함에 추가', 'Goes to your stock', 'ストックに くわわる', 'Va a tu reserva')
+  }
+  if (tier === 'common') {
     return t(lang, '등급은 무작위', 'Any rarity', 'レアリティはランダム', 'Rareza aleatoria')
   }
   return eggGuaranteeHint(lang, tier)
@@ -462,10 +465,10 @@ export const shopGroupEggs = (lang: AppLanguage): string => t(lang, '알', 'Eggs
 export const shopEggsNote = (lang: AppLanguage): string =>
   t(
     lang,
-    '품고 있는 알의 등급을 보장해요. 부화 진행은 그대로예요.',
-    'Guarantees the rarity of the egg you are incubating. Its progress stays.',
-    'あたためている タマゴの レアリティを ほしょうします。すすみぐあいは そのまま。',
-    'Garantiza la rareza del huevo que incubas. Su progreso se mantiene.',
+    '알은 보관함으로 가요. 보장은 품고 있는 알의 등급을 정해요.',
+    'An egg goes to your stock; a guarantee fixes the rarity of the egg you are incubating.',
+    'タマゴは ストックへ。ほしょうは あたためている タマゴの レアリティを きめます。',
+    'El huevo va a tu reserva; la garantía fija la rareza del que estás incubando.',
   )
 
 /** The call-to-action under an empty ball rack — the moment of highest purchase intent. */
@@ -2012,4 +2015,15 @@ export function pcSortLabel(lang: AppLanguage, sort: 'progress' | 'number' | 'ra
     case 'rarity':
       return t(lang, '희귀도', 'Rarity', 'レアリティ', 'Rareza')
   }
+}
+
+/** The incubator with an empty stock: how the next egg arrives. */
+export function eggsEmptyText(lang: AppLanguage): string {
+  return t(
+    lang,
+    'AI를 사용하는 날마다 알이 하나씩 와요. 상점에서 살 수도 있어요.',
+    'An egg arrives each day you use AI, or buy one in the shop.',
+    'AIを つかった ひに タマゴが ひとつ とどく。ショップでも かえる。',
+    'Cada día que usas IA llega un huevo, o cómpralo en la tienda.',
+  )
 }
