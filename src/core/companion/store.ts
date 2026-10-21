@@ -109,7 +109,7 @@ import {
   localizedName,
   totalForms,
 } from './model.js'
-import { decodeCompanionState, encodeCompanionState } from './persistence.js'
+import { decodeCompanionState, encodeCompanionState, encodeSidecar, withSidecar } from './persistence.js'
 import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
 import { deviceIdentity } from './device.js'
 import { withRevision } from './merge.js'
@@ -370,7 +370,8 @@ export class CompanionStore {
       return // no save yet
     }
     try {
-      this.state = sanitized(decodeCompanionState(JSON.parse(raw), this.options.hostLanguage))
+      const save = withSidecar(JSON.parse(raw), await this.readSidecar())
+      this.state = sanitized(decodeCompanionState(save, this.options.hostLanguage))
     } catch {
       await this.backupCorruptFile(raw)
       this.state = freshCompanionState(this.options.hostLanguage)
@@ -411,7 +412,8 @@ export class CompanionStore {
       return // no save on disk yet: what we hold *is* the state
     }
     try {
-      this.adopt(decodeCompanionState(JSON.parse(raw), this.options.hostLanguage))
+      const save = withSidecar(JSON.parse(raw), await this.readSidecar())
+      this.adopt(decodeCompanionState(save, this.options.hostLanguage))
     } catch {
       // Unreadable right now. Keep this window's state; the write below republishes it.
     }
@@ -421,9 +423,27 @@ export class CompanionStore {
     try {
       // A private temp file, then a rename: an interrupted write must never truncate a save,
       // and every other VS Code window writes this same path with its own worker.
-      await atomicWriteFile(this.filePath, encodeCompanionState(this.state), 'utf8')
+      // The save, then its sidecar: still one writer, inside the hold, for both files.
+      const files: [string, string][] = [
+        [this.filePath, encodeCompanionState(this.state)],
+        [this.sidecarPath, encodeSidecar(this.state)],
+      ]
+      for (const [path, text] of files) await atomicWriteFile(path, text, 'utf8')
     } catch {
       // Never let a save failure break a refresh; the next tick retries.
+    }
+  }
+
+  /** Beside the save: the registry and the rest an older build would drop (`SIDECAR_KEYS`). */
+  private get sidecarPath(): string {
+    return this.filePath.replace(/\.json$/, '') + '.registry.json'
+  }
+
+  private async readSidecar(): Promise<unknown> {
+    try {
+      return JSON.parse(await fs.readFile(this.sidecarPath, 'utf8'))
+    } catch {
+      return undefined
     }
   }
 

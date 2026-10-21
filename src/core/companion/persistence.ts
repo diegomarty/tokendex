@@ -587,3 +587,43 @@ export function parseCompanionState(text: string, hostLanguage?: string): Compan
 export function encodeCompanionState(state: CompanionState): string {
   return JSON.stringify(state)
 }
+
+// MARK: - The registry's sidecar (code review 9.12 #2)
+
+/**
+ * The keys a build before 1.0.0 does not know, and so drops when it rewrites the save — which a
+ * window still on the old build does at its next refresh, until it reloads. Without them the
+ * `species` key reads as absent and the registry used to be seeded again: every registration,
+ * the experience and the tokens earned, gone.
+ */
+export const SIDECAR_KEYS = [
+  'species',
+  'earnedTokens',
+  'eggStock',
+  'challenges',
+  'challengesPaid',
+  'keepCompletedCompanion',
+  'lure',
+  'medals',
+  'medalsSeeded',
+] as const
+
+/** The sidecar written beside the save: those keys, as the save carries them. */
+export function encodeSidecar(state: CompanionState): string {
+  const picked: Record<string, unknown> = {}
+  for (const key of SIDECAR_KEYS) if (state[key] !== undefined) picked[key] = state[key]
+  return JSON.stringify(picked)
+}
+
+/**
+ * The save as read, with the sidecar's keys put back when an older build stripped them: only
+ * when the save has lost `species` and the sidecar has it. A save that carries the key keeps its
+ * own; one that never had a registry (a real 0.5.0 save, no sidecar) still migrates.
+ */
+export function withSidecar(save: unknown, sidecar: unknown): unknown {
+  if (!isObject(save) || isObject(save['species'])) return save
+  if (!isObject(sidecar) || !isObject(sidecar['species'])) return save
+  const restored: Record<string, unknown> = { ...save }
+  for (const key of SIDECAR_KEYS) if (sidecar[key] !== undefined) restored[key] = sidecar[key]
+  return restored
+}

@@ -1971,3 +1971,77 @@ describe('companion choice, starters and the egg stock', () => {
     expect(await s.incubateEgg()).toBe('noEggs')
   })
 })
+
+// Code review 9.12 #2. Updating the extension leaves windows on the old build until they reload,
+// and a 0.5.0 window rewrites the save with only the keys it knows — `species`, `earnedTokens`
+// and the rest of the new game gone. Read back, the missing `species` used to re-run the
+// migration: every registration, all the experience and the tokens earned, wiped.
+describe('a save rewritten by a build before 1.0.0', () => {
+  const OLD_BUILD_DROPS = [
+    'species',
+    'earnedTokens',
+    'eggStock',
+    'challenges',
+    'challengesPaid',
+    'keepCompletedCompanion',
+    'lure',
+    'medals',
+    'medalsSeeded',
+  ]
+  const progressed = () => {
+    const path = freshFile()
+    writeFileSync(
+      path,
+      encodeCompanionState({
+        ...freshCompanionState('en'),
+        species: {
+          600: { ...freshSpeciesProgress(), unlocked: true, registered: true, xp: 50 },
+          4: { ...freshSpeciesProgress(), unlocked: true, xp: 7 },
+        },
+        earnedTokens: 7_000_000,
+        challengesPaid: ['2026-08-19:catch'],
+      }),
+      'utf8',
+    )
+    return path
+  }
+  const oldBuildRewrites = (path: string) => {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    for (const key of OLD_BUILD_DROPS) delete raw[key]
+    writeFileSync(path, JSON.stringify(raw), 'utf8')
+  }
+
+  it('keeps the registry, the tokens earned and the challenges paid', async () => {
+    const path = progressed()
+    const s = store({ filePath: path })
+    await s.update(obs(0)) // a write: what the old build will later strip
+    oldBuildRewrites(path)
+    // The same window's next re-read, and a window starting afresh, both read it back whole.
+    await s.update(obs(0))
+    for (const state of [s.snapshot(), (await loaded(path)).snapshot()]) {
+      expect(state.species[600]).toMatchObject({ registered: true, xp: 50 })
+      expect(state.species[4]).toMatchObject({ unlocked: true, xp: 7 })
+      expect(state.earnedTokens).toBe(7_000_000)
+      expect(state.challengesPaid).toEqual(['2026-08-19:catch'])
+    }
+  })
+
+  // The other half of the rule: a save that never had the registry (a real 0.5.0 save) still
+  // migrates, and a save that carries it never takes the sidecar's.
+  it('still migrates a save that never had the registry', async () => {
+    const path = freshFile()
+    writeFileSync(
+      path,
+      encodeCompanionState({ ...freshCompanionState('en') }).replace('"species":{},', ''),
+      'utf8',
+    )
+    const state = (await loaded(path)).snapshot()
+    expect(state.species).toEqual({})
+  })
+
+  async function loaded(path: string) {
+    const fresh = store({ filePath: path })
+    await fresh.load()
+    return fresh
+  }
+})
