@@ -448,7 +448,7 @@ function renderHome(state: PanelState): string {
 const DRAWER_ICONS: Record<PanelDrawer['id'], string> = {
   incubator: 'egg-icon',
   challenges: 'exp-share',
-  trail: 'poke-radar',
+  trail: 'rainbow-wing',
   wild: 'poke-ball',
   finds: 'dowsing-machine',
   streak: 'soothe-bell',

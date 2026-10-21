@@ -156,50 +156,108 @@ h2 {
 }
 
 /* ---- tabs ----
-   Icons, not words: six labels do not fit in a sidebar, and the codicon font makes the strip look
-   like the editor's own UI. The accessible name lives in `title`/`aria-label`, set from the
-   localised labels in `main.ts`. */
+   The device's row of buttons (plan 08 §7): the strip is a band of the Pokédex casing and each
+   tab one of its buttons, drawn with a game item (TAB_ITEMS in main.ts). The open one is the
+   button lit: the screen's pale glass, the item at full colour; the rest sit dark in the casing.
+   Words would not fit six across in a sidebar; the accessible name lives in `title` and
+   `aria-label`, set from the localised labels in `main.ts`. If an item does not load, the
+   codicon under it shows instead. */
 nav.tabs {
   display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  gap: 4px;
   margin: 0 auto 12px;
   max-width: 1040px;
+  padding: 4px;
+  border-radius: 12px;
 }
 nav button.tab {
   appearance: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--vscode-foreground);
-  opacity: 0.6;
   /* Flexible width so the strip spreads across whatever the container gives it, and a 28px floor
      so every tab stays a comfortable click target. */
   flex: 1 1 auto;
   min-width: 28px;
   display: grid;
   place-items: center;
-  padding: 7px 0;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--device-casing-edge);
+  border-radius: var(--r-m);
+  background: var(--device-casing-deep);
+  box-shadow:
+    inset 0 2px 3px rgb(0 0 0 / 0.35),
+    0 1px 0 rgb(255 255 255 / 0.2);
+  color: var(--on-fill);
   cursor: pointer;
+  transition:
+    background var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
 }
 nav button.tab .codicon {
+  grid-area: 1 / 1;
   font-size: 16px;
 }
+/* The item at its native 30px, over the codicon that stands in for it. */
+nav button.tab .tab-item {
+  grid-area: 1 / 1;
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+  opacity: 0.7;
+  filter: saturate(0.6);
+}
+nav button.tab:has(.tab-item) .codicon {
+  visibility: hidden;
+}
 nav button.tab:hover {
+  background: color-mix(in srgb, var(--device-casing-deep) 80%, #fff);
+}
+nav button.tab:hover .tab-item {
   opacity: 1;
 }
 nav button.tab:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
-  outline-offset: -1px;
-  opacity: 1;
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
 }
 nav button.tab[aria-selected='true'] {
+  border-color: var(--lcd-edge);
+  background: radial-gradient(120% 140% at 30% 0%, var(--lcd-light-hi), var(--lcd-light));
+  box-shadow:
+    inset 0 -2px 0 rgb(0 0 0 / 0.15),
+    0 0 8px color-mix(in srgb, var(--lcd-light-hi) 60%, transparent);
+  color: var(--device-panel-ink);
+}
+nav button.tab[aria-selected='true'] .tab-item {
   opacity: 1;
-  border-bottom-color: var(--vscode-focusBorder);
+  filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  nav button.tab {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  nav button.tab[aria-selected='true'] {
+    outline: 2px solid Highlight;
+  }
 }
 
 section[hidden] {
   display: none;
+}
+/* Changing tabs is a short fade (plan 08 §7), and nothing more. A section's contents are replaced
+   on every repaint but the section itself stays, so this plays when a tab opens and only then. */
+main > section[role='tabpanel']:not([hidden]) {
+  animation: tab-in var(--t-mid) ease-out;
+}
+@keyframes tab-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  main > section[role='tabpanel']:not([hidden]) {
+    animation: none;
+  }
 }
 
 /* Announced, never drawn. `display: none` would take it out of the accessibility tree with it. */
