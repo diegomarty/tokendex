@@ -820,12 +820,58 @@ export type PanelMessage =
   | { type: 'chooseStarter'; speciesID: number }
   /** Incubate an egg from the stock, or resume the paused one. */
   | { type: 'incubateEgg' }
+  /** Ask for a species' Pokédex entry (plan 9.7); answered `{ type: 'dexEntry', entry }`. */
+  | { type: 'dexEntry'; speciesID: number }
   /**
    * Reveal the full panel. Sent by the compact card, which has no tab strip of its own: it can
    * show that wild Pokémon are waiting but cannot resolve them, so the row that says so has to
    * lead somewhere.
    */
   | { type: 'openPanel' }
+
+/**
+ * A species' Pokédex entry (plan 9.7), asked for when its card opens and sent back as
+ * `{ type: 'dexEntry', entry }` to the surface that asked — never inside `PanelState`. Read from
+ * PokéAPI at runtime (and its cache on disk), every text already formatted and localised.
+ *
+ * As in the games, a species only seen shows its genus and types; the entry text, the size and
+ * the stats wait until it is obtained, and `lockedText` says so.
+ */
+export interface PanelPokedexEntry {
+  speciesID: number
+  /** "Spider Pokémon". Absent when PokéAPI has none in this language. */
+  genusText?: string
+  /** Primary first. `id` is the style token (`bug`), `label` the localised name. */
+  types: { id: string; label: string }[]
+  /** The Pokédex text, the newest the games wrote in this language. Obtained species only. */
+  flavorText?: string
+  /** "0.8 m" / "14.3 kg", with the language's decimal mark. Obtained species only. */
+  heightText?: string
+  weightText?: string
+  heightLabel: string
+  weightLabel: string
+  /** Base stats in the games' order and names; `percent` is of 255. Obtained species only. */
+  stats?: { key: string; label: string; value: number; percent: number }[]
+  /** "Total 498". */
+  statTotalText?: string
+  statsTitle: string
+  /** Shown where the obtained-only data would be, while the species is only seen. */
+  lockedText?: string
+  /**
+   * The evolution line, in stage order (a branch's forms share a stage). A form never seen has no
+   * name to give away: `name` is "???" and `status` `unknown` (draw a silhouette).
+   */
+  line: {
+    id: number
+    name: string
+    stage: number
+    status: 'unknown' | 'seen' | 'unlocked' | 'registered'
+    isThis: boolean
+  }[]
+  lineTitle: string
+  /** No network and nothing cached: the card says so instead of the data. */
+  unavailableText?: string
+}
 
 /**
  * One piece of the game's news (plan 08 §7): what the store announced, for the panel to show

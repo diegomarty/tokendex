@@ -2170,3 +2170,72 @@ export function shopGroupSummary(lang: AppLanguage, count: number, from: string)
 export function registeredOnTheWay(lang: AppLanguage, name: string): string {
   return t(lang, `${name} 등록 완료`, `${name} registered`, `${name} とうろくずみ`, `${name} registrado`)
 }
+
+// MARK: - Pokédex entry (plan 9.7)
+
+/** A base stat by the games' own name. */
+export function statLabel(
+  lang: AppLanguage,
+  stat: 'hp' | 'attack' | 'defense' | 'specialAttack' | 'specialDefense' | 'speed',
+): string {
+  switch (stat) {
+    case 'hp':
+      return t(lang, 'HP', 'HP', 'HP', 'PS')
+    case 'attack':
+      return t(lang, '공격', 'Attack', 'こうげき', 'Ataque')
+    case 'defense':
+      return t(lang, '방어', 'Defense', 'ぼうぎょ', 'Defensa')
+    case 'specialAttack':
+      return t(lang, '특수공격', 'Sp. Atk', 'とくこう', 'At. Esp.')
+    case 'specialDefense':
+      return t(lang, '특수방어', 'Sp. Def', 'とくぼう', 'Def. Esp.')
+    case 'speed':
+      return t(lang, '스피드', 'Speed', 'すばやさ', 'Velocidad')
+  }
+}
+
+export function statTotalText(lang: AppLanguage, total: number): string {
+  return t(lang, `합계 ${total}`, `Total ${total}`, `ごうけい ${total}`, `Total ${total}`)
+}
+
+export function dexEntryLabels(lang: AppLanguage): {
+  height: string
+  weight: string
+  stats: string
+  line: string
+} {
+  return {
+    height: t(lang, '키', 'Height', 'たかさ', 'Altura'),
+    weight: t(lang, '몸무게', 'Weight', 'おもさ', 'Peso'),
+    stats: t(lang, '종족값', 'Base stats', 'しゅぞくち', 'Estadísticas base'),
+    line: t(lang, '진화', 'Evolution', 'しんか', 'Evolución'),
+  }
+}
+
+/** A measure with the language's decimal mark: `0.8 m`, `0,8 m`. */
+export function dexMeasureText(lang: AppLanguage, value: number, unit: 'm' | 'kg'): string {
+  const plain = value.toFixed(1)
+  return `${t(lang, plain, plain, plain, plain.replace('.', ','))} ${unit}`
+}
+
+/** Where the entry's text, size and stats would be, while the species is only seen. */
+export function dexEntryLockedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '얻으면 도감 설명과 능력치가 채워져요.',
+    'Obtain it to fill in its entry and stats.',
+    'てに いれると ずかんの せつめいと のうりょくが うまる。',
+    'Obtenlo para completar su entrada y sus estadísticas.',
+  )
+}
+
+/** No network and nothing cached yet. */
+export function dexEntryUnavailableText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '도감 설명을 처음 열 때는 인터넷 연결이 필요해요.',
+    'The entry needs a connection the first time it opens.',
+    'はじめて ひらくときは インターネットに つなぐ ひつようが ある。',
+    'La entrada necesita conexión la primera vez que se abre.',
+  )
+}

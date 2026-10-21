@@ -596,6 +596,13 @@ function isOpaqueID(value: unknown): value is string {
 async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
   let response: ScanResponse
   switch (request.kind) {
+    case 'dexEntry': {
+      // Read-only, and for the asking card alone: no panel state, no broadcast.
+      if (!isSpeciesID(request.speciesID)) return
+      const answer = await send((id) => ({ id, type: 'dexEntry', speciesID: request.speciesID }))
+      if (answer.ok && 'dexEntry' in answer) request.reply(answer.dexEntry)
+      return
+    }
     case 'refresh':
       // Rebuilt from the last scan: this path runs on every `ready` handshake, every time the
       // sidebar becomes visible again and after every action, and none of those need fresh I/O.

@@ -6,7 +6,7 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import * as AppPaths from './appPaths.js'
 import { atomicWriteFile } from './coordination/atomicWrite.js'
 import type { BaseStats } from './companion/encounters.js'
@@ -86,6 +86,25 @@ export interface WildSpecies {
   types?: PokemonType[]
 }
 
+/**
+ * A species' Pokédex entry as PokéAPI tells it (plan 9.7): what the species card shows beyond the
+ * game's own progress. Texts are keyed by app language (`ko`, `en`, `ja`, `es`); Japanese is the
+ * kana text (`ja-Hrkt`) the UI writes in, the kanji one only when there is no kana.
+ */
+export interface DexDetails {
+  id: number
+  captureRate: number
+  /** "EleSpider Pokémon", by language. */
+  genus: Record<string, string>
+  /** The newest Pokédex text the games wrote in each language, on one line. */
+  flavor: Record<string, string>
+  /** PokéAPI units: decimetres and hectograms. Absent with the stats when `/pokemon` failed. */
+  heightDm?: number
+  weightHg?: number
+  types?: PokemonType[]
+  stats?: BaseStats
+}
+
 /** Injectable so tests use a stub rather than the network. */
 export interface PokeProviding {
   line(baseSpeciesID: number): Promise<EvoLine>
@@ -109,13 +128,21 @@ const INDEX_TTL_MS = 30 * 86_400_000
  * capture rate only, 2 = with `is_legendary`/`is_mythical`, 3 = with every form of each line.
  */
 const INDEX_SCHEMA = 3
+/** Shape of `dex-details.json`; a file at another version is ignored and refilled. */
+const DEX_SCHEMA = 1
 // 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
 // timeout is what bounds how long a sick network can hold `update()` — and with it the scan.
 const REQUEST_TIMEOUT_MS = 8_000
 /** Below this, a REST-built index is too thin to persist; retry next session instead. */
 const MIN_REST_INDEX_SIZE = 150
 
+interface LocalisedDTO {
+  language: { name: string }
+}
+
 interface SpeciesDTO {
+  genera?: (LocalisedDTO & { genus: string })[]
+  flavor_text_entries?: (LocalisedDTO & { flavor_text: string })[]
   capture_rate: number
   is_legendary: boolean
   is_mythical: boolean
@@ -130,14 +157,19 @@ interface SpeciesDTO {
  * its terrain. The rest — the whole learnset — is ignored.
  */
 interface PokemonDTO {
+  /** Decimetres and hectograms; only the Pokédex entry reads them. */
+  height?: number
+  weight?: number
   stats?: { base_stat: number; stat: { name: string } }[]
   types?: { slot: number; type: { name: string } }[]
 }
 
-/** What an encounter keeps from `/pokemon/{id}`. */
+/** What an encounter and the Pokédex entry keep from `/pokemon/{id}`. */
 interface PokemonDetails {
   stats?: BaseStats
   types?: PokemonType[]
+  heightDm?: number
+  weightHg?: number
 }
 
 /** Primary first, by slot. A type this build does not know is dropped rather than guessed. */
@@ -194,6 +226,41 @@ function namesByLanguage(dto: SpeciesDTO): Record<string, string> {
   return byLang
 }
 
+/**
+ * PokéAPI language code → app language. Japanese takes the kana text the UI writes in; the
+ * kanji one (`ja`) only stands in when there is no kana.
+ */
+const DEX_LANGS: [code: string, lang: string][] = [
+  ['ko', 'ko'],
+  ['en', 'en'],
+  ['ja', 'ja'],
+  ['ja-Hrkt', 'ja'],
+  ['es', 'es'],
+]
+
+/** The last entry per app language (PokéAPI lists them oldest first), later codes winning ties. */
+function byAppLanguage<T extends LocalisedDTO>(entries: T[] | undefined, text: (entry: T) => string) {
+  const out: Record<string, string> = {}
+  for (const [code, lang] of DEX_LANGS) {
+    const own = (entries ?? []).filter((entry) => entry.language.name === code)
+    const last = own[own.length - 1]
+    if (last !== undefined) out[lang] = text(last)
+  }
+  return out
+}
+
+/**
+ * A Pokédex text on one line. The games break lines for their screens (`\n`, `\f`) and hyphenate
+ * softly; the full-width spaces of a Japanese text are its words, and stay.
+ */
+export function cleanFlavorText(text: string): string {
+  return text
+    .replace(/\u00ad/g, '')
+    .replace(/[\n\f\r]+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
 /** Species id from a PokéAPI resource URL (".../pokemon-species/25/"). */
 function speciesIDFromURL(url: string): number {
   const match = /\/(\d+)\/?$/.exec(url)
@@ -221,6 +288,8 @@ export class PokeAPIClient implements PokeProviding {
   /** Prefetching populates this so hatching costs no network at all. */
   private lineCache = new Map<number, EvoLine>()
   private baseIndexCache: BaseSpecies[] | undefined
+  /** Pokédex entries read or written this session; loaded from disk once. */
+  private dexCache: Map<number, DexDetails> | undefined
   /**
    * Coalesces concurrent index loads. Two callers can want it in the same pass (an encounter
    * spawn and an egg pre-roll), and without this they each pay the full GraphQL round trip.
@@ -235,6 +304,69 @@ export class PokeAPIClient implements PokeProviding {
     private readonly indexFilePath = join(AppPaths.ourData(), 'base-index.json'),
     private readonly options: { statsTimeoutMs?: number } = {},
   ) {}
+
+  /** Beside the index, so a test's temporary directory holds both. */
+  private get dexFilePath(): string {
+    return join(dirname(this.indexFilePath), 'dex-details.json')
+  }
+
+  // MARK: - Pokédex entries
+
+  /**
+   * A species' Pokédex entry: memory, then disk, then PokéAPI. Only a complete entry (with the
+   * `/pokemon` half) is kept, so a card that opened without its stats asks again next time. Throws
+   * when the species itself cannot be read and nothing is cached.
+   */
+  async dexDetails(id: number): Promise<DexDetails> {
+    const cache = await this.loadDexCache()
+    const cached = cache.get(id)
+    if (cached !== undefined) return cached
+    const [dto, pokemon] = await Promise.all([
+      this.species(id),
+      this.pokemonDetails(id, REQUEST_TIMEOUT_MS),
+    ])
+    const details: DexDetails = {
+      id,
+      captureRate: dto.capture_rate,
+      genus: byAppLanguage(dto.genera, (entry) => entry.genus),
+      flavor: byAppLanguage(dto.flavor_text_entries, (entry) => cleanFlavorText(entry.flavor_text)),
+      ...pokemon,
+    }
+    if (pokemon.stats !== undefined) {
+      cache.set(id, details)
+      await this.writeDexCache(cache)
+    }
+    return details
+  }
+
+  private async loadDexCache(): Promise<Map<number, DexDetails>> {
+    if (this.dexCache !== undefined) return this.dexCache
+    const cache = new Map<number, DexDetails>()
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.dexFilePath, 'utf8')) as {
+        version?: number
+        entries?: DexDetails[]
+      }
+      if (parsed.version === DEX_SCHEMA && Array.isArray(parsed.entries)) {
+        for (const entry of parsed.entries) if (typeof entry?.id === 'number') cache.set(entry.id, entry)
+      }
+    } catch {
+      // No file yet, or a torn one: start empty, PokéAPI refills it.
+    }
+    this.dexCache = cache
+    return cache
+  }
+
+  private async writeDexCache(cache: Map<number, DexDetails>): Promise<void> {
+    try {
+      await atomicWriteFile(
+        this.dexFilePath,
+        JSON.stringify({ version: DEX_SCHEMA, entries: [...cache.values()] }),
+      )
+    } catch {
+      // A cache write failure must never break the card.
+    }
+  }
 
   // MARK: - Lines
 
@@ -298,19 +430,21 @@ export class PokeAPIClient implements PokeProviding {
    * default variety's id is the species id. A failure is not cached, so the next spawn of that
    * species tries again.
    */
-  private async pokemonDetails(id: number): Promise<PokemonDetails> {
+  private async pokemonDetails(id: number, timeoutMs?: number): Promise<PokemonDetails> {
     const cached = this.detailsCache.get(id)
     if (cached !== undefined) return cached
     try {
       const dto = await getJSON<PokemonDTO>(
         `${REST_BASE}/pokemon/${id}`,
-        this.options.statsTimeoutMs ?? STATS_TIMEOUT_MS,
+        timeoutMs ?? this.options.statsTimeoutMs ?? STATS_TIMEOUT_MS,
       )
       const details: PokemonDetails = {}
       const stats = baseStatsFrom(dto)
       if (stats !== undefined) details.stats = stats
       const types = typesFrom(dto)
       if (types !== undefined) details.types = types
+      if (typeof dto.height === 'number') details.heightDm = dto.height
+      if (typeof dto.weight === 'number') details.weightHg = dto.weight
       if (stats !== undefined) this.detailsCache.set(id, details)
       return details
     } catch {

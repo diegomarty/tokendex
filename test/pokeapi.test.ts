@@ -241,6 +241,107 @@ describe('PokeAPIClient.wildSpecies', () => {
   }, 2_000)
 })
 
+// Plan 9.7: the species card is a Pokédex entry, built from what PokéAPI already sends.
+describe('PokeAPIClient.dexDetails', () => {
+  const species = {
+    capture_rate: 190,
+    is_legendary: false,
+    is_mythical: false,
+    names: [{ name: 'Galvantula', language: { name: 'en' } }],
+    genera: [
+      { genus: 'EleSpider Pokémon', language: { name: 'en' } },
+      { genus: 'Pokémon Electroaraña', language: { name: 'es' } },
+      { genus: 'でんきグモポケモン', language: { name: 'ja-Hrkt' } },
+      { genus: '電気蜘蛛ポケモン', language: { name: 'ja' } },
+    ],
+    flavor_text_entries: [
+      { flavor_text: 'Old\nEnglish\fentry.', language: { name: 'en' }, version: { name: 'black' } },
+      { flavor_text: 'Texto\nantiguo.', language: { name: 'es' }, version: { name: 'x' } },
+      {
+        flavor_text: 'It  employs\nan\felectrically\u00ad charged web.',
+        language: { name: 'en' },
+        version: { name: 'y' },
+      },
+      { flavor_text: 'Teje una\ntela electrificada.', language: { name: 'es' }, version: { name: 'y' } },
+      {
+        flavor_text: 'でんきを\nおびた　いとで　すを　はる。',
+        language: { name: 'ja-Hrkt' },
+        version: { name: 'y' },
+      },
+      { flavor_text: '電気を帯びた糸で巣を張る。', language: { name: 'ja' }, version: { name: 'y' } },
+      { flavor_text: 'Ignored.', language: { name: 'fr' }, version: { name: 'y' } },
+    ],
+  }
+  const pokemon = {
+    height: 8,
+    weight: 143,
+    stats: [
+      { base_stat: 70, stat: { name: 'hp' } },
+      { base_stat: 77, stat: { name: 'attack' } },
+      { base_stat: 60, stat: { name: 'defense' } },
+      { base_stat: 97, stat: { name: 'special-attack' } },
+      { base_stat: 60, stat: { name: 'special-defense' } },
+      { base_stat: 108, stat: { name: 'speed' } },
+    ],
+    types: [
+      { slot: 1, type: { name: 'bug' } },
+      { slot: 2, type: { name: 'electric' } },
+    ],
+  }
+  const respond = (body: unknown, ok = true) =>
+    Promise.resolve({ ok, status: ok ? 200 : 500, json: async () => body } as Response)
+  const dir = () => join(mkdtempSync(join(tmpdir(), 'ptb-dex-')), 'i.json')
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('keeps the newest entry per language, in kana for Japanese, with clean spacing', async () => {
+    vi.stubGlobal('fetch', (url: string) =>
+      respond(url.includes('/pokemon-species/') ? species : pokemon),
+    )
+    const details = await new PokeAPIClient(dir()).dexDetails(596)
+    expect(details.flavor['en']).toBe('It employs an electrically charged web.')
+    expect(details.flavor['es']).toBe('Teje una tela electrificada.')
+    // The UI writes Japanese in kana, like the games; the kanji text is the fallback only.
+    expect(details.flavor['ja']).toBe('でんきを おびた　いとで　すを　はる。')
+    expect(details.flavor['fr']).toBeUndefined()
+    expect(details.genus).toMatchObject({ en: 'EleSpider Pokémon', ja: 'でんきグモポケモン' })
+    expect(details).toMatchObject({
+      captureRate: 190,
+      heightDm: 8,
+      weightHg: 143,
+      types: ['bug', 'electric'],
+    })
+    expect(details.stats?.speed).toBe(108)
+  })
+
+  // [trigger branch] A card seen once opens offline: the details are kept on disk.
+  it('answers from disk when the network is gone', async () => {
+    const path = dir()
+    vi.stubGlobal('fetch', (url: string) =>
+      respond(url.includes('/pokemon-species/') ? species : pokemon),
+    )
+    await new PokeAPIClient(path).dexDetails(596)
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')))
+    const offline = await new PokeAPIClient(path).dexDetails(596)
+    expect(offline.flavor['en']).toBe('It employs an electrically charged web.')
+    expect(offline.stats?.hp).toBe(70)
+  })
+
+  // [trigger branch] Without `/pokemon` the entry still has its text, and is not kept on disk
+  // half-made: the next open asks for the size and stats again.
+  it('returns the text without size or stats when /pokemon fails, and does not keep it', async () => {
+    const path = dir()
+    vi.stubGlobal('fetch', (url: string) =>
+      url.includes('/pokemon-species/') ? respond(species) : Promise.reject(new Error('down')),
+    )
+    const partial = await new PokeAPIClient(path).dexDetails(596)
+    expect(partial.flavor['es']).toBe('Teje una tela electrificada.')
+    expect(partial.stats).toBeUndefined()
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')))
+    await expect(new PokeAPIClient(path).dexDetails(596)).rejects.toThrow()
+  })
+})
+
 describe('the index with every form of each line', () => {
   // A branched line (Eevee) and a three-stage one, with a form whose parent is out of range
   // dropped rather than attached to nothing.

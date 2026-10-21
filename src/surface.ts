@@ -12,7 +12,13 @@
  */
 
 import * as vscode from 'vscode'
-import type { PanelMessage, PanelNews, PanelState, PanelEncounterResult } from './webview/protocol.js'
+import type {
+  PanelMessage,
+  PanelNews,
+  PanelPokedexEntry,
+  PanelState,
+  PanelEncounterResult,
+} from './webview/protocol.js'
 import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export type PanelRequestKind =
@@ -31,6 +37,8 @@ export type PanelRequestKind =
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
   | { kind: 'setKeepCompleted'; keep: boolean }
+  /** Answered to the asking surface only, through `reply`: the entry is that card's, nobody else's. */
+  | { kind: 'dexEntry'; speciesID: number; reply: (entry: PanelPokedexEntry) => void }
   | { kind: 'setLure'; speciesID: number; title: string; priceText: string; confirmLabel?: string }
   | {
       kind: 'boostShiny'
@@ -161,6 +169,15 @@ export class PanelSurface {
         break
       case 'collectAll':
         this.onRequest({ kind: 'collectAll' })
+        break
+      case 'dexEntry':
+        this.onRequest({
+          kind: 'dexEntry',
+          speciesID: message.speciesID,
+          reply: (entry) => {
+            if (!this.disposed) void this.webview.postMessage({ type: 'dexEntry', entry })
+          },
+        })
         break
       case 'track': {
         const request: PanelRequestKind = {

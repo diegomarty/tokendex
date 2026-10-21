@@ -87,7 +87,14 @@ import {
   grantBalls,
   loseTestLegendary,
 } from '../core/dev/simulation.js'
-import type { PanelDevControl, PanelNews, PanelState, PanelEncounterResult } from '../webview/protocol.js'
+import type {
+  PanelDevControl,
+  PanelNews,
+  PanelPokedexEntry,
+  PanelState,
+  PanelEncounterResult,
+} from '../webview/protocol.js'
+import { pokedexEntry } from '../core/panel/dexEntry.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -185,8 +192,25 @@ export interface FlushRequest {
   type: 'flush'
 }
 
+/**
+ * A species' Pokédex entry for its card (plan 9.7). Read-only and network-bound, so it is answered
+ * beside the serialized queue rather than in it: a card must not wait behind a cold scan, and
+ * nothing here writes the save.
+ */
+export interface DexEntryRequest {
+  id: number
+  type: 'dexEntry'
+  speciesID: number
+}
+
 export type WorkerRequest =
-  ScanRequest | PanelRequest | ActionRequest | RenderRequest | SyncRequest | FlushRequest
+  | ScanRequest
+  | PanelRequest
+  | ActionRequest
+  | RenderRequest
+  | SyncRequest
+  | FlushRequest
+  | DexEntryRequest
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
@@ -204,6 +228,8 @@ export type ScanResponse =
   /** `extra` rides beside the panel on a throw reply — never inside `PanelState`, which is
    *  replayed to late-opening surfaces and would replay the animation. */
   | { id: number; ok: true; panel: PanelState; extra?: PanelEncounterResult }
+  /** Answer to a `dexEntry`: never fails — offline, the entry says so itself. */
+  | { id: number; ok: true; dexEntry: PanelPokedexEntry }
   | { id: number; ok: false; error: string }
 
 interface WorkerConfig {
@@ -229,8 +255,11 @@ let encounterToasts = true
 /** The host's current `tokendex.refreshInterval`, piggybacked on requests like the flag above. */
 let refreshSecondsSetting: number | undefined
 
+/** One client for the store and the Pokédex entries, so they share its caches. */
+const poke = new PokeAPIClient()
+
 const companion = new CompanionStore({
-  provider: new PokeAPIClient(),
+  provider: poke,
   encounterToastsEnabled: () => encounterToasts,
 })
 
@@ -1055,8 +1084,25 @@ parentPort?.on('message', (message: WorkerRequest) => {
   if ('refreshSeconds' in message && typeof message.refreshSeconds === 'number') {
     refreshSecondsSetting = message.refreshSeconds
   }
+  if (message.type === 'dexEntry') {
+    void answerDexEntry(message)
+    return
+  }
   dispatch(message)
 })
+
+/** Either half may fail on its own; the entry then says what it lacks rather than erroring. */
+async function answerDexEntry(request: DexEntryRequest): Promise<void> {
+  const [details, line] = await Promise.all([
+    poke.dexDetails(request.speciesID).catch(() => undefined),
+    poke.line(request.speciesID).catch(() => undefined),
+  ])
+  parentPort?.postMessage({
+    id: request.id,
+    ok: true,
+    dexEntry: pokedexEntry(companion.snapshot(), request.speciesID, details, line),
+  } satisfies ScanResponse)
+}
 
 /**
  * The closing sequence, in this order and for a reason.
