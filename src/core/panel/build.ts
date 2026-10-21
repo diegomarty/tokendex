@@ -294,7 +294,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       shop.push({
         id: `egg:${tier ?? 'any'}`,
         emoji: '🥚',
-        sprite: 'egg',
+        sprite: 'egg-icon',
         title: name,
         // Only the guarantee. What they all do — fix the rarity of the egg incubating — is said
         // once under the heading, as `strings.shopEggsNote`.

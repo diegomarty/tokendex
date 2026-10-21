@@ -5,6 +5,7 @@ import {
   hasAnimatedSprite as webviewHasAnimatedSprite,
   itemSpriteIsSheet,
   itemSpriteURL,
+  menuIconURL,
   sceneSpriteURL,
   spriteURL,
 } from '../src/webview/sprite.js'
@@ -74,7 +75,7 @@ describe('spriteURL', () => {
 })
 
 // The egg is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet. Named `egg` by
-// the core like any item sprite, it has to resolve there — the items folder has no egg.png — and
+// the core like any item sprite, it has to resolve there — the items folder's egg.png is a fried egg — and
 // be flagged as a sheet, so the 30px icon box crops its middle instead of shrinking it.
 describe('the egg sprite', () => {
   it('resolves to the Pokémon sheet, not the items folder', () => {
@@ -86,8 +87,28 @@ describe('the egg sprite', () => {
     )
   })
 
+  // [trigger branch] The small spots (a drawer's icon, the stock slots, a shop row) take the
+  // games' menu egg: a 40×30 icon with the egg ~16px, at the scale of the item sprites beside
+  // it. The sheet's 28×30 crop at ×1 filled its box and read as twice their size.
+  it('has a menu icon for the small spots, at the item sprites’ scale', () => {
+    expect(itemSpriteURL('egg-icon')).toBe(
+      'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-vii/icons/egg.png',
+    )
+    expect(itemSpriteIsSheet('egg-icon')).toBe(false)
+  })
+
   it('is the one icon drawn from a full sheet', () => {
     expect(itemSpriteIsSheet('egg')).toBe(true)
     expect(itemSpriteIsSheet('poke-ball')).toBe(false)
+  })
+})
+
+// The battle menu's "Pokémon" button carries the companion as the games' party menu draws it: the
+// small menu icon, served by PokéAPI at runtime like every sprite, never bundled.
+describe('menuIconURL', () => {
+  it('points at the party-menu icon of the species', () => {
+    expect(menuIconURL(25)).toBe(
+      'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-vii/icons/25.png',
+    )
   })
 })

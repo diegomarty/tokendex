@@ -85,6 +85,7 @@
   --on-fill: #fff;
   --gain: #2f8f4e;
   --gain-ink: #23703c;
+  --loss: #c8432f;
   --rarity-common: #8a94a3;
   --rarity-uncommon: #2f8f4e;
   --rarity-rare: #4b55c4;
@@ -296,12 +297,13 @@ body.paused .companion-mon img.bob {
   }
 }
 /* The egg: PokéAPI's sprite, which sits in the middle 28×30 of a 96px sheet. `object-view-box`
-   crops to exactly that and the box draws it at ×2 — a whole multiple, so `pixelated` is exact.
+   crops to exactly that and the box draws it at ×1 — the scale every Pokémon in the scene is drawn
+   at (their Gen-V frames at native size). At ×2 it stood taller than the 80px trainer (Diego).
    The emoji the img falls back to (the class travels with it) keeps the old glyph sizes. */
 img.egg,
 .companion-mon img.egg-small {
-  width: 56px;
-  height: 60px;
+  width: 28px;
+  height: 30px;
   object-view-box: inset(34px 34px 32px 34px);
   image-rendering: pixelated;
 }
@@ -483,6 +485,7 @@ button.action {
      against a pure black editor was a soft grey rectangle with no edge. Transparent elsewhere. */
   border: 1px solid var(--vscode-contrastBorder, transparent);
   border-radius: var(--r-s);
+  min-height: 28px;
   padding: 5px 13px;
   font: inherit;
   cursor: pointer;
@@ -493,13 +496,114 @@ button.action {
 button.action:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
-button.action:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 button.action.secondary {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
+}
+
+/* ---- buttons, by layer (plan 08 §4) ----
+   The game's button is paper and ink: outlined, filled in when pointed at; `.primary` is the
+   filled one, the act a card is for. On the dialog box the same button takes the box's two
+   colours. A price is the device's own screen (`.btn.priced`, the shop's tags); the battle menu
+   keeps its `.command`; and VS Code's blue `button.action` is the counter's alone — Settings and
+   the developer tab. Every one shares the focus ring, the disabled look and a 28px minimum. */
+.btn {
+  --btn-ink: var(--ink);
+  --btn-paper: var(--paper);
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 12px;
+  border: 2px solid var(--btn-ink);
+  border-radius: var(--r-m);
+  background: var(--btn-paper);
+  color: var(--btn-ink);
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
+}
+.btn:hover:not(:disabled),
+.btn.primary {
+  background: var(--btn-ink);
+  color: var(--btn-paper);
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--btn-paper);
+  color: var(--btn-ink);
+}
+:is(.btn, button.action, .command):focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+:is(.btn, button.action, .command):disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ---- tags (plan 08 §5) ----
+   One pill for every short label: three sizes (`xs` inside a plate, the default, `m` for a
+   headline) and its colour by meaning — neutral (a shade of the text it sits in), `state`, a
+   rarity, `gain` and `loss`. The shop's saving, a catch's share, a challenge's reward and the
+   wallet's change are the same gain. */
+.tag {
+  --tag-fill: color-mix(in srgb, currentColor 12%, transparent);
+  --tag-ink: inherit;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  /* An outline, not a border: high contrast themes get their edge without the pill growing. */
+  outline: 1px solid var(--vscode-contrastBorder, transparent);
+  outline-offset: -1px;
+  border-radius: var(--r-pill);
+  background: var(--tag-fill);
+  color: var(--tag-ink);
+  font-size: var(--fs-s);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tag.xs {
+  padding: 0 5px;
+  font-size: var(--fs-xs);
+}
+.tag.m {
+  padding: 1px 8px;
+  font-size: var(--fs-m);
+  font-weight: 800;
+}
+.tag.state {
+  --tag-fill: color-mix(in srgb, var(--exp) 22%, transparent);
+  --tag-ink: color-mix(in srgb, var(--exp) 55%, var(--ink));
+}
+.tag.gain {
+  --tag-fill: var(--gain);
+  --tag-ink: var(--on-fill);
+}
+.tag.loss {
+  --tag-fill: var(--loss);
+  --tag-ink: var(--on-fill);
+}
+.tag.rarity-badge {
+  --tag-fill: var(--rarity-common);
+  --tag-ink: var(--on-fill);
+}
+.tag.rarity-badge.uncommon {
+  --tag-fill: var(--rarity-uncommon);
+}
+.tag.rarity-badge.rare {
+  --tag-fill: var(--rarity-rare);
+}
+.tag.rarity-badge.legendary {
+  --tag-fill: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
 }
 
 /* ---- dex ---- */
@@ -678,11 +782,13 @@ body.vscode-high-contrast .dex .cell.locked img {
 .dex-detail.shiny {
   border-color: var(--vscode-charts-yellow, gold);
 }
+/* One size for every species: the Gen-V frame at its native scale, standing on the pedestal at
+   the box's foot, so a small Pokémon is small and the card keeps its shape. */
 .dex-detail .portrait {
-  width: 84px;
-  min-height: 68px;
+  width: 96px;
+  height: 96px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
   flex: none;
   /* The pedestal the sprite stands on. */
@@ -704,6 +810,8 @@ body.vscode-high-contrast .dex-detail.locked .portrait img {
   filter: brightness(0) invert(0.32);
 }
 .dex-detail .body {
+  /* All the room the portrait leaves: the bars measure the card, not the length of their text. */
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1869,24 +1977,6 @@ body.paused .wild-scene[data-terrain] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.rarity-badge {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 8px;
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  color: #fff;
-  background: #6b7686;
-}
-.rarity-badge.uncommon {
-  background: var(--rarity-uncommon);
-}
-.rarity-badge.rare {
-  background: var(--rarity-rare);
-}
-.rarity-badge.legendary {
-  background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
-}
 
 /* Where the games put HP: anger, nerves and trust — three short gauges of cells on one line,
    each led by its glyph, at every width (Diego: a label per gauge made a wide plate tall). An
@@ -2022,13 +2112,6 @@ body.paused .meter .meter-icon {
 }
 body.vscode-dark .exp-figures {
   color: color-mix(in srgb, var(--exp) 65%, #fff);
-}
-.plate-player .plate-pct {
-  padding: 0 6px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--exp) 22%, transparent);
-  color: color-mix(in srgb, var(--exp) 55%, var(--ink));
-  font-size: 10.5px;
 }
 /* At 300px or less the name needs the room: the EXP line under it already says the figure. */
 @media (max-width: 300px) {
@@ -2217,13 +2300,6 @@ body.vscode-dark .exp-figures {
   width: 100%;
 }
 /* "+5% registered" as a tag, the green of a good outcome. */
-.catch-banner.rich .catch-detail {
-  padding: 1px 8px;
-  border-radius: var(--r-pill);
-  background: rgb(47 143 78 / 0.14);
-  color: var(--gain-ink);
-  font-size: var(--fs-s);
-}
 /* A glint sweeping the card once as it lands. Clipped by its own box, so the card's corner
    sparkles can still stand outside it. */
 .catch-shine {
@@ -2402,9 +2478,6 @@ body.vscode-dark .exp-figures {
   border-bottom: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
   font-size: var(--fs-s);
 }
-.commands .risk-item {
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-}
 .commands .risk-item.flee .codicon {
   color: var(--nerves);
 }
@@ -2415,15 +2488,7 @@ body.vscode-dark .exp-figures {
   opacity: 0.7;
 }
 .risk-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 0 6px 0 4px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dialog-text) 12%, transparent);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  padding-left: 4px;
 }
 .risk-item .codicon {
   font-size: var(--fs-s);
@@ -2523,18 +2588,18 @@ body.vscode-dark .exp-figures {
   text-overflow: ellipsis;
 }
 
-/* Bag and Run, side by side under the balls, set off from them by a rule — and at the end of
-   the same line, the queue count or the way to the shop, sized to its text. */
+/* Pokémon, Bag and Run, side by side under the balls as the games' menu has them, set off from
+   the balls by a rule; the way to the shop, when the rack is empty, on a line of its own. */
 .command-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 2px;
   margin-top: 2px;
   padding-top: 4px;
   border-top: 1px solid color-mix(in srgb, var(--ink) 15%, transparent);
 }
-/* Centred in their halves, so the two read as a pair rather than as the start of a list. */
+/* Centred in their thirds, so the three read as one menu rather than as the start of a list. */
 .command-row > .command:not(.info) {
   justify-content: center;
   gap: 6px;
@@ -2569,7 +2634,6 @@ body.vscode-dark .exp-figures {
 button.command:hover:not(:disabled),
 .command:focus-visible {
   background: color-mix(in srgb, var(--ink) 9%, transparent);
-  outline: none;
 }
 button.command:hover:not(:disabled)::before,
 .command:focus-visible::before {
@@ -2591,10 +2655,6 @@ button.command:hover:not(:disabled)::before,
   font-size: 20px;
   line-height: 1;
 }
-.command:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
 .command.info {
   font-size: var(--fs-s);
   font-weight: 500;
@@ -2609,30 +2669,32 @@ button.command.info {
   padding-left: 20px;
 }
 /* The queue: a pill, not a command — it is read, never pressed. */
-.command.info.queue {
-  gap: 4px;
-  min-height: 22px;
-  margin: 0 2px 0 4px;
-  padding: 2px 9px 2px 7px;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.command-row > .command.info {
+  grid-column: 1 / -1;
+  justify-self: center;
 }
-.command.info.queue .codicon {
-  font-size: 12px;
-}
-/* Too narrow for three across — below this Bag and Run start to clip (measured in the bench,
-   Spanish copy): the note takes a line of its own under them. */
+/* Three across in a narrow sidebar: each icon over its name, as the ball cells above stand, so
+   no name clips in any language (measured in the bench: "Pokémon" needs 90px of a 79px third). */
 @container (max-width: 320px) {
-  .command-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  .command-row > .command:not(.info) {
+    flex-direction: column;
+    gap: 0;
+    padding: 2px 4px;
+    font-size: var(--fs-m);
   }
-  .command-row > .command.info {
-    grid-column: 1 / -1;
-    justify-self: center;
+  .command-row > .command:not(.info)::before {
+    top: 10px;
+    left: 4px;
   }
+}
+/* The party icon at its native 40×30; an egg, or a newer species' still sprite, its middle. */
+.command-icon.mon-icon {
+  width: 40px;
+  margin: 0 -5px;
+  object-fit: none;
+}
+.command-row img.command-icon {
+  object-fit: none;
 }
 .command.item img {
   width: 30px;
@@ -2878,38 +2940,12 @@ body.vscode-high-contrast-light .wild-scene {
   border-color: var(--rarity-legendary);
 }
 .finds-collect {
-  display: block;
+  display: flex;
   width: 100%;
-  min-height: 28px;
   margin-top: 10px;
-  padding: 3px 12px;
-  border: 2px solid var(--ink);
-  border-radius: var(--r-m);
-  background: var(--ink);
-  color: var(--paper);
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-.finds-collect:hover {
-  background: transparent;
-  color: var(--ink);
-}
-.finds-collect:focus-visible {
-  outline: 2px solid var(--vscode-focusBorder);
-  outline-offset: 2px;
 }
 
 /* Tracking spends tokens, but it is still a side errand: a quiet button, not the panel's loudest. */
-.trail-row .action {
-  background: transparent;
-  color: var(--vscode-textLink-foreground);
-  border: 1px solid currentColor;
-  padding: 3px 10px;
-}
-.trail-row .action:disabled {
-  opacity: 0.45;
-}
 .trail-row {
   display: flex;
   align-items: center;
@@ -2930,15 +2966,6 @@ body.vscode-high-contrast-light .wild-scene {
 .trail-row .desc {
   opacity: 0.7;
   font-size: 0.85em;
-}
-
-.badge.wild {
-  font-size: 0.75em;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  align-self: center;
 }
 
 /* ---- shop chrome ---- */
@@ -3382,27 +3409,6 @@ body.compact .row-stat .label {
 
 /* Price tags: paper and ink, filled in when pointed at. The verb and the price read as one
    object, which is what a tag on a shelf is. */
-:is(#shop, .lcd-actions) button.action {
-  background: var(--paper);
-  color: var(--ink);
-  border: 2px solid var(--ink);
-  border-radius: var(--r-m);
-  padding: 3px 10px;
-  font-weight: 700;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-:is(#shop, .lcd-actions) button.action:hover:not(:disabled),
-:is(#shop, .lcd-actions) button.action:focus-visible {
-  background: var(--ink);
-  color: var(--paper);
-  outline: none;
-}
-:is(#shop, .lcd-actions) button.action:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
 /* ---- the shop in the wallet's style ----
    The balance and every price are drawn on the same screen as the wallet on the Pokédex lid —
    dark glass, phosphor digits, the Nugget — so a price reads as the currency it is paid in.
@@ -3421,7 +3427,7 @@ body.compact .row-stat .label {
     inset 0 2px 8px rgb(0 0 0 / 0.6),
     0 2px 0 var(--paper-edge);
 }
-:is(#shop, .lcd-actions) button.action.priced::before {
+button.btn.priced::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -3482,7 +3488,7 @@ body.compact .row-stat .label {
 /* A price tag is the wallet's screen from edge to edge: dark glass, scanlines, the quantity in
    pale ink and the price in phosphor green. Pointed at, the glass lights up rather than
    inverting, so the price stays readable under the cursor. */
-:is(#shop, .lcd-actions) button.action.priced {
+button.btn.priced {
   position: relative;
   display: flex;
   align-items: center;
@@ -3495,15 +3501,15 @@ body.compact .row-stat .label {
     inset 0 0 0 1px rgb(141 255 176 / 0.18),
     inset 0 2px 5px rgb(0 0 0 / 0.55);
 }
-:is(#shop, .lcd-actions) button.action.priced:hover:not(:disabled),
-:is(#shop, .lcd-actions) button.action.priced:focus-visible {
+button.btn.priced:hover:not(:disabled),
+button.btn.priced:focus-visible {
   background: radial-gradient(120% 160% at 25% 0%, #265d67 0%, #11303a 70%);
   color: #f2fff6;
   box-shadow:
     inset 0 0 0 1px rgb(141 255 176 / 0.45),
     0 0 8px rgb(141 255 176 / 0.35);
 }
-:is(#shop, .lcd-actions) button.action.priced .price-tag {
+button.btn.priced .price-tag {
   position: relative;
   display: flex;
   margin-left: auto;
@@ -3527,26 +3533,21 @@ body.compact .row-stat .label {
   text-shadow: none;
   opacity: 1;
 }
-:is(#shop, .lcd-actions) button.action.priced:disabled {
+button.btn.priced:disabled {
   opacity: 0.55;
 }
 /* The pack's saving, small on the top-right corner of the price it discounts. Without it,
    grouping the ×1 and the ×10 onto one row would hide the only reason to prefer the pack. */
-:is(#shop, .lcd-actions) button.action.priced .save {
+button.btn.priced .save {
   position: absolute;
   top: -11px;
   right: -5px;
   z-index: 1;
   padding: 0 4px;
-  border-radius: var(--r-pill);
-  font-size: 0.68em;
-  font-weight: 600;
   line-height: 1.35;
   /* In a high contrast theme the badge and the tag can share a colour; the outline keeps the
      badge a separate object either way. */
   outline: 1px solid var(--vscode-contrastBorder, transparent);
-  background: var(--gain);
-  color: #fff;
 }
 /* An owned passive: its tag says so, with no price left to pay. */
 #shop .row.shop-item.owned {
@@ -3564,7 +3565,7 @@ body.compact .row-stat .label {
     /* The ×10 tag carries the saving as well as a longer price, so it takes the larger share. */
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   }
-  :is(#shop, .lcd-actions) button.action.priced {
+  button.btn.priced {
     min-width: 0;
     padding-left: 6px;
   }
@@ -3577,15 +3578,15 @@ body.compact .row-stat .label {
   }
 }
 /* A tag that is only a price: the screen fills it, centred. */
-:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) {
+button.btn.priced:not(:has(.verb)) {
   justify-content: center;
   padding: 3px;
 }
-:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) .price-tag {
+button.btn.priced:not(:has(.verb)) .price-tag {
   margin-left: 0;
   flex: 1;
 }
-:is(#shop, .lcd-actions) button.action.priced:not(:has(.verb)) .cost {
+button.btn.priced:not(:has(.verb)) .cost {
   flex: 1;
   justify-content: center;
 }
@@ -3594,7 +3595,7 @@ body.compact .row-stat .label {
   .shop-wallet .value {
     text-shadow: none;
   }
-  :is(#shop, .lcd-actions) button.action.priced::before,
+  button.btn.priced::before,
   .shop-wallet::after {
     content: none;
   }
@@ -3706,21 +3707,9 @@ body.compact .row-stat .label {
   font-weight: 500;
 }
 .dialog-action {
+  --btn-ink: var(--dialog-text);
+  --btn-paper: var(--dialog);
   margin-top: 8px;
-  padding: 4px 14px;
-  border: 2px solid var(--dialog-text);
-  border-radius: var(--r-m);
-  background: var(--dialog-text);
-  color: var(--dialog);
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-.dialog-action:hover,
-.dialog-action:focus-visible {
-  background: transparent;
-  color: var(--dialog-text);
-  outline: none;
 }
 
 /* ---- the Pokédex ---- */
@@ -3919,19 +3908,6 @@ body.compact .row-stat .label {
 }
 
 /* Save data: two tags, the same object as the shop's prices. */
-.save-actions .action.secondary {
-  background: var(--paper);
-  color: var(--ink);
-  border: 2px solid var(--ink);
-  border-radius: var(--r-m);
-  font-weight: 700;
-}
-.save-actions .action.secondary:hover,
-.save-actions .action.secondary:focus-visible {
-  background: var(--ink);
-  color: var(--paper);
-  outline: none;
-}
 
 @media (forced-colors: active) {
   .trainer-card,
@@ -3951,20 +3927,6 @@ body.compact .row-stat .label {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 5px;
-}
-.status {
-  padding: 0 6px;
-  border-radius: 5px;
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  color: #fff;
-  font-variant-numeric: tabular-nums;
-}
-.status.primed {
-  background: #d9534f;
-}
-.status.stolen {
-  background: #6b4fa0;
 }
 
 /* The evolution line, kept with the companion it belongs to: a paper strip under the dialog box,
@@ -4116,20 +4078,10 @@ body.compact .row-stat .label {
   top: 50%;
   margin-top: -10px;
   line-height: 18px;
-  padding: 1px 8px;
-  border-radius: var(--r-pill);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
   pointer-events: none;
   animation: wallet-float 1600ms ease-out forwards;
 }
-.wallet-delta.gain {
-  background: var(--gain);
-}
 .wallet-delta.loss {
-  background: #c8432f;
   animation-name: wallet-drop;
 }
 @keyframes wallet-float {
@@ -4256,23 +4208,20 @@ body.paused .wallet-badge .coin {
 .dex .cell .star.open {
   opacity: 0.75;
 }
+/* The registration bar drawn like the shiny one under it: the bar across the card, its line
+   under the bar. Side by side, a long line ("52% registrado") squeezed the bar to nothing. */
 .dex-detail .reg-line {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
   margin: 6px 0 2px;
 }
 .dex-detail .dex-choose {
   margin-top: 8px;
 }
 .dex-detail .companion-tag {
-  display: inline-block;
   margin-top: 8px;
-  padding: 1px 8px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--exp) 22%, transparent);
-  font-size: 0.85em;
-  font-weight: 600;
 }
 
 /* ---- first run: the starter picker ----
@@ -4380,10 +4329,17 @@ body.paused .wallet-badge .coin {
   border-radius: 6px;
   background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
 }
+/* The stock slots' egg: the menu icon (below), in a box the size of an item's drawing. */
 .egg-sprite {
-  width: 28px;
-  height: 30px;
-  object-view-box: inset(34px 34px 32px 34px);
+  width: 22px;
+  height: 22px;
+}
+/* The games' menu egg (Gen VII icon, 40×30) wherever it stands in for an item: at ×1 — its 13×14
+   egg is an item drawing's size — and centred on the egg, not the canvas, which draws it low
+   and right (its centre sits 1px right and 6px below the canvas's). One rule for every box. */
+img[src$='/versions/generation-vii/icons/egg.png'] {
+  object-fit: none;
+  object-position: calc(50% - 1px) calc(50% - 6px);
   image-rendering: pixelated;
 }
 /* Wide enough for the line to stay a line; when it is not, the button takes its own row. */
@@ -4894,19 +4850,6 @@ body.paused .wallet-badge .coin {
 }
 .challenge.done .challenge-text {
   opacity: 0.7;
-}
-.challenge-reward {
-  flex: none;
-  padding: 0 7px;
-  border-radius: var(--r-pill);
-  background: color-mix(in srgb, var(--gain) 16%, transparent);
-  color: var(--gain);
-  font-size: var(--fs-s);
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-body.vscode-dark .challenge-reward {
-  color: var(--trust);
 }
 
 /* ---- Home: the lid's usage, and the drawers ----
@@ -5519,5 +5462,14 @@ body.vscode-dark .challenge-reward {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+}
+
+/* The species card as a window over Home (the battle menu's Pokémon button): the Pokédex's own
+   sheet, rising from the foot exactly as it does there, over the PC box's veil. One card, shown
+   the same way in both places. */
+.species-modal .dex-detail {
+  z-index: 41;
+  max-height: 80vh;
   overflow-y: auto;
 }

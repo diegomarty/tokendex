@@ -87,6 +87,34 @@ describe('the stylesheet', () => {
     expect(handWritten, 'hand-written `class="bar"` in main.ts (the limits are the one allowed)').toBe(1)
   })
 
+  // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
+  // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
+  it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {
+    const native = [...SCRIPT.matchAll(/class="action\b/g)].length
+    expect(native, '`class="action` in main.ts (the developer tab is the one allowed)').toBe(1)
+    for (const retired of [
+      '.dialog-action:hover',
+      '.save-actions .action',
+      ':is(#shop, .lcd-actions) button',
+    ])
+      expect(CODE, retired).not.toContain(retired)
+  })
+
+  // One pill: every short label is a `.tag`, sized and coloured by meaning, not a family of its own.
+  it('draws every pill as a .tag', () => {
+    for (const retired of ['.badge.wild', '.status.primed', '.status.stolen', '.wallet-delta.gain'])
+      expect(CODE, retired).not.toContain(retired)
+    for (const pill of [
+      'rarity-badge',
+      'plate-pct',
+      'risk-item',
+      'catch-detail',
+      'challenge-reward',
+      'companion-tag',
+    ])
+      expect(SCRIPT, pill).not.toMatch(new RegExp(`class="(?!tag\\b)[^"]*\\b${pill}\\b`))
+  })
+
   // [trigger branch] A span on a meter's track (a gain, a loss, the bar that was) is an `<i>` like
   // the fill, so `.game-meter .bar.game-meter-track i` paints it unless the span's rule outranks
   // it: the catch card's gain was never white for that reason. Each one names the track in full.

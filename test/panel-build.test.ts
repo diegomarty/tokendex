@@ -415,7 +415,7 @@ describe('the shop', () => {
     const eggs = build({ state: incubating }).shop.filter((item) => item.group === 'eggs')
     expect(eggs).toHaveLength(FreshEgg.shopTiers.length)
     for (const egg of eggs) {
-      expect(egg.sprite).toBe('egg')
+      expect(egg.sprite).toBe('egg-icon') // the menu egg, at the item sprites' scale
       expect(egg.emoji).toBe('🥚')
     }
   })
