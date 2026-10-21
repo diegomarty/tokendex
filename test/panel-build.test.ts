@@ -4,6 +4,7 @@ import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
   PokemonBalance,
+  RARITIES,
   ANIMATED_SPECIES_MAX,
   EGG_STOCK_MAX,
   RareCandy,
@@ -1263,5 +1264,23 @@ describe('the PC box', () => {
     })
     expect(box.items[2]).toMatchObject({ registered: true })
     expect(box.emptyText).toBe(D.pcBoxEmptyText('en'))
+  })
+
+  // The box's own search and sorts (Diego): the labels from the core, and a rarity rank so the
+  // webview orders by it without deciding which rarity outranks which.
+  it('offers a name search and three sorts, with a rank to sort rarity by', () => {
+    const s = state({
+      active: activeMon,
+      species: { 4: speciesEntry({ unlocked: true }), 150: speciesEntry({ unlocked: true }) },
+    })
+    const box = build({ state: s }).pcBox
+    expect(box.searchPlaceholder).toBe(D.dexSearchPlaceholder('en'))
+    expect(box.sorts.map((o) => o.id)).toEqual(['progress', 'number', 'rarity'])
+    expect(box.sorts.map((o) => o.label)).toEqual([
+      D.pcSortLabel('en', 'progress'),
+      D.pcSortLabel('en', 'number'),
+      D.pcSortLabel('en', 'rarity'),
+    ])
+    for (const item of box.items) expect(item.rarityRank).toBe(RARITIES.indexOf(item.rarity as never))
   })
 })

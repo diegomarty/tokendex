@@ -844,9 +844,19 @@ function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): Pan
       percent: sp.percent,
       percentText: sp.percentText,
       registered: sp.status === 'registered',
+      rarityRank: Math.max(0, RARITIES.indexOf(sp.rarity as (typeof RARITIES)[number])),
     }))
     .sort((a, b) => Number(a.registered) - Number(b.registered) || b.percent - a.percent || a.id - b.id)
-  return { title: D.pcBoxTitle(lang), items, emptyText: D.pcBoxEmptyText(lang) }
+  return {
+    title: D.pcBoxTitle(lang),
+    items,
+    emptyText: D.pcBoxEmptyText(lang),
+    searchPlaceholder: D.dexSearchPlaceholder(lang),
+    sorts: (['progress', 'number', 'rarity'] as const).map((id) => ({
+      id,
+      label: D.pcSortLabel(lang, id),
+    })),
+  }
 }
 
 /** The challenges board for Home, formatted; nothing before the first fold of a day. */

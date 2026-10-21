@@ -176,6 +176,10 @@ export interface PanelPCBox {
   items: PanelPCBoxItem[]
   /** Shown when there is nothing else to switch to. */
   emptyText: string
+  /** The box's name search: placeholder (the Pokédex's own). */
+  searchPlaceholder: string
+  /** Its sorts, the first the default (the order `items` comes in): progress, number, rarity. */
+  sorts: { id: 'progress' | 'number' | 'rarity'; label: string }[]
 }
 
 export interface PanelPCBoxItem {
@@ -188,6 +192,8 @@ export interface PanelPCBoxItem {
   /** "45% registered" / "Registered". */
   percentText: string
   registered: boolean
+  /** 0 common … 3 legendary: what the rarity sort orders by. */
+  rarityRank: number
 }
 
 /** The lid: usage folded in, expanded on click to the counter; three lights for the limits. */

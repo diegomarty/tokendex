@@ -1997,3 +1997,15 @@ export function pcBoxEmptyText(lang: AppLanguage): string {
     'Aún no tienes otro Pokémon para cambiar. Captura o eclosiona uno.',
   )
 }
+
+/** The PC box's sort options. */
+export function pcSortLabel(lang: AppLanguage, sort: 'progress' | 'number' | 'rarity'): string {
+  switch (sort) {
+    case 'progress':
+      return t(lang, '진행도', 'Progress', 'しんちょく', 'Progreso')
+    case 'number':
+      return t(lang, '번호', 'Number', 'ばんごう', 'Número')
+    case 'rarity':
+      return t(lang, '희귀도', 'Rarity', 'レアリティ', 'Rareza')
+  }
+}
