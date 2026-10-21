@@ -102,6 +102,19 @@ Además de unificar, cosas que dan «cuerpo» sin funciones nuevas:
 - **Escritura en pantalla** (decidido: sí, rápida). El diálogo de combate escribe su texto letra a letra como en los juegos, a ~60 caracteres por segundo (una línea larga en menos de un segundo y medio); un clic o una tecla lo completan al instante. La región `aria-live` recibe el texto completo de una vez, nunca letra a letra. Con `prefers-reduced-motion`, el texto aparece entero.
 - **Microcopys**: revisar que cada botón diga lo que hace con el verbo del juego (ya se quitó «Comprar» donde sobraba).
 
+### 8. Inicio unificado: todo en un solo panel (Diego, 2026-10-21)
+
+Con tantas fases, cada sistema acabó en su propio sitio (huevos en Inicio bajo la escena, retos bajo los huevos, rastro legendario en Salvajes, datos de uso en otra sección), cada uno con su estilo. Diego pide que Inicio sea **el** panel y que todo se entienda como una sola extensión:
+
+- **Cajones desplegables en Inicio**, todos con la misma pieza: una fila de resumen en una línea con icono, título y estado breve; al hacer clic se despliega el detalle, y otro clic lo pliega. Un solo componente (`.drawer`) para todos, con teclado (`button` + `aria-expanded`), estado guardado como vista (no va al núcleo) y animación que respeta `prefers-reduced-motion`.
+  - **Incubadora:** resumen «🥚 2 en stock · huevo al 40 %»; detalle con el stock, el huevo en curso o pausado y el botón de incubar o reanudar.
+  - **Retos (misiones):** resumen «Retos 1 / 3 · +5M»; detalle con las tres tarjetas actuales.
+  - **Rastro legendario:** resumen «Rastro: Mewtwo · 2 d» o «sin rastro»; detalle con lo que hoy está en Salvajes (seguir y su precio).
+  - **El resto de datos:** racha, cola de salvajes y hallazgos, señuelo activo y, plegados, los totales de uso. Mismo patrón, para que Inicio sea el resumen de todo y las pestañas el detalle.
+- **Textos del núcleo:** cada resumen de cajón es una cadena ya formateada (`PanelState.drawers` o un campo `summaryText` por sección). @helper propone los campos y yo los añado en `build.ts`/`dispatch.ts`.
+- **Las pestañas** se quedan como vista completa de cada sistema, con las mismas piezas (`.drawer`, `.game-meter`, botones por capa). Ningún sistema se dibuja de dos maneras.
+- **Orden:** va antes del entregable 4 (botones), porque define dónde vive cada cosa. Primero una maqueta con capturas para que Diego la apruebe, y después la implementación.
+
 ## Fuera de alcance
 
 Funciones nuevas (medallas, retos, regiones: fase 7), cambios de economía, el contador de uso (salvo que siga siendo nativo) y cualquier cambio del core que no sea una etiqueta ya formateada.
@@ -111,6 +124,7 @@ Funciones nuevas (medallas, retos, regiones: fase 7), cambios de economía, el c
 1. **Tokens + test de literales** (sin cambio visual: sustituir literales por tokens, borrar los 27 selectores repetidos). Captura antes/después idéntica en el bench.
 2. **Aparato:** `.device-casing`, `.device-lights`, `.lcd` y Nugget.
 3. **Barra única** `.meter` + `.meter-gain`.
+3b. **Inicio unificado** (§8): cajones desplegables para incubadora, retos, rastro legendario y el resto de datos. Primero maqueta con capturas para Diego.
 4. **Botones por capa** y **`.tag`**.
 5. **Estrecho** (con el cambio de geometría y su test).
 6. **UX:** lenguaje de celebración, transiciones, estados vacíos; los opcionales con capturas para que Diego decida.
