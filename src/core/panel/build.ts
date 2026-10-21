@@ -415,6 +415,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       shiny: sp.shiny,
       percent: sp.percent,
       percentText: D.registrationText(lang, sp.percent, sp.status === 'registered'),
+      percentShortText: percent(sp.percent),
       // Anything owned can be the companion — a seen species is not owned yet, and the one on
       // stage is already chosen.
       canChoose: sp.status !== 'seen' && !isCompanion,
@@ -997,13 +998,16 @@ function shinyBarFor(
   lang: AppLanguage,
 ): PanelShinyBar {
   const p = progressOf(state, speciesID)
-  if (p.shinyRegistered === true) return { percent: 100, text: D.shinyRegisteredText(lang), boosts: [] }
+  if (p.shinyRegistered === true) {
+    return { percent: 100, percentShortText: percent(100), text: D.shinyRegisteredText(lang), boosts: [] }
+  }
   const target = p.lineRarity === undefined ? undefined : shinyTarget(p.lineRarity)
   const done = p.shinyXP ?? 0
-  const percent = target === undefined ? 0 : Math.min(100, Math.floor((100 * done) / target))
+  const filled = target === undefined ? 0 : Math.min(100, Math.floor((100 * done) / target))
   const bar: PanelShinyBar = {
-    percent,
-    text: D.shinyBarText(lang, percent, compact(done), target === undefined ? '?' : compact(target)),
+    percent: filled,
+    percentShortText: percent(filled),
+    text: D.shinyBarText(lang, filled, compact(done), target === undefined ? '?' : compact(target)),
     boosts: shinyBoostOffers(state, speciesID).map((amount) => {
       const priceText = compact(amount)
       return {

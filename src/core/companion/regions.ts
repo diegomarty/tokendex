@@ -30,7 +30,8 @@ export function regionProgress(
     if (region === undefined) continue
     if (p.registered) counts.set(region.id, (counts.get(region.id) ?? 0) + 1)
     // The Shinydex's own count (Diego): a region's shinies, not its registrations.
-    if (p.shinyRegistered === true) shinies.set(region.id, (shinies.get(region.id) ?? 0) + 1)
+    if (p.shinyRegistered === true || p.shinyUnlocked === true)
+      shinies.set(region.id, (shinies.get(region.id) ?? 0) + 1)
   }
   return REGIONS.map((r) => ({
     id: r.id,

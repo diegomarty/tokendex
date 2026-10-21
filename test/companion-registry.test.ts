@@ -14,9 +14,11 @@ import {
   registerShiny,
   registerXP,
   registrationPercent,
+  reconcileShinies,
   retireCompanion,
   seedRegistry,
 } from '../src/core/companion/registry.js'
+import { decodeCompanionState, encodeCompanionState } from '../src/core/companion/persistence.js'
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
   baseID: 129,
@@ -243,5 +245,31 @@ describe('retiring a Ditto in disguise', () => {
     const after = retireCompanion(before)
     expect(after.species[4]).toMatchObject({ unlocked: true, xp: 12 })
     expect(after.species[132]).toMatchObject({ unlocked: true, xp: 30 })
+  })
+})
+
+// Diego's shiny Vulpix: caught before the shiny bar existed, its Pokédex entry is shiny but the
+// registry never recorded it, so the Shinydex left it out and its count read 0. A shiny obtained
+// has its bar full (C5): reading the save puts every shiny the Pokédex holds into the registry.
+describe('a shiny the Pokédex holds and the registry missed', () => {
+  it('is registered when the save is read', () => {
+    const shinyEntry: DexEntry = { ...graduated(37, [37]), isShiny: true }
+    const raw = JSON.parse(
+      encodeCompanionState(
+        state({
+          dex: [shinyEntry, graduated(4, [4, 5])],
+          species: {
+            37: { ...freshSpeciesProgress(), unlocked: true, lineRarity: 'uncommon' },
+            4: { ...freshSpeciesProgress(), unlocked: true },
+            5: { ...freshSpeciesProgress(), unlocked: true },
+          },
+        }),
+      ),
+    )
+    const read = decodeCompanionState(raw)
+    expect(read.species[37]).toMatchObject({ shinyUnlocked: true, shinyRegistered: true })
+    expect(read.species[4]?.shinyRegistered ?? false).toBe(false)
+    // Already consistent: the very same registry, nothing to rewrite.
+    expect(reconcileShinies(read)).toBe(read)
   })
 })

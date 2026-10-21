@@ -192,6 +192,26 @@ function retireDisguise(state: CompanionState, mon: MonState): CompanionState {
 }
 
 /**
+ * Every shiny the Pokédex holds, registered (C5: a shiny obtained has its bar full). A shiny
+ * caught or raised before the shiny bar existed left a shiny entry the registry never recorded
+ * — Diego's Vulpix — so the Shinydex left it out and counted 0. The very same state when there
+ * is nothing to add, so reading a consistent save rewrites nothing.
+ */
+export function reconcileShinies(state: CompanionState): CompanionState {
+  let species: CompanionState['species'] | undefined
+  for (const entry of state.dex) {
+    if (!entry.isShiny) continue
+    for (const id of entry.chainOrder) {
+      const progress = (species ?? state.species)[id] ?? freshSpeciesProgress()
+      if (progress.shinyRegistered === true) continue
+      species ??= { ...state.species }
+      species[id] = obtainShiny({ ...progress, unlocked: true })
+    }
+  }
+  return species === undefined ? state : { ...state, species }
+}
+
+/**
  * Marks a species as met in the wild. With the encounter's `line` (an index with forms), it also
  * records where the species sits and its line's rarity — the Pokédex knows what it saw, and a
  * lure has something to price — without obtaining it. Idempotent.

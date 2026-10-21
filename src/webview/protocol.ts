@@ -154,6 +154,8 @@ export interface PanelDexSpecies {
   percent: number
   /** Localised "45% registered" / "Registered" line. */
   percentText: string
+  /** The same figure alone, "45%", beside the card's bar (9.11). */
+  percentShortText: string
   /** Can be chosen as the companion (unlocked, and not already on stage). */
   canChoose: boolean
   /** 0 common … 3 legendary: what the Pokédex's rarity sort orders by. */
@@ -321,6 +323,8 @@ export interface PanelLure {
 export interface PanelShinyBar {
   /** 0..100. */
   percent: number
+  /** "12%", beside a card's gold bar (9.11). */
+  percentShortText: string
   /** "Shiny 12% · 192M / 1.6B" or "Shiny registered". */
   text: string
   /** Boost buttons: a tenth of the bar, and the most that can be bought. Empty = none to sell. */

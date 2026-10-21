@@ -34,7 +34,7 @@ import {
   pokemonTypes,
   type SpeciesProgress,
 } from './model.js'
-import { seedRegistry } from './registry.js'
+import { reconcileShinies, seedRegistry } from './registry.js'
 import {
   EncounterBalance,
   LegendaryBalance,
@@ -573,7 +573,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   // that must not read as "none" — and a key that is present but unusable (`null`, a string) is
   // absent for this purpose. Last, after the active Pokémon is in place, because the seed also
   // resets its stage progress.
-  return isObject(value['species']) ? state : seedRegistry(state)
+  return reconcileShinies(isObject(value['species']) ? state : seedRegistry(state))
 }
 
 /** Parses raw JSON text, returning `undefined` when it is unusable. */

@@ -23,7 +23,7 @@ import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
 import { candyFullHint } from '../src/core/i18n/dispatch.js'
 import * as D from '../src/core/i18n/dispatch.js'
 import { EconomyBalance } from '../src/core/companion/economy.js'
-import { compact } from '../src/core/tokenFormatter.js'
+import { compact, percent } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
 import { MEDALS } from '../src/core/companion/medals.js'
@@ -982,6 +982,22 @@ describe('the shiny bar in the Pokédex', () => {
     expect(bar.boostHint).toBeUndefined()
   })
 
+  // The cards' short figures beside their bars (Diego, 9.11): formatted here, one way.
+  it('gives each bar its short percentage', () => {
+    const s = state({
+      species: {
+        7: registered({ shinyRegistered: true }),
+        8: speciesEntry({ unlocked: true, xp: 2, threshold: 10 }),
+      },
+    })
+    const panel = build({ state: s })
+    const cell = (id: number) => panel.dexSpecies.find((sp) => sp.id === id)!
+    expect(cell(8).percentShortText).toBe(percent(20))
+    expect(cell(7).percentShortText).toBe(percent(100))
+    expect(cell(7).shinyBar!.percentShortText).toBe(percent(100))
+  })
+
+  // The Shinydex counts what it shows (plan 9.11): every shiny obtained, its bar full or not.
   it('counts the Shinydex in the summary', () => {
     const s = state({
       species: {
@@ -992,11 +1008,11 @@ describe('the shiny bar in the Pokédex', () => {
     })
     const summary = build({ state: s }).dexSummary
     expect(summary).toMatchObject({
-      shinyRegistered: 1,
-      shinyPercent: completion(1, ANIMATED_SPECIES_MAX),
-      shinyProgressText: D.dexProgressText(1, ANIMATED_SPECIES_MAX),
+      shinyRegistered: 2,
+      shinyPercent: completion(2, ANIMATED_SPECIES_MAX),
+      shinyProgressText: D.dexProgressText(2, ANIMATED_SPECIES_MAX),
     })
-    expect(summary.shinySegmentText).toContain('(1)')
+    expect(summary.shinySegmentText).toContain('(2)')
   })
 })
 
@@ -1117,12 +1133,15 @@ describe('medals and regions in the panel', () => {
         1: speciesEntry({ unlocked: true, registered: true, shinyRegistered: true }),
         4: speciesEntry({ unlocked: true, registered: true }),
         152: speciesEntry({ unlocked: true, registered: true }),
+        // Obtained shiny, bar not yet full: shown in the Shinydex, so counted with it too.
+        153: speciesEntry({ unlocked: true, shinyUnlocked: true }),
       },
     })
     const [kanto, johto] = build({ state: s }).dexSummary.regions
     expect(kanto).toMatchObject({ registered: 2, shinyRegistered: 1, shinyProgressText: '1 / 151' })
     expect(kanto!.shinyPercent).toBe(1)
-    expect(johto).toMatchObject({ registered: 1, shinyRegistered: 0, shinyProgressText: '0 / 100' })
+    expect(johto).toMatchObject({ registered: 1, shinyRegistered: 1, shinyProgressText: '1 / 100' })
+    expect(build({ state: s }).dexSummary.shinyRegistered).toBe(2)
   })
 })
 

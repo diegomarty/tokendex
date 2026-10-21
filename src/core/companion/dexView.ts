@@ -264,7 +264,8 @@ export function dexTally(species: readonly Pick<DexSpecies, 'status' | 'shiny'>[
   for (const sp of species) {
     if (sp.status !== 'seen') owned++
     if (sp.status === 'registered') registered++
-    if (sp.shiny === 'registered') shinyRegistered++
+    // What the Shinydex shows: every shiny obtained, its bar full or not.
+    if (sp.shiny !== 'none') shinyRegistered++
   }
   return { owned, registered, shinyRegistered }
 }
