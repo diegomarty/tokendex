@@ -1530,3 +1530,18 @@ describe('the species card’s registration line', () => {
     expect(cell(4).registeredDateText).toBeUndefined()
   })
 })
+
+// Diego: searching the Pokédex by name must find every species, not only those met. The names
+// come with the summary, in the game's language; the card still shows a silhouette.
+describe('the Pokédex search names', () => {
+  it('sends every species name known, in the game’s language', () => {
+    const speciesNames = {
+      25: { en: 'Pikachu', es: 'Pikachu', ja: 'ピカチュウ' },
+      4: { en: 'Charmander' },
+    }
+    const ja = build({ state: state({ language: 'ja' }), speciesNames }).dexSummary.names
+    expect(ja[25]).toBe('ピカチュウ')
+    expect(ja[4]).toBe('Charmander') // no Japanese name: the English one, as everywhere
+    expect(build().dexSummary.names).toEqual({})
+  })
+})

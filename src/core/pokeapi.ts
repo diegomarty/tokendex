@@ -113,6 +113,8 @@ const INDEX_TTL_MS = 30 * 86_400_000
  * capture rate only, 2 = with `is_legendary`/`is_mythical`, 3 = with every form of each line.
  */
 const INDEX_SCHEMA = 3
+/** Shape of `species-names.json`. */
+const NAMES_SCHEMA = 1
 /** Shape of `dex-details.json`; a file at another version is ignored and refilled. */
 const DEX_SCHEMA = 1
 // 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
@@ -275,6 +277,9 @@ export class PokeAPIClient implements PokeProviding {
   private baseIndexCache: BaseSpecies[] | undefined
   /** Pokédex entries read or written this session; loaded from disk once. */
   private dexCache: Map<number, DexDetails> | undefined
+  /** Every species' names (id → PokéAPI language code → name), once read. */
+  private namesCache: Record<number, Record<string, string>> | undefined
+  private namesInFlight: Promise<Record<number, Record<string, string>>> | undefined
   /**
    * Coalesces concurrent index loads. Two callers can want it in the same pass (an encounter
    * spawn and an egg pre-roll), and without this they each pay the full GraphQL round trip.
@@ -293,6 +298,90 @@ export class PokeAPIClient implements PokeProviding {
   /** Beside the index, so a test's temporary directory holds both. */
   private get dexFilePath(): string {
     return join(dirname(this.indexFilePath), 'dex-details.json')
+  }
+
+  // MARK: - Every species' names
+
+  /** The names already read, for a caller that cannot wait (the panel builder). */
+  knownSpeciesNames(): Record<number, Record<string, string>> | undefined {
+    return this.namesCache
+  }
+
+  /**
+   * Every species' names in the app's languages — what the Pokédex's search matches, for the
+   * species not met yet too (Diego). Memory, then disk (`species-names.json`, refreshed after
+   * `INDEX_TTL_MS`, a stale copy kept offline), then one GraphQL request. Throws only when
+   * nothing is cached and the network fails.
+   */
+  async speciesNames(): Promise<Record<number, Record<string, string>>> {
+    if (this.namesCache !== undefined) return this.namesCache
+    this.namesInFlight ??= this.loadNames().finally(() => {
+      this.namesInFlight = undefined
+    })
+    return this.namesInFlight
+  }
+
+  private get namesFilePath(): string {
+    return join(dirname(this.indexFilePath), 'species-names.json')
+  }
+
+  private async loadNames(): Promise<Record<number, Record<string, string>>> {
+    let disk: { fetchedAt: number; names: Record<number, Record<string, string>> } | undefined
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.namesFilePath, 'utf8')) as {
+        version?: number
+        fetchedAt?: number
+        names?: Record<number, Record<string, string>>
+      }
+      if (parsed.version === NAMES_SCHEMA && typeof parsed.names === 'object' && parsed.names !== null) {
+        disk = { fetchedAt: parsed.fetchedAt ?? 0, names: parsed.names }
+      }
+    } catch {
+      // Not there yet, or torn: fetched below.
+    }
+    if (disk !== undefined && Date.now() - disk.fetchedAt < INDEX_TTL_MS) {
+      this.namesCache = disk.names
+      return disk.names
+    }
+    try {
+      const names = await this.fetchNames()
+      this.namesCache = names
+      try {
+        await atomicWriteFile(
+          this.namesFilePath,
+          JSON.stringify({ version: NAMES_SCHEMA, fetchedAt: Date.now(), names }),
+        )
+      } catch {
+        // A cache write failure must never break the search.
+      }
+      return names
+    } catch (error) {
+      if (disk === undefined) throw error
+      this.namesCache = disk.names // offline: stale names beat none
+      return disk.names
+    }
+  }
+
+  private async fetchNames(): Promise<Record<number, Record<string, string>>> {
+    const languages = LANG_CODES.map((code) => `"${code}"`).join(', ')
+    const query = `{ pokemonspeciesname(where: {pokemon_species_id: {_lte: ${ANIMATED_SPECIES_MAX}}, language: {name: {_in: [${languages}]}}}) { pokemon_species_id name language { name } } }`
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) throw new Error(`graphql: HTTP ${response.status}`)
+    const decoded = (await response.json()) as {
+      data?: {
+        pokemonspeciesname?: { pokemon_species_id: number; name: string; language: { name: string } }[]
+      }
+    }
+    const rows = decoded.data?.pokemonspeciesname ?? []
+    if (rows.length === 0) throw new Error('graphql: no species names')
+    const names: Record<number, Record<string, string>> = {}
+    for (const row of rows) (names[row.pokemon_species_id] ??= {})[row.language.name] = row.name
+    return names
   }
 
   // MARK: - Pokédex entries

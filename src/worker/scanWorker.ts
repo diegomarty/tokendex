@@ -1007,7 +1007,12 @@ function buildPanel(
       ? undefined
       : { previous: lastSpendable, id: ++walletSerial }
   lastSpendable = spendable
+  // Every species' name for the Pokédex's search: read once (disk, else one request), and asked
+  // again on the next panel while there are none — offline at start is no reason to never have them.
+  const speciesNames = poke.knownSpeciesNames()
+  if (speciesNames === undefined) void poke.speciesNames().catch(() => undefined)
   return buildPanelState({
+    speciesNames,
     usage,
     state,
     walletChange,

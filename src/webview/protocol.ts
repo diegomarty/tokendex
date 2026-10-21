@@ -354,6 +354,12 @@ export interface PanelShinyBoost {
 
 /** The Pokédex's counts: owned (the collection), registered (the completion) and the total. */
 export interface PanelDexSummary {
+  /**
+   * Every species' name in the game's language, by Pokédex number — what the search matches, so
+   * a name finds a species not met yet (Diego). Never drawn on a card: a silhouette stays one.
+   * Empty until the names have been read.
+   */
+  names: Record<number, string>
   owned: number
   registered: number
   total: number

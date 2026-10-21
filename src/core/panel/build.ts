@@ -67,6 +67,7 @@ import {
   natureName,
   shopEntryPrice,
   packQuantities,
+  resolveName,
 } from '../companion/model.js'
 import {
   canBuyEgg,
@@ -142,6 +143,19 @@ function registrationDate(
   return { registeredDateText: dateText, registeredLabel: D.registeredOnText(lang, dateText) }
 }
 
+/** Each species' name in the game's language, for the Pokédex's search; empty until read. */
+function searchNames(
+  names: Record<number, Record<string, string>> | undefined,
+  lang: AppLanguage,
+): Record<number, string> {
+  const out: Record<number, string> = {}
+  for (const [id, byLang] of Object.entries(names ?? {})) {
+    const name = resolveName(lang, byLang)
+    if (name !== undefined) out[Number(id)] = name
+  }
+  return out
+}
+
 /**
  * A collection's completion, for its bar: rounded, but never 0 with something in it (four of 649
  * is a sliver, not an empty bar) and never 100 with something missing (646–648 of 649 used to
@@ -177,6 +191,8 @@ export interface PanelBuildInputs {
    * worker's.
    */
   walletChange?: { previous: number; id: number } | undefined
+  /** Every species' names, once the worker has read them — what the Pokédex's search matches. */
+  speciesNames?: Record<number, Record<string, string>> | undefined
 }
 
 /**
@@ -618,7 +634,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     shop,
     bag,
     dexSpecies: species,
-    dexSummary: dexSummary(state, species, dexLog.length, lang),
+    dexSummary: dexSummary(state, species, dexLog.length, lang, inputs.speciesNames),
     medals: medalsPanel(state, lang),
     pcBox: pcBoxPanel(species, lang),
     shopGroups: shopGroupsPanel(shop, lang),
@@ -759,6 +775,7 @@ function dexSummary(
   species: readonly PanelDexSpecies[],
   logCount: number,
   lang: AppLanguage,
+  speciesNames: PanelBuildInputs['speciesNames'],
 ): PanelDexSummary {
   const { owned, registered, shinyRegistered } = dexTally(species)
   const total = ANIMATED_SPECIES_MAX
@@ -795,6 +812,7 @@ function dexSummary(
     shinyPercent: completion(shinyRegistered, total),
     shinyProgressText: D.dexProgressText(shinyRegistered, total),
     shinySegmentText: D.countedLabel(D.shinydexLabel(lang), shinyRegistered),
+    names: searchNames(speciesNames, lang),
   }
 }
 

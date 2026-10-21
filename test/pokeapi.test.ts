@@ -342,6 +342,37 @@ describe('PokeAPIClient.dexDetails', () => {
   })
 })
 
+// Diego: the Pokédex's name search found only the species already met. Every species' name,
+// in the app's languages, in one GraphQL request, cached on disk beside the index.
+describe('PokeAPIClient.speciesNames', () => {
+  const rows = [
+    { pokemon_species_id: 25, name: 'Pikachu', language: { name: 'en' } },
+    { pokemon_species_id: 25, name: 'ピカチュウ', language: { name: 'ja' } },
+    { pokemon_species_id: 1, name: 'Bulbasaur', language: { name: 'es' } },
+  ]
+  const respond = (body: unknown) =>
+    Promise.resolve({ ok: true, status: 200, json: async () => body } as Response)
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads every name in one request, then answers from disk offline', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'ptb-names-')), 'i.json')
+    let requests = 0
+    vi.stubGlobal('fetch', () => {
+      requests++
+      return respond({ data: { pokemonspeciesname: rows } })
+    })
+    const names = await new PokeAPIClient(path).speciesNames()
+    expect(names[25]).toEqual({ en: 'Pikachu', ja: 'ピカチュウ' })
+    expect(names[1]).toEqual({ es: 'Bulbasaur' })
+    expect(requests).toBe(1)
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('offline')))
+    const offline = new PokeAPIClient(path)
+    expect(offline.knownSpeciesNames()).toBeUndefined() // nothing read yet
+    expect((await offline.speciesNames())[25]?.['en']).toBe('Pikachu')
+    expect(offline.knownSpeciesNames()?.[25]?.['ja']).toBe('ピカチュウ')
+  })
+})
+
 describe('the index with every form of each line', () => {
   // A branched line (Eevee) and a three-stage one, with a form whose parent is out of range
   // dropped rather than attached to nothing.
