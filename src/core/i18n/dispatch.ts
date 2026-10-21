@@ -1305,7 +1305,7 @@ export function countedLabel(label: string, count: number): string {
 }
 
 /** The Pokédex completion line: "5 / 649". */
-export function dexProgressText(done: number, total: number): string {
+export function dexProgressText(done: number | string, total: number | string): string {
   return `${done} / ${total}`
 }
 
@@ -1716,21 +1716,31 @@ export function medalDescription(lang: AppLanguage, medalID: string): string {
   const [kind, arg] = medalID.split('-') as [string, string | undefined]
   switch (kind) {
     case 'registered':
-      return t(
-        lang,
-        `${arg}종 등록하기`,
-        `Register ${arg} species`,
-        `${arg}しゅ とうろくする`,
-        `Registra ${arg} especies`,
-      )
+      return arg === '1'
+        ? t(lang, '한 종 등록하기', 'Register a species', '1しゅ とうろくする', 'Registra una especie')
+        : t(
+            lang,
+            `${arg}종 등록하기`,
+            `Register ${arg} species`,
+            `${arg}しゅ とうろくする`,
+            `Registra ${arg} especies`,
+          )
     case 'shiny':
-      return t(
-        lang,
-        `색이 다른 모습 ${arg}종 등록하기`,
-        `Register ${arg} shinies`,
-        `いろちがいを ${arg}しゅ とうろくする`,
-        `Registra ${arg} shinies`,
-      )
+      return arg === '1'
+        ? t(
+            lang,
+            '색이 다른 모습 한 종 등록하기',
+            'Register a shiny',
+            'いろちがいを 1しゅ とうろくする',
+            'Registra un shiny',
+          )
+        : t(
+            lang,
+            `색이 다른 모습 ${arg}종 등록하기`,
+            `Register ${arg} shinies`,
+            `いろちがいを ${arg}しゅ とうろくする`,
+            `Registra ${arg} shinies`,
+          )
     case 'caught':
       return t(
         lang,

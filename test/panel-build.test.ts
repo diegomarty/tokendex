@@ -1068,6 +1068,27 @@ describe('the challenges in the panel', () => {
     expect(panel.items[1]).toMatchObject({ done: true, percent: 100, text: 'Catch 3 Fire-type Pokémon' })
   })
 
+  // [trigger branch] A tokens challenge counts in tokens, compact like every figure the panel shows.
+  it('formats a tokens challenge’s progress compactly', () => {
+    const board = {
+      day: todayKey(NOW),
+      week: isoWeekKey(todayKey(NOW)),
+      items: [
+        {
+          id: 'x',
+          period: 'day' as const,
+          kind: 'useTokens' as const,
+          target: 2_000_000,
+          progress: 500_000,
+          done: false,
+        },
+      ],
+    }
+    expect(build({ state: state({ challenges: board }) }).challenges?.items[0]?.progressText).toBe(
+      '500K / 2M',
+    )
+  })
+
   it('has no board before the first fold of a day', () => {
     expect(build().challenges).toBeUndefined()
   })

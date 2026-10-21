@@ -534,3 +534,13 @@ describe('medal strings', () => {
     }
   })
 })
+
+describe('medal counts', () => {
+  // One is not plural: "Register 1 species" reads, "Register 1 shinies" does not.
+  it('speaks of one shiny and one catch in the singular', () => {
+    expect(d.medalDescription('en', 'shiny-1')).toBe('Register a shiny')
+    expect(d.medalDescription('es', 'shiny-1')).toBe('Registra un shiny')
+    expect(d.medalDescription('en', 'registered-1')).toBe('Register a species')
+    expect(d.medalDescription('en', 'shiny-10')).toBe('Register 10 shinies')
+  })
+})

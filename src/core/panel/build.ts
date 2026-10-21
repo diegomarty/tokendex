@@ -758,7 +758,11 @@ function challengesPanel(
         period: c.period,
         periodText: D.challengePeriodText(lang, c.period),
         text: D.challengeText(lang, c),
-        progressText: D.dexProgressText(c.progress, c.target),
+        // Tokens read compact ("500K / 2M"), as every figure on the panel; counts read as counts.
+        progressText:
+          c.kind === 'useTokens'
+            ? D.dexProgressText(compact(c.progress), compact(c.target))
+            : D.dexProgressText(c.progress, c.target),
         percent: Math.min(100, Math.floor((100 * c.progress) / c.target)),
         done: c.done,
         rewardText: `+${compact(D.challengeReward(c))}`,
