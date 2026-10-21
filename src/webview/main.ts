@@ -2151,13 +2151,12 @@ function renderDex(state: PanelState): string {
   const rows = visible
     .map(
       (e) => `
-      <div class="row log-row rarity-${escapeHTML(e.rarity)}${e.isActive ? ' active' : ''}">
+      <div class="row log-row rarity-${escapeHTML(e.rarity)}">
         <img class="thumb" src="${spriteURL(e.finalID, e.isShiny, false)}" alt="" loading="lazy">
         <div class="body">
           <div class="title">${escapeHTML(e.name)}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>
           <div class="desc">${escapeHTML(e.rarityText)}${e.caughtText === undefined ? '' : ` · ${escapeHTML(e.caughtText)}`}</div>
         </div>
-        ${e.isActive ? `<span class="desc">${escapeHTML(state.strings.raisingBadge)}</span>` : ''}
         ${e.isWild ? `<span class="tag xs">${escapeHTML(state.strings.wildBadge)}</span>` : ''}
       </div>`,
     )

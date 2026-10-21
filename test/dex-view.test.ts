@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  activeDexEntry,
   currentIsShiny,
   dexEntriesSorted,
   dexSpecies,
@@ -112,14 +111,6 @@ describe('evolution line strip', () => {
 
 describe('catch log', () => {
   const line = makeEvoLine(1, node(1, [node(2)]), 'common', { 1: { en: 'Base' }, 2: { en: 'Evo' } })
-
-  it('synthesises the Pokémon being raised instead of persisting it', () => {
-    const s = state({ active: mon() })
-    const entry = activeDexEntry(s, line)
-    expect(entry?.id).toBe('active-1-1')
-    expect(entry?.caughtAt).toBeUndefined() // never a real catch record
-    expect(s.dex).toEqual([]) // and it is not written into the persisted dex
-  })
 
   // [trigger branch] Diego: choosing a companion put it in the catch log, as a "Raising" row
   // pinned on top. The log records what happened — catches and graduations — newest first; the

@@ -407,10 +407,6 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     return entry
   })
 
-  const activeID =
-    state.active === undefined
-      ? undefined
-      : `active-${state.active.baseID}-${currentSpeciesID(state.active)}`
   const dexLog: PanelDexEntry[] = dexEntriesSorted(state, line).map((e) => {
     const row: PanelDexEntry = {
       finalID: e.finalID,
@@ -418,7 +414,6 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       isShiny: e.isShiny,
       rarity: e.rarity,
       rarityText: D.rarityLabel(lang, e.rarity),
-      isActive: e.id === activeID,
       isWild: e.source === 'wild',
     }
     if (e.caughtAt !== undefined) {

@@ -1162,9 +1162,6 @@ label.setting select {
   image-rendering: pixelated;
   flex: none;
 }
-.row.active {
-  border-color: var(--vscode-focusBorder);
-}
 
 /* ---- dev tab ----
    Developer-only surface, shown only when `tokendex.devMode` is on. It borrows the shop's row
@@ -4287,9 +4284,6 @@ button.dex-line-form:hover {
 }
 .log .row.log-row.rarity-legendary {
   border-left-color: var(--rarity-legendary);
-}
-.log .row.log-row.active {
-  outline: 1px solid var(--vscode-focusBorder);
 }
 
 @media (forced-colors: active) {

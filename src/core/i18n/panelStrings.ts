@@ -66,7 +66,6 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     empty: s(lang, 'shopHint'),
     segmentSpecies: s(lang, 'collection'),
     segmentLog: s(lang, 'catchLogTitle'),
-    raisingBadge: s(lang, 'dexRaising'),
     exportSave: s(lang, 'exportSaveButton'),
     importSave: s(lang, 'importSaveButton'),
     incubating: s(lang, 'eggIncubating'),

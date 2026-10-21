@@ -413,8 +413,6 @@ export interface PanelDexEntry {
   rarity: string
   rarityText: string
   caughtText?: string
-  /** The Pokémon currently being raised, pinned at the top. */
-  isActive: boolean
   /** Caught from a wild encounter rather than raised to its final form. */
   isWild: boolean
 }
@@ -671,7 +669,6 @@ export interface PanelStrings {
   empty: string
   segmentSpecies: string
   segmentLog: string
-  raisingBadge: string
   exportSave: string
   importSave: string
   incubating: string

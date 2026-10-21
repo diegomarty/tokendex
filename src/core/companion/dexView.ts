@@ -88,35 +88,6 @@ export function lineItems(mon: MonState | undefined, line: EvoLine | undefined):
 // MARK: - Catch log
 
 /**
- * The Pokémon being raised is shown alongside permanently saved graduates, but is synthesised
- * rather than written into the persisted dex. On graduation the active one disappears and a
- * real entry appears, so the list length never jumps.
- */
-export function activeDexEntry(state: CompanionState, line: EvoLine | undefined): DexEntry | undefined {
-  const active = state.active
-  if (active === undefined) return undefined
-  const finalID = currentSpeciesID(active)
-  const entry: DexEntry = {
-    id: `active-${active.baseID}-${finalID}`,
-    baseID: active.baseID,
-    finalID,
-    chainOrder: reachedForms(state, active),
-    rarity: active.rarity,
-    isShiny: currentIsShiny(active),
-  }
-  if (active.nature !== undefined) entry.nature = active.nature
-  if (line !== undefined) {
-    const names: Record<number, Record<string, string>> = {}
-    for (const id of active.pathIDs) {
-      const byLang = line.names[id]
-      if (byLang !== undefined) names[id] = byLang
-    }
-    entry.names = names
-  }
-  return entry
-}
-
-/**
  * The catch log: its records — catches and graduations — **most recently caught** first. The
  * companion on stage is not one (Diego: choosing it used to pin a "Raising" row on top).
  *

@@ -268,7 +268,6 @@ const STRINGS = {
   catchLogTitle: [`포획 로그`, `Catch log`, `捕獲ログ`, `Historial de capturas`],
   dexPagePrev: [`이전 페이지`, `Previous page`, `前のページ`, `Página anterior`],
   dexPageNext: [`다음 페이지`, `Next page`, `次のページ`, `Página siguiente`],
-  dexRaising: [`키우는 중`, `Raising`, `育成中`, `Criando`],
   rarityCommon: [`일반`, `Common`, `ノーマル`, `Común`],
   rarityUncommon: [`고급`, `Uncommon`, `アンコモン`, `Poco común`],
   rarityRare: [`희귀`, `Rare`, `レア`, `Raro`],
