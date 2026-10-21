@@ -553,7 +553,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     dexSpecies: species,
     dexSummary: dexSummary(state, species, dexLog.length, lang),
     medals: medalsPanel(state, lang),
-    ...challengesPanel(state, lang),
+    ...challengesPanel(state, now, lang),
     eggs: eggsPanel(state, lang),
     dexLog,
     dexLogFilters,
@@ -742,9 +742,14 @@ function lureName(speciesID: number): string {
 }
 
 /** The challenges board for Home, formatted; nothing before the first fold of a day. */
-function challengesPanel(state: CompanionState, lang: AppLanguage): { challenges?: PanelChallenges } {
+function challengesPanel(
+  state: CompanionState,
+  now: number,
+  lang: AppLanguage,
+): { challenges?: PanelChallenges } {
   const board = state.challenges
-  if (board === undefined) return {}
+  // Yesterday's board, before today's fold, is not today's: nothing rather than a wrong label.
+  if (board === undefined || board.day !== todayKey(now)) return {}
   return {
     challenges: {
       heading: D.challengesHeading(lang),

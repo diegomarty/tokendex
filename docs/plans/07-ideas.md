@@ -55,3 +55,18 @@ Va en una fase propia, después de la Shinydex. **Aparcada** por Diego (2026-10-
 - **Rangos de id:** Kanto 1–151, Johto 152–251, Hoenn 252–386, Sinnoh 387–493, Teselia 494–649 (`regions.ts`).
 - **Progreso:** registradas por región / total de la región, derivado del registro. Una medalla por región completa (7a).
 - **Panel:** `dexSummary.regions`, con { id, name, registered, total, percent, progressText }. La Pokédex filtra por región. UI de @helper.
+
+## Notas de la implementación (7a, 7b, 7c)
+
+- 7a: `medals.ts` (23 medallas, derivadas del registro, `awardMedals` con siembra silenciosa) y `regions.ts`. Se conceden al final de `grow()` (pliegue y caramelo), del turno y del impulso.
+- 7b: `challenges.ts` (2 diarios y 1 semanal, deterministas por fecha, con semana ISO). Recompensas en `EconomyBalance.challenge`.
+- 7c: el núcleo va dentro de 7a (`regionProgress`, `dexSummary.regions` y una medalla por región). El filtro de la Pokédex es de @helper.
+- Revisión de código, corregido con test e inyección:
+  - **Doble cobro de retos entre máquinas** con fechas distintas (zonas horarias o reloj desfasado): registro `challengesPaid`. Un reto regenerado cuyo id ya se pagó vuelve hecho y no se cobra otra vez. La fusión une los dos registros.
+  - **Tablero falsificado en una importación:** el tablero se reconstruye siempre desde el generador (`boardFor`), y del guardado solo se toman el progreso y el `done` de los retos que esa fecha reparte. Un tablero nunca paga más de tres recompensas.
+  - Una captura tras la medianoche, antes del primer pliegue del día, cuenta para el tablero de hoy.
+  - El panel no enseña el tablero de otro día como «Hoy».
+  - Las medallas con ids desconocidos (de una versión más nueva) se conservan, para que esa versión no las anuncie dos veces.
+  - Las medallas también se conceden desde `grow()`, así que cubren el Caramelo Raro.
+  - La recompensa de los retos se define en un solo sitio (`challengeReward`). Los JSDoc de `EconomyBalance` y `PanelDexSummary` vuelven a su sitio.
+- Sin cambios, a conciencia: el reto «usa N tokens» cuenta el uso de **esta** máquina. Con dos máquinas, la fusión toma el mayor progreso de las dos, no la suma. Sumar exigiría llevar la cuenta por dispositivo, y el reto se puede cumplir de todos modos en una.

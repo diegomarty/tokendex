@@ -202,6 +202,9 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
       }),
     }
   }
+  // Paid challenges only grow too: a challenge paid on either side is never paid again here.
+  const paid = [...new Set([...(local.challengesPaid ?? []), ...(remote.challengesPaid ?? [])])]
+  if (paid.length > 0) state.challengesPaid = paid.slice(-64)
   // Medals only grow: one celebrated on either side stays celebrated, never announced twice.
   const medals = new Set([...(local.medals ?? []), ...(remote.medals ?? [])])
   if (medals.size > 0) state.medals = [...medals]

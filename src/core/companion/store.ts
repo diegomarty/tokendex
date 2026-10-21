@@ -126,6 +126,7 @@ import {
 import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
 import { isStarterID } from './starters.js'
 import { awardMedals } from './medals.js'
+import { todayKey } from '../usage/entry.js'
 import { type Challenge, ensureChallenges, progressCatch, progressTokens } from './challenges.js'
 import { boostShiny, setLure } from './shop.js'
 import { EconomyBalance } from './economy.js'
@@ -1117,6 +1118,8 @@ export class CompanionStore {
       this.state = taken.state
       // A catch counts toward the challenges: its types, and whether it was new to the Pokédex.
       if (taken.outcome.kind === 'caught') {
+        // Today's board first: a catch after midnight, before the day's first fold, is today's.
+        this.announceChallenges(ensureChallenges(this.state, todayKey(this.now)))
         this.announceChallenges(
           progressCatch(this.state, {
             types: target?.types,
@@ -1295,6 +1298,8 @@ export class CompanionStore {
       }
     }
     if (result.graduated) this.graduate(result.mon)
+    // Registration and graduation happen here — in a fold or a candy — so medals are read here.
+    this.awardMedalsNow()
   }
 
   /**

@@ -18,8 +18,7 @@ import type { TurnOutcome } from '../companion/encounters.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
 import type { RegionID } from '../companion/regions.js'
-import type { Challenge } from '../companion/challenges.js'
-import { EconomyBalance } from '../companion/economy.js'
+import { type Challenge, challengeReward } from '../companion/challenges.js'
 
 const INDEX: Record<AppLanguage, 0 | 1 | 2 | 3> = { ko: 0, en: 1, ja: 2, es: 3 }
 const t = (lang: AppLanguage, ko: string, en: string, ja: string, es: string): string =>
@@ -1774,13 +1773,6 @@ export function medalsHeading(lang: AppLanguage, earned: number, total: number):
 
 // MARK: - Challenges (phase 7b)
 
-/** What a challenge's reward is: the table's, by period. */
-export function challengeReward(challenge: Pick<Challenge, 'period'>): number {
-  return challenge.period === 'day'
-    ? EconomyBalance.challenge.dailyReward
-    : EconomyBalance.challenge.weeklyReward
-}
-
 /** A type's name, as each language's games print it. */
 export function typeName(lang: AppLanguage, type: PokemonType): string {
   const names: Record<PokemonType, [string, string, string, string]> = {
@@ -1875,3 +1867,5 @@ export function challengePeriodText(lang: AppLanguage, period: 'day' | 'week'): 
     ? t(lang, '오늘', 'Today', 'きょう', 'Hoy')
     : t(lang, '이번 주', 'This week', 'こんしゅう', 'Esta semana')
 }
+
+export { challengeReward }

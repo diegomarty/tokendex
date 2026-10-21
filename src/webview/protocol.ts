@@ -270,9 +270,9 @@ export interface PanelDexSummary {
   /** The two segment labels with their counts: "Collection (8)", "Catch log (3)". */
   speciesSegmentText: string
   logSegmentText: string
-  /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
   /** The five regions' registration, in Pokédex order. */
   regions: PanelRegion[]
+  /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
   shinyRegistered: number
   /** 0..100 of the Shinydex, rounded as `percent` is. */
   shinyPercent: number

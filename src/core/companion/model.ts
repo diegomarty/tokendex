@@ -1100,6 +1100,8 @@ export interface CompanionState {
   medalsSeeded?: boolean
   /** Today's challenges and this week's (`challenges.ts`). Regenerated as the date moves. */
   challenges?: ChallengeBoard
+  /** Ids of the challenges already paid, newest last, so none is paid twice (`challenges.ts`). */
+  challengesPaid?: string[]
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**

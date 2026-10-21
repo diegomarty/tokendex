@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CHALLENGE_TYPES,
+  boardFor,
   challengesFor,
   ensureChallenges,
   isoWeekKey,
@@ -105,5 +106,35 @@ describe('challenge progress', () => {
     const settled = ensureChallenges({ ...s, challenges: { ...s.challenges!, items } }, day)
     expect(settled.done).toHaveLength(items.length)
     expect(ensureChallenges(settled.state, day).done).toHaveLength(0)
+  })
+})
+
+describe('paying each challenge once, across machines and clocks', () => {
+  // [trigger branch] Two machines on different dates: the board goes back to a day already
+  // paid and forward again. Regenerated, a challenge already paid comes back done, never paid
+  // a second time.
+  it('never pays a challenge twice when the board moves between days', () => {
+    let s = ensureChallenges(state(), '2026-10-22').state
+    s = progressTokens(s, 50_000_000).state
+    s = progressCatch(s, { types: ['fire'], isNew: true }).state
+    s = progressCatch(s, { types: ['fire'], isNew: true }).state
+    s = progressCatch(s, { types: ['fire'], isNew: true }).state
+    const paid = s.earnedTokens
+    expect(paid).toBeGreaterThan(0)
+    const back = ensureChallenges(s, '2026-10-21').state
+    const forth = ensureChallenges(back, '2026-10-22')
+    expect(forth.done).toEqual([])
+    expect(forth.state.earnedTokens).toBe(back.earnedTokens)
+    expect(forth.state.challenges!.items.filter((c) => c.period === 'day').every((c) => c.done)).toBe(
+      true,
+    )
+  })
+})
+
+describe('the board a day deals', () => {
+  it('is the generator’s, for any day and week', () => {
+    expect(boardFor('2026-10-21', '2026-W43').map((c) => c.id)).toEqual(
+      challengesFor('2026-10-21').map((c) => c.id),
+    )
   })
 })

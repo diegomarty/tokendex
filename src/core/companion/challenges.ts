@@ -4,9 +4,11 @@
  *  - **Deterministic by date.** The challenges of a day (and of an ISO week) come from a seed
  *    derived from the date alone, so every machine shows the same ones and a merge compares like
  *    with like. Two daily, of different kinds, and one weekly.
- *  - **Paid once, at the moment.** A challenge completed adds its reward to `earnedTokens` and is
- *    marked `done`, which only ever turns on. A merge may bring progress past the target with the
- *    reward unpaid (the winner never got there): `ensureChallenges` settles it, once.
+ *  - **Paid once, ever.** A challenge completed adds its reward to `earnedTokens`, is marked
+ *    `done`, and its id goes to `challengesPaid`. That ledger is what makes it once: two machines
+ *    on different dates move the board back and forth between days, and a regenerated challenge
+ *    whose id was paid comes back done. A merge may bring progress past the target with the reward
+ *    unpaid (the winner never got there): `ensureChallenges` settles it, once.
  */
 
 import { EconomyBalance } from './economy.js'
@@ -102,8 +104,16 @@ function make(period: ChallengePeriod, key: string, kind: ChallengeKind, next: (
 
 /** The challenges a day shows: its two dailies (different kinds) and its week's one. */
 export function challengesFor(day: string): Challenge[] {
-  return [...dailies(day), weekly(isoWeekKey(day))]
+  return boardFor(day, isoWeekKey(day))
 }
+
+/** The challenges dealt for a given day and week, fresh. What a saved board is rebuilt from. */
+export function boardFor(day: string, week: string): Challenge[] {
+  return [...dailies(day), weekly(week)]
+}
+
+/** How many paid ids the ledger keeps: comfortably more than the days a board can swing over. */
+const PAID_LEDGER_SIZE = 64
 
 function dailies(day: string): Challenge[] {
   const next = stream(`day:${day}`)
@@ -118,7 +128,8 @@ function weekly(week: string): Challenge {
   return make('week', week, KINDS[next() % KINDS.length]!, next)
 }
 
-function rewardOf(challenge: Challenge): number {
+/** What a challenge pays: the table's, by period. The one statement of it. */
+export function challengeReward(challenge: Pick<Challenge, 'period'>): number {
   return challenge.period === 'day'
     ? EconomyBalance.challenge.dailyReward
     : EconomyBalance.challenge.weeklyReward
@@ -129,16 +140,30 @@ function settle(state: CompanionState): { state: CompanionState; done: Challenge
   const board = state.challenges
   if (board === undefined) return { state, done: [] }
   const done: Challenge[] = []
+  const ledger = new Set(state.challengesPaid ?? [])
+  let changed = false
   const items = board.items.map((c) => {
+    // Paid before (this board was regenerated after moving between days): done, not paid again.
+    if (!c.done && ledger.has(c.id)) {
+      changed = true
+      return { ...c, done: true, progress: c.target }
+    }
     if (c.done || c.progress < c.target) return c
     const paid = { ...c, done: true }
     done.push(paid)
     return paid
   })
-  if (done.length === 0) return { state, done }
-  const reward = done.reduce((sum, c) => sum + rewardOf(c), 0)
+  if (done.length === 0)
+    return { state: changed ? { ...state, challenges: { ...board, items } } : state, done }
+  const reward = done.reduce((sum, c) => sum + challengeReward(c), 0)
+  const paid = [...ledger, ...done.map((c) => c.id)].slice(-PAID_LEDGER_SIZE)
   return {
-    state: { ...state, earnedTokens: state.earnedTokens + reward, challenges: { ...board, items } },
+    state: {
+      ...state,
+      earnedTokens: state.earnedTokens + reward,
+      challenges: { ...board, items },
+      challengesPaid: paid,
+    },
     done,
   }
 }

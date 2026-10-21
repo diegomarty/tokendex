@@ -1918,6 +1918,19 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.snapshot().challenges!.day).toBe('2026-10-22')
   })
 
+  // [trigger branch] A catch after midnight, before the day's first fold, counts toward today's
+  // challenges, never toward yesterday's.
+  it('counts a catch toward today’s challenges even before the day’s first fold', async () => {
+    let clock = Date.parse('2026-10-21T22:00:00')
+    const s = store({ now: () => clock })
+    await s.update(obs(0, '2026-10-21'))
+    await s.update(obs(EncounterBalance.firstThreshold, '2026-10-21'))
+    expect(s.snapshot().wild.length).toBeGreaterThan(0)
+    clock = Date.parse('2026-10-22T00:05:00')
+    await s.throwBallAt(s.snapshot().wild[0]!.id, 'pokeBall')
+    expect(s.snapshot().challenges!.day).toBe('2026-10-22')
+  })
+
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
     const s = await hatched()
     const companion = s.snapshot().active!.baseID

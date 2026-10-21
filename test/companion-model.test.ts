@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { challengesFor } from '../src/core/companion/challenges.js'
 import {
   FreshEgg,
   PokemonBalance,
@@ -304,28 +305,39 @@ describe('CompanionState decoding', () => {
     expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
   })
 
-  it('keeps a challenge board, dropping what is not a challenge', () => {
-    const good = {
-      id: 'day:2026-10-21:catch',
-      period: 'day',
-      kind: 'catch',
-      target: 3,
+  // [trigger branch] The board is rebuilt from the generator: only its own challenges, with the
+  // targets it deals, keep the progress saved. Ten thousand forged weekly items paying 40M each
+  // come back as the three the date deals.
+  it('keeps the progress of the challenges the date deals, and nothing else', () => {
+    const dealt = challengesFor('2026-10-21')
+    const first = dealt[0]!
+    const forged = Array.from({ length: 10_000 }, (_, i) => ({
+      ...first,
+      id: `week:x:${i}`,
+      period: 'week',
+      target: 1,
       progress: 1,
-      done: false,
-    }
+    }))
     const board = decodeCompanionState({
-      challenges: { day: '2026-10-21', week: '2026-W43', items: [good, { ...good, kind: 'nope' }, 'x'] },
-    }).challenges
-    expect(board).toEqual({ day: '2026-10-21', week: '2026-W43', items: [good] })
+      challenges: {
+        day: '2026-10-21',
+        week: '2026-W43',
+        items: [{ ...first, progress: 1, target: 1 }, ...forged],
+      },
+    }).challenges!
+    expect(board.items.map((c) => c.id)).toEqual(dealt.map((c) => c.id))
+    expect(board.items[0]).toMatchObject({ target: first.target, progress: 1 })
     expect(decodeCompanionState({ challenges: { items: [] } }).challenges).toBeUndefined()
   })
 
-  it('keeps the medals celebrated, dropping what is not a medal', () => {
+  // An id this build does not know is kept: a newer build celebrated it, and dropping it would
+  // have that build announce it again after a sync.
+  it('keeps the medals celebrated, including ids from a newer build', () => {
     const state = decodeCompanionState({
-      medals: ['registered-1', 'nope', 7, 'shiny-1'],
+      medals: ['registered-1', 'region-galar', 7, 'shiny-1', 'shiny-1'],
       medalsSeeded: true,
     })
-    expect(state.medals).toEqual(['registered-1', 'shiny-1'])
+    expect(state.medals).toEqual(['registered-1', 'region-galar', 'shiny-1'])
     expect(state.medalsSeeded).toBe(true)
   })
 

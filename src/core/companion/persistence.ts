@@ -7,8 +7,7 @@
  * starts fresh.
  */
 
-import { MEDALS } from './medals.js'
-import type { Challenge, ChallengeBoard } from './challenges.js'
+import { type ChallengeBoard, boardFor } from './challenges.js'
 import {
   APP_LANGUAGES,
   COMPANION_STATE_SCHEMA,
@@ -164,39 +163,31 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
 }
 
 /**
- * A challenge board: a day, a week, and the challenges that read. A challenge of an unknown kind
- * or period is dropped (a newer build's), the board without its dates is.
+ * A challenge board, rebuilt from the generator (`boardFor`) for its day and week: only the
+ * challenges that date deals, with the targets it deals, keep their saved progress and done flag.
+ * A forged or a newer build's item has nothing to attach to and is gone — a board can never pay
+ * more than three challenges' rewards.
  */
 function decodeChallengeBoard(value: unknown): ChallengeBoard | undefined {
   if (!isObject(value)) return undefined
   const day = lenientOptional(value, 'day', isString)
   const week = lenientOptional(value, 'week', isString)
   if (day === undefined || week === undefined || !Array.isArray(value['items'])) return undefined
-  const items: Challenge[] = []
+  const saved = new Map<string, Record<string, unknown>>()
   for (const raw of value['items']) {
     if (!isObject(raw)) continue
     const id = lenientOptional(raw, 'id', isString)
-    const period = raw['period']
-    const kind = raw['kind']
-    const target = lenientOptional(raw, 'target', isInt)
-    if (id === undefined || target === undefined || target <= 0) continue
-    if (period !== 'day' && period !== 'week') continue
-    if (kind !== 'catch' && kind !== 'catchType' && kind !== 'newSpecies' && kind !== 'useTokens')
-      continue
-    const challenge: Challenge = {
-      id,
-      period,
-      kind,
-      target,
-      progress: Math.min(target, Math.max(0, lenient(raw, 'progress', isInt, 0))),
+    if (id !== undefined && !saved.has(id)) saved.set(id, raw)
+  }
+  const items = boardFor(day, week).map((c) => {
+    const raw = saved.get(c.id)
+    if (raw === undefined) return c
+    return {
+      ...c,
+      progress: Math.min(c.target, Math.max(0, lenient(raw, 'progress', isInt, 0))),
       done: raw['done'] === true,
     }
-    if (kind === 'catchType') {
-      if (!isPokemonType(raw['type'])) continue
-      challenge.type = raw['type']
-    }
-    items.push(challenge)
-  }
+  })
   return { day, week, items }
 }
 
@@ -540,13 +531,21 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   const lure = decodeLure(value['lure'])
   if (lure !== undefined) state.lure = lure
   // Only ids the catalogue holds: an unknown one would never be met, nor ever be shown.
+  // Every id kept, even one this build does not know: a newer build celebrated it, and dropping
+  // it would have that build announce it again after a sync. Deduplicated and capped.
   if (Array.isArray(value['medals'])) {
-    const known = new Set(MEDALS.map((m) => m.id))
-    state.medals = value['medals'].filter((id): id is string => typeof id === 'string' && known.has(id))
+    const ids = value['medals'].filter((id): id is string => typeof id === 'string' && id.length <= 64)
+    state.medals = [...new Set(ids)].slice(0, 512)
   }
   if (value['medalsSeeded'] === true) state.medalsSeeded = true
   const challenges = decodeChallengeBoard(value['challenges'])
   if (challenges !== undefined) state.challenges = challenges
+  if (Array.isArray(value['challengesPaid'])) {
+    const ids = value['challengesPaid'].filter(
+      (id): id is string => typeof id === 'string' && id.length <= 64,
+    )
+    state.challengesPaid = [...new Set(ids)].slice(-64)
+  }
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 

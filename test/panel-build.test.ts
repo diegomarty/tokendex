@@ -25,6 +25,7 @@ import { compact } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
 import { MEDALS } from '../src/core/companion/medals.js'
+import { isoWeekKey } from '../src/core/companion/challenges.js'
 import {
   StreakBalance,
   attackPermille,
@@ -1030,8 +1031,8 @@ describe('medals and regions in the panel', () => {
 describe('the challenges in the panel', () => {
   it('lists the challenges formatted, with their progress and reward', () => {
     const board = {
-      day: '2026-10-21',
-      week: '2026-W43',
+      day: todayKey(NOW),
+      week: isoWeekKey(todayKey(NOW)),
       items: [
         {
           id: 'day:2026-10-21:catch',
@@ -1069,5 +1070,11 @@ describe('the challenges in the panel', () => {
 
   it('has no board before the first fold of a day', () => {
     expect(build().challenges).toBeUndefined()
+  })
+
+  // [trigger branch] Yesterday's board, before today's fold, is not shown as today's.
+  it('shows no board dealt for another day', () => {
+    const stale = { day: '2020-01-01', week: '2020-W01', items: [] }
+    expect(build({ state: state({ challenges: stale }) }).challenges).toBeUndefined()
   })
 })
