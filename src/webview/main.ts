@@ -83,6 +83,11 @@ let starterSelected: number | undefined
 let bagPocket: 'balls' | 'berries' | 'items' | undefined
 let bagSelected: string | undefined
 let stagedID: string | undefined
+/** The PC box is open over the scene (view state; Esc or a click outside closes it). */
+let pcOpen = false
+/** The PC box's search and sort (view state, kept while the panel lives). */
+let pcQuery = ''
+let pcSort: 'progress' | 'number' | 'rarity' = 'progress'
 /**
  * The encounter whose entrance has already played. Home is repainted wholesale — by every state
  * push, and it used to be by every menu click — and the entrance hung off the scene's own class,
@@ -347,21 +352,42 @@ function renderHome(state: PanelState): string {
   // its screen. It is the currency every action on this screen is paid in, and the number that
   // moves when an attack takes tokens or a scan brings some in. The Explorer card is a glance and
   // keeps the plain row.
-  // The lid carries the usage folded: today and this month under the name, and the official limits
-  // on its three lights. A click drops the counter's detail right under it — the tool hanging off
-  // the device, in VS Code's own style.
+  // The lid carries the usage folded: today and this month under the name, the official limits on
+  // its three lights, and a chevron that says it opens. Opened, the detail comes out of the lid as
+  // its own screen — the two figures side by side with their costs, the tools, the limits — so the
+  // usage is read on the device rather than on a box hanging off it.
   const lid = state.lid
   const usageOpen = openDrawers.has('usage')
   const lights = lid.lights.map((light) => `<i class="led-${escapeHTML(light)}"></i>`).join('')
+  const columns = lid.columns
+    .map(
+      (c) => `<div class="lid-column">
+          <span class="lid-column-label">${escapeHTML(c.label)}</span>
+          <span class="lid-column-value" title="${escapeHTML(c.exactText)}">${escapeHTML(c.tokensText)}</span>
+          <span class="lid-column-cost">${escapeHTML(c.costText)}</span>
+        </div>`,
+    )
+    .join('')
+  const screen = usageOpen
+    ? `<div class="lid-screen lcd" id="lid-detail" role="region" aria-label="${escapeHTML(lid.toggleLabel)}">
+          <div class="lid-columns">${columns}</div>
+          <div class="lid-table">${breakdown}</div>
+          ${renderLimits(state)}
+        </div>`
+    : `<div id="lid-detail" hidden></div>`
   const wallet = compact
     ? ''
-    : `<div class="wallet-bar device-casing">
-        <button class="brand lid-toggle" data-drawer="usage" aria-expanded="${usageOpen}" aria-controls="lid-detail">
+    : `<div class="wallet-bar device-casing${usageOpen ? ' open' : ''}">
+        <button class="brand lid-toggle" data-drawer="usage" aria-expanded="${usageOpen}" aria-controls="lid-detail"
+          aria-label="${escapeHTML(lid.toggleLabel)}" aria-describedby="lid-usage">
           <span class="device-lens"></span>
           <span class="device-leds">${lights}</span>
           <span class="brand-text">
             <span class="brand-name">TOKEN<b>DEX</b></span>
-            <span class="lid-usage"><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
+            <span class="lid-usage-line">
+              <span class="lid-usage" id="lid-usage"><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
+              <i class="codicon codicon-chevron-down lid-chevron" aria-hidden="true"></i>
+            </span>
           </span>
         </button>
         <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
@@ -369,31 +395,28 @@ function renderHome(state: PanelState): string {
           <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
           <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
         </button>
+        ${screen}
       </div>`
-  const walletRow = compact
-    ? `<div class="row-stat">
-        <span class="label">${escapeHTML(state.strings.spendable)}</span>
-        <span class="value">${escapeHTML(state.spendableText)}</span>
-        <span class="note">${shopLink}</span>
-      </div>`
-    : ''
 
-  const counter = `
+  // The compact card keeps the counter in the open: the two figures, the balance, the limits and
+  // the tools. The panel folds all of it into the lid.
+  if (compact)
+    return `<div class="game">${game}</div>
     <div class="stats">
       <div class="stat-tiles">
         ${statTile(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
         ${statTile(state.strings.month, t.monthText, t.monthCostText, t.monthExactText)}
       </div>
-      ${walletRow}
+      <div class="row-stat">
+        <span class="label">${escapeHTML(state.strings.spendable)}</span>
+        <span class="value">${escapeHTML(state.spendableText)}</span>
+        <span class="note">${shopLink}</span>
+      </div>
     </div>
     ${renderLimits(state)}
     ${breakdown}`
-
-  // The compact card keeps the counter in the open; the panel folds it into the lid.
-  if (compact) return `<div class="game">${game}</div>${counter}`
   return `
     ${wallet}
-    ${usageOpen ? `<div class="lid-detail" id="lid-detail">${counter}</div>` : `<div id="lid-detail" hidden></div>`}
     <div class="game">${game}</div>`
 }
 
@@ -458,7 +481,7 @@ function drawerDetail(state: PanelState, id: PanelDrawer['id']): string {
     case 'trail':
       return renderTrail(state.wild)
     case 'wild':
-      return `${renderLure(state)}<p class="desc drawer-note">${escapeHTML(state.wild.nextText)}</p>`
+      return renderWildQueue(state)
     case 'finds':
       return renderFinds(state.wild)
     case 'streak':
@@ -905,6 +928,10 @@ function playerPlate(state: PanelState): string {
             : `<i class="codicon codicon-info plate-info" role="img" tabindex="0" title="${escapeHTML(meta.join(' · '))}" aria-label="${escapeHTML(meta.join(' · '))}"></i>`
         }
         <span class="plate-pct">${percent}%</span>
+        <button class="pc-open" data-pc-open aria-haspopup="dialog" aria-expanded="${pcOpen}"
+                title="${escapeHTML(state.pcBox.title)}" aria-label="${escapeHTML(state.pcBox.title)}">
+          <span class="pc-icon" aria-hidden="true"></span>
+        </button>
       </div>
       ${expBar(c)}
     </div>`
@@ -1010,16 +1037,36 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
     </div>`
 }
 
-/** Items lying in the wild area, and legendaries that can still be tracked back. */
+/**
+ * The Wild drawer: who is waiting, as a tight list of cards (the one on stage first), the lure
+ * running, and the road to the next encounter on the game's own bar.
+ */
+function renderWildQueue(state: PanelState): string {
+  const wild = state.wild
+  const queue = wild.encounters
+    .map(
+      (e) => `<li class="queue-mon">
+          <img src="${spriteURL(e.speciesID, e.isShiny, false)}" alt="">
+          <span class="queue-name">${escapeHTML(e.name)}${e.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+          <span class="rarity-badge ${escapeHTML(e.rarity)}">${escapeHTML(e.rarityText)}</span>
+        </li>`,
+    )
+    .join('')
+  return `${queue === '' ? '' : `<ul class="wild-queue" aria-label="${escapeHTML(wild.waitingText)}">${queue}</ul>`}
+    ${renderLure(state)}
+    <div class="wild-next">
+      <span class="wild-next-text">${escapeHTML(wild.nextText)}</span>
+      ${gameMeter(wild.progressPercent, { surface: 'paper', size: 'thin', hidden: true })}
+    </div>`
+}
+
+/** The Finds drawer: what turned up, a tile per item with its count as in the bag, and one
+ *  button to pick it all up. A tile alone picks up that one. */
 function renderFinds(wild: PanelState['wild']): string {
   return wild.finds.length === 0
     ? ''
     : `<section class="wild-finds">
-        <div class="finds-head">
-          <h2 class="section">${escapeHTML(wild.findsText ?? '')}</h2>
-          <button class="link" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
-        </div>
-        <div class="finds-row">${wild.finds
+        <div class="finds-grid">${wild.finds
           .map(
             (
               find,
@@ -1030,6 +1077,7 @@ function renderFinds(wild: PanelState['wild']): string {
             </button>`,
           )
           .join('')}</div>
+        <button class="finds-collect" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
       </section>`
 }
 
@@ -1899,6 +1947,7 @@ function render(): void {
   // Pokédex, would be news about nothing in particular.
   if (pendingWallet !== undefined && tab === 'home') playWalletChange(pendingWallet)
   pendingWallet = undefined
+  paintPCBox()
 }
 
 /**
@@ -2094,6 +2143,32 @@ document.addEventListener('click', (event) => {
   if (confirmStarter !== null) {
     const id = Number((confirmStarter as HTMLElement).dataset['chooseStarter'])
     if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'chooseStarter', speciesID: id })
+    return
+  }
+  // The PC box: open from the player plate, pick to switch (the same `setCompanion` the Pokédex
+  // posts), close on the backdrop or the close button.
+  if (target.closest('[data-pc-open]') !== null) {
+    pcOpen = !pcOpen
+    invalidate('home')
+    render()
+    if (pcOpen) {
+      document
+        .querySelector<HTMLElement>(
+          '.pc-box [data-pc-search], .pc-box [data-pc-pick], .pc-box [data-pc-close]',
+        )
+        ?.focus()
+    }
+    return
+  }
+  const pcPick = target.closest('[data-pc-pick]')
+  if (pcPick !== null) {
+    const id = Number((pcPick as HTMLElement).dataset['pcPick'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'setCompanion', speciesID: id })
+    closePCBox()
+    return
+  }
+  if (target.closest('[data-pc-close]') !== null) {
+    closePCBox()
     return
   }
   const companionButton = target.closest('[data-companion]')
@@ -2529,3 +2604,145 @@ if (current === undefined) {
 }
 
 vscode.postMessage({ type: 'ready' })
+
+// MARK: - PC box
+
+/**
+ * The PC box (Diego): the companion switch from the battle plate, as the games keep their boxes
+ * in the PC. A modal sheet over the scene — the obtained species the core lists (`pcBox`), the
+ * unfinished first — each a button that posts the same `setCompanion` the Pokédex does.
+ */
+function pcBox(state: PanelState): string {
+  const box = state.pcBox
+  const sorts = box.sorts
+    .map(
+      (o) =>
+        `<option value="${escapeHTML(o.id)}"${o.id === pcSort ? ' selected' : ''}>${escapeHTML(o.label)}</option>`,
+    )
+    .join('')
+  // Search and sort only when there is something to search: an empty box keeps its one sentence.
+  const tools =
+    box.items.length === 0
+      ? ''
+      : `<div class="pc-tools">
+          <input class="pc-search" type="search" data-pc-search value="${escapeHTML(pcQuery)}"
+                 placeholder="${escapeHTML(box.searchPlaceholder)}" aria-label="${escapeHTML(box.searchPlaceholder)}">
+          <select class="pc-sort" data-pc-sort aria-label="${escapeHTML(box.sorts.map((o) => o.label).join(' / '))}">${sorts}</select>
+        </div>`
+  return `<div class="pc-backdrop" data-pc-close></div>
+    <div class="pc-box" role="dialog" aria-modal="true" aria-label="${escapeHTML(box.title)}">
+      <div class="pc-head">
+        <span class="pc-icon" aria-hidden="true"></span>
+        <h3>${escapeHTML(box.title)}</h3>
+        <button class="pc-close" data-pc-close aria-label="${escapeHTML(state.strings.close)}" title="${escapeHTML(state.strings.close)}">
+          <i class="codicon codicon-close" aria-hidden="true"></i>
+        </button>
+      </div>
+      ${tools}
+      <div class="pc-grid-wrap">${pcGrid(state)}</div>
+    </div>`
+}
+
+/** The box's grid for the current search and sort. Re-painted alone while typing, keeping focus. */
+function pcGrid(state: PanelState): string {
+  const box = state.pcBox
+  if (box.items.length === 0) return `<p class="pc-empty">${escapeHTML(box.emptyText)}</p>`
+  const query = pcQuery.trim().toLowerCase()
+  const shown = box.items
+    .filter(
+      (item) =>
+        query === '' ||
+        item.name.toLowerCase().includes(query) ||
+        String(item.id) === query.replace(/^#/, ''),
+    )
+    // The core's order is the progress sort; the other two only reorder it, ties by number.
+    .sort((a, b) =>
+      pcSort === 'number'
+        ? a.id - b.id
+        : pcSort === 'rarity'
+          ? b.rarityRank - a.rarityRank || a.id - b.id
+          : 0,
+    )
+  if (shown.length === 0) return `<p class="pc-empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+  return `<div class="pc-grid">${shown
+    .map(
+      (
+        item,
+      ) => `<button class="pc-item rarity-${escapeHTML(item.rarity)}${item.registered ? ' registered' : ''}"
+              data-pc-pick="${item.id}" title="${escapeHTML(item.name)} · ${escapeHTML(item.percentText)}"
+              aria-label="${escapeHTML(item.name)} · ${escapeHTML(item.percentText)}">
+        <img src="${spriteURL(item.id, item.isShiny, false)}" alt="" loading="lazy">
+        <span class="pc-name">${escapeHTML(item.name)}</span>
+        ${gameMeter(item.percent, { surface: 'paper', size: 'thin', hidden: true, ...(item.registered ? { tone: 'done' as const } : {}) })}
+      </button>`,
+    )
+    .join('')}</div>`
+}
+
+/**
+ * The PC box lives in its own layer on `<body>`, outside the panel: the scene makes a stacking
+ * context, and a fixed sheet inside it would sit under the dialog and the drawers. Painted after
+ * every render, so it follows the state while open; emptied when closed or off Home.
+ */
+function paintPCBox(): void {
+  let layer = document.getElementById('pc-layer')
+  // Leaving Home closes it: coming back later to a sheet left open would be a surprise.
+  if (tab !== 'home') pcOpen = false
+  if (!pcOpen || current === undefined) {
+    layer?.replaceChildren()
+    if (layer) delete layer.dataset['state']
+    return
+  }
+  if (layer === null) {
+    layer = document.createElement('div')
+    layer.id = 'pc-layer'
+    document.body.append(layer)
+  }
+  // Repaint only on a new state, not on every render, so a search being typed keeps its focus.
+  const signature = JSON.stringify(current.pcBox)
+  if (layer.dataset['state'] !== signature || layer.childElementCount === 0) {
+    layer.dataset['state'] = signature
+    layer.innerHTML = pcBox(current)
+  }
+  // The bars take their width from `data-fill`, which `paintBars` applies — the panel's sections
+  // get it from `render`, this layer lives outside them.
+  paintBars(layer)
+}
+
+function closePCBox(): void {
+  if (!pcOpen) return
+  pcOpen = false
+  invalidate('home')
+  render()
+  document.querySelector<HTMLElement>('[data-pc-open]')?.focus()
+}
+
+// Esc closes the PC box, and focus goes back to the button that opened it.
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && pcOpen) {
+    event.preventDefault()
+    closePCBox()
+  }
+})
+
+// The PC box's search filters as you type, and its sort reorders: both repaint the grid alone.
+document.addEventListener('input', (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.('[data-pc-search]')
+  if (field == null || current === undefined) return
+  pcQuery = (field as HTMLInputElement).value
+  repaintPCGrid()
+})
+document.addEventListener('change', (event) => {
+  const select = (event.target as HTMLElement | null)?.closest?.('[data-pc-sort]')
+  if (select == null || current === undefined) return
+  const value = (select as HTMLSelectElement).value
+  if (value === 'progress' || value === 'number' || value === 'rarity') pcSort = value
+  repaintPCGrid()
+})
+
+function repaintPCGrid(): void {
+  const wrap = document.querySelector<HTMLElement>('#pc-layer .pc-grid-wrap')
+  if (wrap === null || current === undefined) return
+  wrap.innerHTML = pcGrid(current)
+  paintBars(wrap)
+}

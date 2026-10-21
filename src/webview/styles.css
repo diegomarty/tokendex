@@ -2824,53 +2824,77 @@ body.vscode-high-contrast-light .wild-scene {
   }
 }
 
-/* Items lying in the wild: chips with a rarity border, and one button to take them all. */
-.finds-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.finds-row {
-  display: flex;
-  flex-wrap: wrap;
+/* Items lying in the wild: a tile each, as in the bag — the item at its native size, its count
+   in the corner, its rarity on the edge — and one button to take them all. */
+.finds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
   gap: 6px;
 }
 .find {
   position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  aspect-ratio: 1;
+  min-height: 44px;
   padding: 0;
-  background: transparent;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  background: var(--paper-field);
+  border: 2px solid var(--paper-edge);
+  border-radius: var(--r-m);
+  box-shadow: 0 2px 0 var(--paper-edge);
+  color: var(--ink);
   cursor: pointer;
-  color: var(--vscode-foreground);
 }
 .find:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+  border-color: var(--ink);
+}
+.find:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
 }
 .find img {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   image-rendering: pixelated;
 }
 .find .count {
   position: absolute;
   right: 2px;
-  bottom: 0;
-  font-size: 0.7em;
+  bottom: 1px;
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 .find.rarity-uncommon {
-  border-color: var(--vscode-charts-green);
+  border-color: var(--rarity-uncommon);
 }
 .find.rarity-rare {
-  border-color: var(--vscode-charts-blue);
+  border-color: var(--rarity-rare);
 }
 .find.rarity-legendary {
-  border-color: var(--vscode-charts-purple);
+  border-color: var(--rarity-legendary);
+}
+.finds-collect {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin-top: 10px;
+  padding: 3px 12px;
+  border: 2px solid var(--ink);
+  border-radius: var(--r-m);
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.finds-collect:hover {
+  background: transparent;
+  color: var(--ink);
+}
+.finds-collect:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
 }
 
 /* Tracking spends tokens, but it is still a side errand: a quiet button, not the panel's loudest. */
@@ -4913,19 +4937,149 @@ body.vscode-dark .challenge-reward {
   background: var(--device-led-red);
   box-shadow: 0 0 5px var(--device-led-red);
 }
-.wallet-bar:has(.lid-toggle[aria-expanded='true']) {
-  border-bottom-left-radius: var(--r-s);
-  border-bottom-right-radius: var(--r-s);
+/* The chevron says the lid opens, right after the line it opens; it turns over when open. */
+.lid-usage-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
-/* The counter hanging off the device: native, under the lid. */
-.lid-detail {
-  margin: -6px 6px 14px;
-  padding: 12px 12px 8px;
-  border: 1px solid var(--vscode-panel-border);
-  border-top: none;
-  border-radius: 0 0 var(--r-l) var(--r-l);
-  background: var(--vscode-editor-background);
+.lid-chevron {
+  flex: none;
+  font-size: var(--fs-s);
+  opacity: 0.85;
+  transition: transform var(--t-fast) ease;
+}
+.lid-toggle[aria-expanded='true'] .lid-chevron {
+  transform: rotate(180deg);
+}
+/* Opened, the lid grows a screen across its full width: the usage read on the device itself. */
+.wallet-bar.open {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  padding-bottom: 8px;
+}
+.lid-screen {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding: 10px 12px 8px;
+  border-radius: var(--r-l);
+  color: var(--lcd-label);
+  text-shadow: none;
+  font-size: var(--fs-s);
+  animation: drawer-open var(--t-mid) ease-out;
+}
+.lid-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.lid-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lid-column + .lid-column {
+  padding-left: 12px;
+  border-left: 1px dashed color-mix(in srgb, var(--lcd-ink) 30%, transparent);
+}
+.lid-column-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.lid-column-value {
+  color: var(--lcd-ink);
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 6px color-mix(in srgb, var(--lcd-ink) 55%, transparent);
+}
+.lid-column-cost {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.lid-table {
   overflow-x: auto;
+}
+.lid-screen table {
+  margin-top: 10px;
+  font-size: var(--fs-s);
+}
+.lid-screen :is(th, td) {
+  padding: 4px 6px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--lcd-ink) 22%, transparent);
+}
+.lid-screen th {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lid-screen tr > :first-child {
+  padding-left: 0;
+}
+.lid-screen tr > :last-child {
+  padding-right: 0;
+}
+.lid-screen td.num {
+  color: var(--lcd-ink);
+  white-space: nowrap;
+}
+@media (max-width: 300px) {
+  .lid-screen table {
+    font-size: var(--fs-xs);
+  }
+  .lid-screen :is(th, td) {
+    padding: 3px;
+  }
+  /* Capitals spaced out make "Herramienta" the widest word in the table, and push "/min" out. */
+  .lid-screen th {
+    letter-spacing: 0;
+    text-transform: none;
+  }
+}
+.lid-screen td.dim {
+  color: var(--lcd-label);
+}
+.lid-screen .empty {
+  margin: 10px 0 0;
+  opacity: 0.8;
+}
+.lid-screen h2.section {
+  margin: 12px 0 6px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lid-screen .limits {
+  gap: 6px;
+}
+.lid-screen .limit-head {
+  font-size: var(--fs-s);
+  margin-bottom: 3px;
+}
+.lid-screen .limit-value {
+  color: var(--lcd-ink);
+  opacity: 1;
+}
+.lid-screen .bar {
+  height: 5px;
+  background: var(--track);
+  box-shadow: inset 0 0 0 1px var(--lcd-edge);
+}
+.lid-screen .bar i {
+  background: var(--device-led-green);
+}
+.lid-screen .limit.warn .bar i {
+  background: var(--device-led-amber);
+}
+.lid-screen .limit.crit .bar i {
+  background: var(--device-led-red);
+}
+.lid-screen .limit.crit .limit-value {
+  color: var(--device-led-red);
 }
 
 .drawers {
@@ -5073,8 +5227,60 @@ body.vscode-dark .challenge-reward {
 .drawer-detail .challenge + .challenge {
   border-top: 1px dashed color-mix(in srgb, var(--ink) 20%, transparent);
 }
-.drawer-note {
-  margin: 6px 0 0;
+/* The Wild drawer: who waits, a tight card each — sprite, name, rarity — the one on stage first. */
+.wild-queue {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 4px;
+  max-height: 168px;
+  margin: 0 0 8px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.queue-mon {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  padding: 2px 6px 2px 2px;
+  border-radius: var(--r-m);
+  background: var(--paper-field);
+  box-shadow: inset 0 0 0 1px var(--paper-edge);
+}
+.queue-mon:first-child {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+/* The 96px sprite's middle at native size: every pixel whole, none of the sheet's margin. */
+.queue-mon img {
+  grid-row: 1 / 3;
+  width: 40px;
+  height: 40px;
+  object-fit: none;
+  image-rendering: pixelated;
+}
+.queue-name {
+  min-width: 0;
+  font-size: var(--fs-s);
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-mon .rarity-badge {
+  justify-self: start;
+  line-height: 1.3;
+}
+.drawer-detail .lure-status {
+  margin-bottom: 8px;
+}
+.wild-next {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-s);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .drawer-link {
   display: block;
@@ -5096,10 +5302,213 @@ body.vscode-dark .challenge-reward {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .drawer.open .drawer-detail {
+  .drawer.open .drawer-detail,
+  .lid-screen {
     animation: none;
   }
-  .drawer-chevron {
+  .drawer-chevron,
+  .lid-chevron {
     transition: none;
   }
+}
+
+/* ── PC box ───────────────────────────────────────────────────────────────────────────────
+   The companion switch from the battle plate (Diego): a PC icon on the plate opens a sheet of
+   the obtained species, as the games keep their boxes in the PC. The sheet is paper on the
+   device's casing; tokens only. */
+.pc-open {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  margin-left: 2px;
+  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
+  border-radius: var(--r-s);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.pc-open:hover,
+.pc-open:focus-visible,
+.pc-open[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--exp) 25%, transparent);
+  border-color: var(--exp);
+  outline: none;
+}
+/* A small monitor on its stand: a screen in the EXP blue, drawn with borders, nothing bundled. */
+.pc-icon {
+  position: relative;
+  display: inline-block;
+  width: 12px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--exp) 55%, transparent);
+}
+.pc-icon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 6px;
+  height: 2px;
+  transform: translateX(-50%);
+  background: currentColor;
+  border-radius: 1px;
+}
+.pc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--shade) 55%, transparent);
+}
+.pc-box {
+  position: fixed;
+  z-index: 41;
+  left: 50%;
+  top: 12%;
+  width: min(92vw, 420px);
+  max-height: 76vh;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--device-casing-edge);
+  border-radius: var(--r-m);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shade) 60%, transparent);
+}
+.pc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--on-fill);
+  background: linear-gradient(180deg, var(--device-casing), var(--device-casing-deep));
+  border-bottom: 2px solid var(--device-casing-edge);
+}
+.pc-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--fs-m);
+  letter-spacing: 0.02em;
+}
+.pc-close {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-s);
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.pc-close:hover,
+.pc-close:focus-visible {
+  background: color-mix(in srgb, var(--on-fill) 20%, transparent);
+  outline: none;
+}
+.pc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+  padding: 10px;
+  overflow-y: auto;
+}
+.pc-item {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 4px;
+  color: inherit;
+  background: var(--paper-field);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-s);
+  cursor: pointer;
+  transition: border-color var(--t-fast);
+}
+.pc-item:hover,
+.pc-item:focus-visible {
+  border-color: var(--exp);
+  outline: none;
+}
+.pc-item img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.pc-item .pc-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-s);
+  font-weight: 600;
+}
+.pc-item .game-meter {
+  width: 100%;
+}
+.pc-empty {
+  margin: 0;
+  padding: 16px 12px;
+  font-size: var(--fs-s);
+  opacity: 0.8;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pc-item {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .pc-box {
+    border-color: CanvasText;
+  }
+  .pc-icon {
+    background: Canvas;
+  }
+}
+/* The box's search and sort: one row under its head, native fields on paper. */
+.pc-tools {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+.pc-search {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: var(--fs-s);
+  color: var(--ink);
+  background: var(--paper-field);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-s);
+}
+.pc-sort {
+  flex: none;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: var(--fs-s);
+  color: var(--ink);
+  background: var(--paper-field);
+  border: 1px solid var(--paper-edge);
+  border-radius: var(--r-s);
+}
+.pc-search:focus-visible,
+.pc-sort:focus-visible {
+  outline: 1px solid var(--exp);
+  outline-offset: 0;
+}
+.pc-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
 }
