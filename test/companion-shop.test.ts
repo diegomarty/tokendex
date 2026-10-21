@@ -49,6 +49,7 @@ import {
   itemShopPrice,
   shopEntryPrice,
   type MonState,
+  parsePackQuantity,
 } from '../src/core/companion/model.js'
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
@@ -188,6 +189,18 @@ describe('buying items', () => {
     expect(itemCount(after, 'pokeBall')).toBe(itemCount(before, 'pokeBall') + Pokeball.bundleSize)
     // Cheaper per ball than buying them one at a time, which is the whole point of the row.
     expect(after.spentTokens).toBeLessThan(unit * Pokeball.bundleSize)
+  })
+
+  // Plan 9.1: the host reads a pack's quantity out of an opaque id, and only the steps the shop
+  // sells pass — anything else is stale or hand-crafted and fails closed, so the bundle discount
+  // can never be claimed for an arbitrary count.
+  it('reads only the pack quantities the shop sells out of an id', () => {
+    expect(parsePackQuantity('10')).toBe(10)
+    expect(parsePackQuantity('30')).toBe(30)
+    expect(parsePackQuantity('100')).toBe(100)
+    for (const raw of ['25', '110', '0', '-10', '010', '1e1', '30.0', ' 30', '']) {
+      expect(parsePackQuantity(raw), raw).toBeUndefined()
+    }
   })
 
   it('checks the balance against the bundle price, not the unit price', () => {

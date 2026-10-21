@@ -62,7 +62,7 @@ import {
   ANIMATED_SPECIES_MAX,
   BALL_KINDS,
   ITEM_KINDS,
-  Pokeball,
+  parsePackQuantity,
   isBerryKind,
   itemIsBundled,
 } from './core/companion/model.js'
@@ -526,9 +526,9 @@ const requestAction = (payload: WorkerAction, fromLastScan = false): Promise<Sca
  * Translates an opaque panel id back into a typed action. Unknown ids are ignored rather than
  * trusted: the webview is a separate bundle and could be stale after an update.
  *
- * The quantity segment (`item:pokeBall:10`) is accepted only when it names exactly the bundle
- * size the shop sells — any other number is a stale or hand-crafted id and fails closed, so the
- * bundle discount can never be claimed for an arbitrary count.
+ * The quantity segment (`item:pokeBall:30`) is accepted only when it names a pack quantity the
+ * shop sells (`parsePackQuantity`: ×10 … ×100) — any other number is a stale or hand-crafted id
+ * and fails closed, so the bundle discount can never be claimed for an arbitrary count.
  */
 function parseEntryID(id: string): WorkerAction | undefined {
   const [kind, value, quantityRaw] = id.split(':')
@@ -536,8 +536,9 @@ function parseEntryID(id: string): WorkerAction | undefined {
     const item = ITEM_KINDS.find((i) => i === value)
     if (item === undefined) return undefined
     if (quantityRaw === undefined) return { action: 'buyItem', item }
-    if (quantityRaw !== String(Pokeball.bundleSize) || !itemIsBundled(item)) return undefined
-    return { action: 'buyItem', item, quantity: Pokeball.bundleSize }
+    const quantity = parsePackQuantity(quantityRaw)
+    if (quantity === undefined || !itemIsBundled(item)) return undefined
+    return { action: 'buyItem', item, quantity }
   }
   if (kind === 'egg') {
     const tiers: Rarity[] = ['common', 'uncommon', 'rare', 'legendary']

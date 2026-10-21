@@ -30,6 +30,7 @@ import type {
   PanelLureOffer,
   PanelShinyBar,
   PanelShopAction,
+  PanelShopPack,
   PanelShopItem,
   PanelState,
   PanelStreak,
@@ -65,6 +66,7 @@ import {
   languageLabel,
   natureName,
   shopEntryPrice,
+  packQuantities,
 } from '../companion/model.js'
 import {
   canBuyEgg,
@@ -117,6 +119,9 @@ import { panelStrings } from '../i18n/panelStrings.js'
 /** Selectable refresh intervals, in seconds. One list for the host's timer, the setting's enum
  *  and the panel's picker — three copies would drift. */
 export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
+
+/** How many waiting encounters Home's Wild drawer lists behind the one on stage (plan 9.4). */
+export const WILD_QUEUE_SHOWN = 3
 
 export interface PanelBuildInputs {
   /** The scan this panel accompanies. May be a reused one — nothing time-critical lives in it. */
@@ -230,8 +235,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     // A ball and its ten-pack are one product sold at two quantities, not two products. They
     // were two cards, and the ×10 card had nothing of its own to say — its description was the
     // same generated sentence on all three, so a third of the tab was a repeated clause. The
-    // ids are untouched: `parseEntryID` still sees `item:pokeBall` and `item:pokeBall:10`, and
-    // still refuses any quantity that is not exactly the bundle size.
+    // ids are untouched: `parseEntryID` sees `item:pokeBall` and `item:pokeBall:<pack>`, and
+    // refuses any quantity `parsePackQuantity` does not list.
     const bundled = itemIsBundled(kind)
     const singlePrice = compact(shopEntryPrice({ kind: 'item', item: kind }))
     const actions: PanelShopAction[] = [
@@ -248,22 +253,28 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       },
     ]
     if (bundled) {
-      const quantity = Pokeball.bundleSize
-      const bundleName = `${name} ×${quantity}`
-      const bundlePrice = compact(shopEntryPrice({ kind: 'item', item: kind, quantity }))
-      actions.push({
-        id: `item:${kind}:${quantity}`,
-        text: `×${quantity}`,
-        label: D.bundleBuyLabel(lang, bundleName, bundlePrice, bundleDiscount),
-        confirmTitle: bundleName,
-        priceText: bundlePrice,
-        price: shopEntryPrice({ kind: 'item', item: kind, quantity }),
-        // Grouping the two prices onto one row is only an improvement while the ten-pack is
-        // still visibly the cheaper ball. Without this the saving would survive nowhere but in
-        // arithmetic the reader has to do.
-        saveText: D.bundleSaveText(bundleDiscount),
-        enabled: canBuyItem(state, kind, quantity),
-      })
+      const pack = (quantity: number): PanelShopPack => {
+        const bundleName = `${name} ×${quantity}`
+        const price = shopEntryPrice({ kind: 'item', item: kind, quantity })
+        const priceText = compact(price)
+        return {
+          id: `item:${kind}:${quantity}`,
+          text: `×${quantity}`,
+          label: D.bundleBuyLabel(lang, bundleName, priceText, bundleDiscount),
+          confirmTitle: bundleName,
+          priceText,
+          price,
+          // Grouping the two prices onto one row is only an improvement while the ten-pack is
+          // still visibly the cheaper ball. Without this the saving would survive nowhere but in
+          // arithmetic the reader has to do.
+          saveText: D.bundleSaveText(bundleDiscount),
+          enabled: canBuyItem(state, kind, quantity),
+        }
+      }
+      // The ten-pack is the row's second price; its steps (×10 … ×100) ride on it, each one
+      // priced and checked against the wallet here, so the stepper only walks a list.
+      const packs = packQuantities().map(pack)
+      actions.push({ ...packs[0]!, packs })
     }
     const row: PanelShopItem = {
       id: `item:${kind}`,
@@ -465,6 +476,10 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     }),
     waitingText: D.wildBadgeTooltip(lang, state.wild.length),
     ...(state.wild.length > 1 ? { moreText: D.moreWaitingText(lang, state.wild.length - 1) } : {}),
+    queueShown: WILD_QUEUE_SHOWN,
+    ...(state.wild.length > 1 + WILD_QUEUE_SHOWN
+      ? { queueMoreText: D.moreWaitingText(lang, state.wild.length - 1 - WILD_QUEUE_SHOWN) }
+      : {}),
     nextText: D.wildNextEncounterText(lang, compact(toNext)),
     progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
     streak: streakRow(state, lang, now),

@@ -614,7 +614,8 @@ describe('empty states', () => {
   // Every empty view says what it is and how it fills, in every language — and the Shinydex no
   // longer borrows the collection's "nothing caught" line, which said nothing about shinies.
   it.each(APP_LANGUAGES)('titles each empty view and says how it fills, in %s', (lang) => {
-    const views = ['collection', 'shinydex', 'log', 'bag'] as const
+    // Plan 9.6: a bag pocket is never disabled, so an empty one says how it fills too.
+    const views = ['collection', 'shinydex', 'log', 'bag', 'balls', 'berries', 'items'] as const
     const texts = views.map((v) => d.emptyState(lang, v))
     for (const { title, hint } of texts) {
       expect(title.trim()).not.toBe('')

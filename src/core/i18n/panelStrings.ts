@@ -78,6 +78,11 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     emptyShinydex: emptyState(lang, 'shinydex'),
     emptyLog: emptyState(lang, 'log'),
     emptyBag: { ...emptyState(lang, 'bag'), action: emptyBagAction(lang) },
+    emptyPocket: {
+      balls: emptyState(lang, 'balls'),
+      berries: emptyState(lang, 'berries'),
+      items: emptyState(lang, 'items'),
+    },
     trainer: trainerLabel(lang),
     keepCompleted: keepCompletedLabel(lang),
     keepCompletedHint: keepCompletedHint(lang),

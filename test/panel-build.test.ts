@@ -12,6 +12,7 @@ import {
   freshCompanionState,
   freshSpeciesProgress,
   makeEvoLine,
+  packQuantities,
   type SpeciesProgress,
   shopEntryPrice,
   type CompanionState,
@@ -200,6 +201,20 @@ describe('wild statuses', () => {
     ).toContain('2')
     expect(build({ state: state({ wild: [wild()] }) }).wild.moreText).toBeUndefined()
   })
+
+  // Plan 9.4: Home's Wild drawer lists the next few in rows, then one row for the rest. The one
+  // on stage is in the scene above, so the drawer starts behind it.
+  it('lists the next few behind the one on stage, and counts the rest in one line', () => {
+    const queue = (n: number) =>
+      build({ state: state({ wild: Array.from({ length: n }, (_, i) => wild({ id: `w${i}` })) }) }).wild
+    const shown = queue(1).queueShown
+    expect(shown).toBe(3)
+    // Stage + exactly `shown` behind it: every one has its row, nothing left to count.
+    expect(queue(1 + shown).queueMoreText).toBeUndefined()
+    // [trigger branch] One more than fits: the row says one, in the drawer's words.
+    expect(queue(2 + shown).queueMoreText).toBe(D.moreWaitingText('en', 1))
+    expect(queue(30).queueMoreText).toBe(D.moreWaitingText('en', 30 - 1 - shown))
+  })
 })
 
 describe('the terrain', () => {
@@ -337,6 +352,43 @@ describe('the shop', () => {
     ])
     // The Master Ball is sold singly on purpose, so its row stays a one-price row.
     expect(rowFor('item:masterBall')!.actions).toHaveLength(1)
+  })
+
+  // Plan 9.1: the ten-pack steps ×10, ×20 … ×100, so a big restock is not ten confirmations.
+  // Every step is priced and labelled here; the webview only walks the list.
+  it('steps the ten-pack from ×10 to ×100, each step priced by the till', () => {
+    const pack = rowFor('item:pokeBall')!.actions[1]!
+    const quantities = packQuantities()
+    expect(quantities).toEqual([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    expect(pack.packs!.map((p) => p.id)).toEqual(quantities.map((q) => `item:pokeBall:${q}`))
+    for (const [i, step] of pack.packs!.entries()) {
+      const quantity = quantities[i]!
+      const price = shopEntryPrice({ kind: 'item', item: 'pokeBall', quantity })
+      expect(step.price).toBe(price)
+      expect(step.priceText).toBe(compact(price))
+      expect(step.text).toBe(`×${quantity}`)
+      expect(step.confirmTitle).toContain(`×${quantity}`)
+      expect(step.label).toContain(step.priceText)
+      expect(step.saveText).toBe(pack.saveText)
+    }
+    // The first step is the ten-pack the row already shows.
+    expect(pack.packs![0]!.id).toBe(pack.id)
+    expect(pack.packs![0]!.priceText).toBe(pack.priceText)
+    expect(new Set(pack.packs!.map((p) => p.label)).size).toBe(quantities.length)
+    // The single and the Master Ball are not packs.
+    expect(rowFor('item:pokeBall')!.actions[0]!.packs).toBeUndefined()
+    expect(rowFor('item:masterBall')!.actions[0]!.packs).toBeUndefined()
+  })
+
+  // [trigger branch] Each step is checked against the wallet on its own: enough for ×10 is not
+  // enough for ×20.
+  it('enables each step by what the wallet covers', () => {
+    const ten = shopEntryPrice({ kind: 'item', item: 'pokeBall', quantity: 10 })
+    const steps = build({ state: state({ usedSinceInstall: ten }) }).shop.find(
+      (item) => item.id === 'item:pokeBall',
+    )!.actions[1]!.packs!
+    expect(steps[0]!.enabled).toBe(true)
+    expect(steps[1]!.enabled).toBe(false)
   })
 
   // Grouping is only an improvement while the ten-pack is still visibly the cheaper ball: fold

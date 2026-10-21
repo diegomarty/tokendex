@@ -2042,7 +2042,7 @@ export function eggsEmptyText(lang: AppLanguage): string {
 /** An empty view's title and the line saying how it fills — the way out, not only the absence. */
 export function emptyState(
   lang: AppLanguage,
-  view: 'collection' | 'shinydex' | 'log' | 'bag',
+  view: 'collection' | 'shinydex' | 'log' | 'bag' | 'balls' | 'berries' | 'items',
 ): { title: string; hint: string } {
   switch (view) {
     case 'collection':
@@ -2111,6 +2111,40 @@ export function emptyState(
           'Buy balls and berries in the shop, or pick up finds in the wild.',
           'ショップで ボールや きのみを かうか、やせいで どうぐを ひろおう。',
           'Compra balls y bayas en la tienda, o recoge hallazgos en estado salvaje.',
+        ),
+      }
+    // A pocket is never disabled (plan 9.6): empty, it says how it fills, like the bag.
+    case 'balls':
+      return {
+        title: t(lang, '볼이 없어요', 'No Poké Balls', 'ボールが ない', 'No tienes Poké Balls'),
+        hint: t(
+          lang,
+          '상점에서 사거나, 야생에서 주워 보세요.',
+          'Buy them in the shop, or pick them up in the wild.',
+          'ショップで かうか、やせいで ひろおう。',
+          'Cómpralas en la tienda o recógelas en estado salvaje.',
+        ),
+      }
+    case 'berries':
+      return {
+        title: t(lang, '열매가 없어요', 'No berries', 'きのみが ない', 'No tienes bayas'),
+        hint: t(
+          lang,
+          '상점에서 사거나, 야생에서 주워 보세요.',
+          'Buy them in the shop, or pick them up in the wild.',
+          'ショップで かうか、やせいで ひろおう。',
+          'Cómpralas en la tienda o recógelas en estado salvaje.',
+        ),
+      }
+    case 'items':
+      return {
+        title: t(lang, '도구가 없어요', 'No items', 'どうぐが ない', 'No tienes objetos'),
+        hint: t(
+          lang,
+          '이상한사탕, 민트, 빛나는부적은 상점에 있어요.',
+          'Rare Candy, Mints and the Shiny Charm are in the shop.',
+          'ふしぎなアメ、ミント、ひかるおまもりは ショップに ある。',
+          'Caramelos Raros, Mentas y el Amuleto Iris están en la tienda.',
         ),
       }
   }

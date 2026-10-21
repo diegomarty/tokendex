@@ -89,7 +89,15 @@ export interface PanelShopAction {
   /** The saving this quantity gives, already formatted (`−10%`). Absent when there is none. */
   saveText?: string
   enabled: boolean
+  /**
+   * On the ten-pack only: every quantity the stepper offers (×10 … ×100), the first being this
+   * action itself. Each is a complete action — the webview swaps one for another, never prices.
+   */
+  packs?: PanelShopPack[]
 }
+
+/** One step of the ten-pack stepper: an action of its own, without further steps. */
+export type PanelShopPack = Omit<PanelShopAction, 'packs'>
 
 export interface PanelShopItem {
   /** Opaque row id; the actions carry the ids that are echoed back. */
@@ -535,6 +543,13 @@ export interface PanelWild {
   waitingText: string
   /** How many wait behind the one on stage, short enough for a menu cell: "+2 waiting". */
   moreText?: string
+  /**
+   * Home's Wild drawer (plan 9.4) lists this many of the encounters behind the one on stage
+   * (`encounters[1 … queueShown]`), one per row.
+   */
+  queueShown: number
+  /** The drawer's last row, for those beyond `queueShown`: "+5 waiting". Absent when none are. */
+  queueMoreText?: string
   /** Label on the progress bar toward the next encounter: "1.2M to the next encounter". */
   nextText: string
   /** 0..100 toward the next encounter, the bar that label sits on. */
@@ -637,6 +652,8 @@ export interface PanelStrings {
   emptyShinydex: PanelEmpty
   emptyLog: PanelEmpty
   emptyBag: PanelEmpty & { action: string }
+  /** Each bag pocket empty (plan 9.6: a pocket is never disabled); the way out is `emptyBag.action`. */
+  emptyPocket: Record<'balls' | 'berries' | 'items', PanelEmpty>
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */

@@ -333,6 +333,11 @@ export const Pokeball = {
    */
   bundleSize: 10,
   bundleMultiplier: 9,
+  /**
+   * How many ten-packs one purchase may step up to (plan 9.1): ×10 … ×100, so a big restock is one
+   * confirmation instead of ten, at the same per-ball discount.
+   */
+  bundleMaxPacks: 10,
 
   /**
    * Poké Balls a fresh save starts with. The first encounter arrives at 500k tokens but a ball
@@ -474,6 +479,20 @@ export function shopEntryPrice(entry: ShopEntry): number {
   // Per-unit discount rather than a flat bundle price, so the two constants stay independent:
   // changing `bundleSize` alone must not silently change what a bundle costs per ball.
   return Math.round((unit * quantity * Pokeball.bundleMultiplier) / Pokeball.bundleSize)
+}
+
+/** The quantities a pack is sold in: `bundleSize` × 1 … `bundleMaxPacks`. The one list of them. */
+export function packQuantities(): number[] {
+  return Array.from({ length: Pokeball.bundleMaxPacks }, (_, i) => Pokeball.bundleSize * (i + 1))
+}
+
+/**
+ * The pack quantity an opaque id names, or `undefined` for anything the shop does not sell. Exact
+ * text only (`30`, never `030` or `3e1`): the id is echoed back from a separate bundle and a
+ * number it was never given fails closed, so the discount is never claimed for an arbitrary count.
+ */
+export function parsePackQuantity(raw: string): number | undefined {
+  return packQuantities().find((quantity) => String(quantity) === raw)
 }
 
 // MARK: - Candy grants
