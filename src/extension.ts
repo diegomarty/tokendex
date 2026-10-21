@@ -29,6 +29,7 @@ import {
   type PanelRequestKind,
   anySurfaceOpen,
   broadcastThrow,
+  deliverNews,
   reloadSurfaces,
   updateSurfaces,
 } from './surface.js'
@@ -374,9 +375,11 @@ function startWorker(context: vscode.ExtensionContext): void {
   worker = instance
 
   instance.on('message', (response: ScanResponse | CelebrateBroadcast) => {
-    // Celebrations arrive outside the request/response ids: the game's peak moments as
-    // toasts, each carrying a way into the panel.
+    // Celebrations arrive outside the request/response ids. On a surface on screen they are
+    // news the panel draws with the catch's card (plan 08 §7: one way to celebrate); only when
+    // none is do they become toasts, each carrying a way into the panel.
     if ('celebrate' in response) {
+      if (deliverNews(response.news)) return
       for (const message of response.celebrate) {
         void vscode.window.showInformationMessage(message, response.openLabel).then((choice) => {
           if (choice === response.openLabel) void vscode.commands.executeCommand('tokendex.open')

@@ -614,9 +614,6 @@ export interface PanelStrings {
   owned: string
   use: string
   empty: string
-  bagEmpty: string
-  dexEmpty: string
-  dexEmptyHint: string
   segmentSpecies: string
   segmentLog: string
   raisingBadge: string
@@ -812,3 +809,19 @@ export type PanelMessage =
    * lead somewhere.
    */
   | { type: 'openPanel' }
+
+/**
+ * One piece of the game's news (plan 08 §7): what the store announced, for the panel to show
+ * with the catch's card. Sent as `{ type: 'news', items }` only to surfaces on screen; the host
+ * toasts the same headline when none is.
+ */
+export interface PanelNews {
+  /** Style token: hatched, evolved, graduated, shiny, companion, ditto, candy, wild, legendary, medal, challenge, info. */
+  kind: string
+  speciesID?: number
+  isShiny: boolean
+  /** The toast's own sentence, localised. */
+  headline: string
+  /** A second line: on an evolution, the form it registered on the way. */
+  detail?: string
+}

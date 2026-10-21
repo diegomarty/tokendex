@@ -87,7 +87,7 @@ import {
   grantBalls,
   loseTestLegendary,
 } from '../core/dev/simulation.js'
-import type { PanelDevControl, PanelState, PanelEncounterResult } from '../webview/protocol.js'
+import type { PanelDevControl, PanelNews, PanelState, PanelEncounterResult } from '../webview/protocol.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -190,8 +190,11 @@ export type WorkerRequest =
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
+  /** Toasts, for when no surface is on screen: every event's sentence but the player's own choices. */
   celebrate: string[]
   openLabel: string
+  /** The same moments as news for a surface on screen (plan 08 §7), which then replaces the toasts. */
+  news: PanelNews[]
 }
 
 export type ScanResponse =
@@ -214,6 +217,7 @@ const config = (workerData ?? {}) as WorkerConfig
 // Re-exported from the core panel builder, its real home, so the host's import keeps working.
 export { REFRESH_PRESETS } from '../core/panel/build.js'
 import { buildPanelState, catchBanner } from '../core/panel/build.js'
+import { type NewsEvent, newsFor, newsToasts } from '../core/panel/news.js'
 
 /**
  * Whether an encounter may toast at all (`tokendex.encounterNotifications`). Carried on every
@@ -580,9 +584,10 @@ async function accrue(observation: ScanObservation, known: ReturnType<LimitsPoll
   // The game's peak moments — hatch, evolution, graduation, a candy grant — accumulate in
   // the store and would otherwise happen in silence. They ride their own broadcast (not the
   // response) so a panel request and a timer scan celebrate exactly once each.
-  const celebrations: CelebrationEvent[] = [
+  // Typed as news events: the store's carry their species, which the news card draws.
+  const celebrations: NewsEvent[] = [
     ...companion.drainEvents(),
-    ...grants.map((g): CelebrationEvent => ({
+    ...grants.map((g): NewsEvent => ({
       kind: 'candyGranted',
       count: g.count,
       windowName: g.windowName,
@@ -591,7 +596,8 @@ async function accrue(observation: ScanObservation, known: ReturnType<LimitsPoll
   if (celebrations.length > 0) {
     const lang = companion.snapshot().language
     parentPort?.postMessage({
-      celebrate: celebrations.map((event) => celebrationText(lang, event)),
+      celebrate: celebrations.filter(newsToasts).map((event) => celebrationText(lang, event)),
+      news: celebrations.map((event) => newsFor(lang, event)),
       openLabel: openPanelLabel(lang),
     })
   }

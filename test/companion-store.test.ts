@@ -1931,6 +1931,25 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.snapshot().challenges!.day).toBe('2026-10-22')
   })
 
+  // [trigger branch] An evolution says which form it registered on the way (a non-final form
+  // registers exactly when it evolves), and a companion chosen by hand is news for the panel.
+  it('names the form an evolution registered, and announces a companion chosen by hand', async () => {
+    const s = await hatched()
+    const base = s.snapshot().active!.baseID
+    s.drainEvents()
+    await s.update(
+      obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0) + 5),
+    )
+    const evolved = s.drainEvents().find((e) => e.kind === 'evolved')
+    expect(evolved).toMatchObject({ speciesID: base + 1, name: `Evo${base}`, registered: `Base${base}` })
+    expect(await s.setCompanion(base)).toBe('set')
+    expect(s.drainEvents()).toContainEqual({
+      kind: 'companionChosen',
+      speciesID: base,
+      name: `Base${base}`,
+    })
+  })
+
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
     const s = await hatched()
     const companion = s.snapshot().active!.baseID

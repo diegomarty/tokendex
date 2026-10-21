@@ -1112,8 +1112,9 @@ export function mergedText(lang: AppLanguage, dexAdded: number, narrative: 'loca
  */
 export type CelebrationEvent =
   | { kind: 'hatched'; name: string; isShiny: boolean }
-  | { kind: 'evolved'; name: string }
+  | { kind: 'evolved'; name: string; registered?: string }
   | { kind: 'graduated'; name: string }
+  | { kind: 'companionChosen'; name: string }
   | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'shinyRegistered'; name: string }
   | { kind: 'medalEarned'; medalID: string }
@@ -1191,6 +1192,14 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `✨ Shiny ${event.name} registered in the Pokédex!`,
         `✨ いろちがいの ${event.name}が ずかんに とうろくされた!`,
         `✨ ¡${event.name} shiny registrado en la Pokédex!`,
+      )
+    case 'companionChosen':
+      return t(
+        lang,
+        `이제 ${event.name}이(가) 함께해요!`,
+        `${event.name} joins you now!`,
+        `${event.name}が いっしょに いる!`,
+        `¡Ahora te acompaña ${event.name}!`,
       )
     case 'companionSwitched':
       return event.to === undefined
@@ -2121,4 +2130,9 @@ export function shopGroupSummary(lang: AppLanguage, count: number, from: string)
     `${count}こ · ${from}から`,
     `${count} · desde ${from}`,
   )
+}
+
+/** An evolution's detail in the news: the form it registered on the way. */
+export function registeredOnTheWay(lang: AppLanguage, name: string): string {
+  return t(lang, `${name} 등록 완료`, `${name} registered`, `${name} とうろくずみ`, `${name} registrado`)
 }

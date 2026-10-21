@@ -12,7 +12,7 @@
  */
 
 import * as vscode from 'vscode'
-import type { PanelMessage, PanelState, PanelEncounterResult } from './webview/protocol.js'
+import type { PanelMessage, PanelNews, PanelState, PanelEncounterResult } from './webview/protocol.js'
 import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export type PanelRequestKind =
@@ -55,6 +55,8 @@ let lastState: PanelState | undefined
 export interface SurfaceOptions {
   /** A glanceable mini card (the Explorer view): Home only, no tabs, half-scale sprite. */
   compact?: boolean
+  /** Whether the surface is on screen now: news go to it instead of a toast (plan 08 §7). */
+  isVisible?: () => boolean
 }
 
 export class PanelSurface {
@@ -91,6 +93,13 @@ export class PanelSurface {
   postThrow(result: PanelEncounterResult): void {
     if (this.disposed) return
     void this.webview.postMessage({ type: 'throw', result })
+  }
+
+  /** Shows the game's news, when on screen. `true` when it did — the host then skips the toasts. */
+  postNews(items: PanelNews[]): boolean {
+    if (this.disposed || this.options.isVisible?.() !== true) return false
+    void this.webview.postMessage({ type: 'news', items })
+    return true
   }
 
   /** Rebuilds the page, picking up a freshly built bundle without restarting the host. */
@@ -281,6 +290,17 @@ export function updateSurfaces(state: PanelState): void {
  */
 export function broadcastThrow(result: PanelEncounterResult): void {
   for (const surface of surfaces) surface.postThrow(result)
+}
+
+/**
+ * Delivers the game's news to every surface on screen. `true` when one showed them: the moment
+ * was seen where it happened, and a toast on top would say it twice. Never remembered, like a
+ * throw — a surface opened later does not replay news from minutes ago.
+ */
+export function deliverNews(items: PanelNews[]): boolean {
+  let shown = false
+  for (const surface of surfaces) shown = surface.postNews(items) || shown
+  return shown
 }
 
 /** True when at least one surface exists, so a scan can skip building the panel state. */

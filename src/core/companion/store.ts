@@ -152,8 +152,11 @@ const LOCK_TIMEOUT_MS = 5_000
 
 export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
-  | { kind: 'evolved'; speciesID: number; name: string }
-  | { kind: 'graduated'; name: string }
+  /** `registered`: the form left behind, registered on the way (a non-final form registers as it evolves). */
+  | { kind: 'evolved'; speciesID: number; name: string; registered?: string }
+  | { kind: 'graduated'; name: string; speciesID?: number }
+  /** The player put a species on stage by hand: news for the panel, never a toast. */
+  | { kind: 'companionChosen'; speciesID: number; name: string }
   /** A challenge completed and paid (`challenges.ts`). */
   | { kind: 'challengeDone'; challenge: Challenge }
   /** A medal newly met (`medals.ts`); its name is the dispatcher's, from the id. */
@@ -1066,6 +1069,15 @@ export class CompanionStore {
       if (by === 'player' && current.registered) mon.chosenWhenRegistered = true
       this.state = { ...stepping, active: mon }
       this.line = line
+      // Chosen by hand: news for the panel the player is looking at (never a toast — they just
+      // clicked). An automatic switch announces itself as `companionSwitched` instead.
+      if (by === 'player') {
+        this.pendingEvents.push({
+          kind: 'companionChosen',
+          speciesID,
+          name: localizedName(line, speciesID, this.state.language),
+        })
+      }
       this.eventUntil = 0
       return 'set'
     })
@@ -1264,11 +1276,21 @@ export class CompanionStore {
     )
     this.state = { ...this.state, active: result.mon, species: result.species }
 
+    // The form each evolution leaves behind — registered on the way — for the news to name.
+    let leaving = currentSpeciesID(active)
     for (const event of result.events) {
       if (event.kind === 'evolved') {
         const name =
           this.line === undefined ? '' : localizedName(this.line, event.toSpeciesID, this.state.language)
-        this.pendingEvents.push({ kind: 'evolved', speciesID: event.toSpeciesID, name })
+        const registered =
+          this.line === undefined ? undefined : localizedName(this.line, leaving, this.state.language)
+        this.pendingEvents.push({
+          kind: 'evolved',
+          speciesID: event.toSpeciesID,
+          name,
+          ...(registered === undefined || registered === '' ? {} : { registered }),
+        })
+        leaving = event.toSpeciesID
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
       if (event.kind === 'shinyRegistered') {
@@ -1343,7 +1365,7 @@ export class CompanionStore {
       dex: [...this.state.dex, entry],
       collectedFinals: [...collected],
     }
-    this.pendingEvents.push({ kind: 'graduated', name })
+    this.pendingEvents.push({ kind: 'graduated', name, speciesID: finalID })
     this.eventUntil = this.now + GRADUATE_EVENT_WINDOW_MS
   }
 

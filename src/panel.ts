@@ -25,7 +25,9 @@ export class GamePanel {
     extensionUri: vscode.Uri,
     onRequest: (request: PanelRequestKind) => void,
   ) {
-    new PanelSurface(panel.webview, extensionUri, onRequest, this.disposables)
+    new PanelSurface(panel.webview, extensionUri, onRequest, this.disposables, {
+      isVisible: () => panel.visible,
+    })
 
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables)
     this.panel.onDidChangeViewState(

@@ -264,18 +264,6 @@ const STRINGS = {
   // No 🥚 in the word: every surface that shows this label already draws an egg next to it
   // (the panel's scene, the compact card's portrait), so the emoji read as two eggs.
   eggIncubating: [`부화 준비 중`, `Incubating`, `孵化の準備中`, `Incubando`],
-  dexEmptyTitle: [
-    `아직 잡은 포켓몬이 없어요!`,
-    `No Pokémon caught yet!`,
-    `まだ捕まえたポケモンがいません！`,
-    `¡Todavía no has capturado ningún Pokémon!`,
-  ],
-  dexEmptyHint: [
-    `토큰을 써서 첫 포켓몬을 부화시켜 보세요.`,
-    `Spend tokens to hatch your first Pokémon.`,
-    `トークンを使って最初のポケモンを孵化させましょう。`,
-    `Usa tokens para eclosionar tu primer Pokémon.`,
-  ],
   dexTitle: [`도감`, `Pokédex`, `図鑑`, `Pokédex`],
   catchLogTitle: [`포획 로그`, `Catch log`, `捕獲ログ`, `Historial de capturas`],
   dexPagePrev: [`이전 페이지`, `Previous page`, `前のページ`, `Página anterior`],
@@ -417,12 +405,6 @@ const STRINGS = {
     `Límite personal de Codex`,
   ],
   bag: [`가방`, `Bag`, `バッグ`, `Bolsa`],
-  bagEmptyTitle: [
-    `아직 가방이 비어있어요!`,
-    `Your bag is empty!`,
-    `バッグはまだ空っぽです！`,
-    `¡Tu bolsa todavía está vacía!`,
-  ],
   useItem: [`사용하기`, `Use`, `つかう`, `Usar`],
   use: [`사용`, `Use`, `つかう`, `Usar`],
   cancel: [`취소`, `Cancel`, `キャンセル`, `Cancelar`],

@@ -15,6 +15,7 @@ import type {
   PanelDexSpecies,
   PanelDrawer,
   PanelMoodMeter,
+  PanelNews,
   PanelWildEncounter,
   PanelWalletChange,
 } from './protocol.js'
@@ -2717,6 +2718,101 @@ document.addEventListener(
   true,
 )
 
+// MARK: - News
+
+/**
+ * The game's news — a hatch, an evolution, a medal, a challenge done — told the way a catch is
+ * (plan 08 §7): the Pokédex's card, over whatever tab is open, one after another. The host sends
+ * it only to a surface that is in view and keeps VS Code's toast for when none is, so the same
+ * moment is never told twice. A click moves to the next; the live region reads each one.
+ */
+const NEWS_MS = 3600
+const newsQueue: PanelNews[] = []
+let newsTimer: ReturnType<typeof setTimeout> | undefined
+
+/** The item a piece of news without a Pokémon is drawn with. */
+const NEWS_ITEMS: Record<string, string> = {
+  medal: 'gold-bottle-cap',
+  challenge: 'exp-share',
+  candy: 'rare-candy',
+  shiny: 'shiny-charm',
+  legendary: 'master-ball',
+}
+
+function queueNews(items: PanelNews[]): void {
+  newsQueue.push(...items)
+  if (newsTimer === undefined) showNextNews()
+}
+
+function showNextNews(): void {
+  clearTimeout(newsTimer)
+  newsTimer = undefined
+  const layer = newsLayer()
+  // A ball in the air, or a catch's own card on the scene, goes first: the news waits its turn.
+  if (newsQueue.length > 0 && (throwing !== undefined || catchBanner !== undefined)) {
+    newsTimer = setTimeout(showNextNews, 400)
+    return
+  }
+  const next = newsQueue.shift()
+  if (next === undefined) {
+    layer.replaceChildren()
+    return
+  }
+  layer.innerHTML = newsCard(next)
+  paintBars(layer)
+  el('announce').textContent =
+    next.detail === undefined ? next.headline : `${next.headline} ${next.detail}`
+  newsTimer = setTimeout(showNextNews, NEWS_MS)
+}
+
+/** Its own layer on <body>, above every tab: the scene's stacking context would bury it. */
+function newsLayer(): HTMLElement {
+  let layer = document.getElementById('news-layer')
+  if (layer === null) {
+    layer = document.createElement('div')
+    layer.id = 'news-layer'
+    layer.setAttribute('aria-hidden', 'true')
+    document.body.append(layer)
+  }
+  return layer
+}
+
+/**
+ * One card: the device's casing with its lens and lights, the Pokémon on its screen (or the
+ * item the news is about), the sentence and its detail. A form that evolved or graduated is
+ * registered whole, so its bar is drawn full.
+ */
+function newsCard(n: PanelNews): string {
+  const id = n.speciesID
+  const item = NEWS_ITEMS[n.kind] ?? 'poke-ball'
+  const art =
+    id === undefined
+      ? `<img class="catch-mon news-item" src="${itemSpriteURL(item)}" alt="">`
+      : `<img class="catch-mon" src="${sceneSpriteURL(id, n.isShiny)}" alt=""
+             data-fallback="${spriteURL(id, n.isShiny, false)}">`
+  const full = n.kind === 'evolved' || n.kind === 'graduated'
+  return `<div class="catch-banner new rich device-casing news news-${escapeHTML(n.kind)} entering" data-news-next>
+      <span class="catch-shine"></span>
+      <div class="dexcard-top">
+        <span class="device-lens small"></span>
+        <span class="device-leds"><i></i><i></i><i></i></span>
+        ${id === undefined ? '' : `<span class="dexcard-num">${dexNumber(id)}</span>`}
+      </div>
+      <div class="dexcard-body">
+        <span class="catch-mon-wrap">${art}</span>
+        <div class="catch-body">
+          <span class="catch-headline">${escapeHTML(n.headline)}</span>
+          ${full ? `<div class="catch-reg">${gameMeter(100, { surface: 'device', size: 'large', tone: 'done', hidden: true })}</div>` : ''}
+          ${n.detail === undefined ? '' : `<span class="tag state catch-detail">${escapeHTML(n.detail)}</span>`}
+        </div>
+      </div>
+    </div>`
+}
+
+document.addEventListener('click', (event) => {
+  if ((event.target as HTMLElement).closest('[data-news-next]') !== null) showNextNews()
+})
+
 /**
  * The tabs are the device's buttons, each drawn with a game item (plan 08 §7): the item from
  * PokéAPI at runtime like every sprite, never bundled. The codicon from the shell stays under it
@@ -2742,7 +2838,15 @@ for (const [id, item] of Object.entries(TAB_ITEMS)) {
 
 window.addEventListener(
   'message',
-  (event: MessageEvent<{ type: string; state?: PanelState; result?: PanelEncounterResult }>) => {
+  (
+    event: MessageEvent<{
+      type: string
+      state?: PanelState
+      result?: PanelEncounterResult
+      items?: PanelNews[]
+    }>,
+  ) => {
+    if (event.data.type === 'news' && Array.isArray(event.data.items)) queueNews(event.data.items)
     if (event.data.type === 'state' && event.data.state !== undefined) {
       noteWalletChange(event.data.state)
       // Mid-throw, the fresh state already shows the outcome (the Pokémon gone, the ball
