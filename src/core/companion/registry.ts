@@ -154,12 +154,11 @@ export function retireCompanion(state: CompanionState): CompanionState {
   if (mon.dittoDisguise !== undefined && !mon.dittoRevealed) return retireDisguise(state, mon)
   const id = currentSpeciesID(mon)
   const current = progressOf(state, id)
-  const next: SpeciesProgress = { ...current }
+  let next: SpeciesProgress = { ...current }
   if (mon.nature !== undefined) next.nature = mon.nature
-  if (mon.isShiny) {
-    next.shinyUnlocked = true
-    next.companionShiny = true
-  }
+  // A shiny obtained has its bar full (C5): never left obtained-only, which the Shinydex would
+  // show with an empty bar (code review, high).
+  if (mon.isShiny) next = { ...obtainShiny(next), companionShiny: true }
   return { ...state, species: { ...state.species, [id]: next } }
 }
 
@@ -199,6 +198,12 @@ function retireDisguise(state: CompanionState, mon: MonState): CompanionState {
  */
 export function reconcileShinies(state: CompanionState): CompanionState {
   let species: CompanionState['species'] | undefined
+  // A shiny an older build left obtained but not registered: C5 makes it registered.
+  for (const [key, progress] of Object.entries(state.species)) {
+    if (progress.shinyUnlocked !== true || progress.shinyRegistered === true) continue
+    species ??= { ...state.species }
+    species[Number(key)] = obtainShiny(progress)
+  }
   for (const entry of state.dex) {
     if (!entry.isShiny) continue
     for (const id of entry.chainOrder) {

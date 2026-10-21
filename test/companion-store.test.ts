@@ -1609,9 +1609,10 @@ describe('companion choice, starters and the egg stock', () => {
 
   // [trigger branch] Switching away and back is free: the same nature (a Mint's included) and
   // the same shininess come back, not a fresh roll.
-  // [trigger branch] A shiny caught in the wild is the shiny *form* obtained, not the raised
-  // companion turned shiny: choosing the species brings back the one that was raised.
-  it('does not turn a companion shiny because a shiny of its species was caught', async () => {
+  // A shiny obtained has its bar full (C5) and a registered shiny is worn (phase 5): there is no
+  // "obtained but not registered" left, and an older save carrying one is registered on read —
+  // so choosing the species brings it back shiny. (This used to pin the opposite, for that state.)
+  it('wears the shiny of its species once obtained', async () => {
     const s = await hatched()
     const base = s.snapshot().active!.baseID
     await s.update(
@@ -1624,7 +1625,8 @@ describe('companion choice, starters and the egg stock', () => {
       }),
     )
     expect(await s.setCompanion(base)).toBe('set')
-    expect(s.snapshot().active?.isShiny).toBe(false)
+    expect(s.snapshot().species[base]?.shinyRegistered).toBe(true)
+    expect(s.snapshot().active?.isShiny).toBe(true)
   })
 
   it('brings a companion back with the nature and shininess it left with', async () => {

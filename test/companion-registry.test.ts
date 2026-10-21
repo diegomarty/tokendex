@@ -273,3 +273,30 @@ describe('a shiny the Pokédex holds and the registry missed', () => {
     expect(reconcileShinies(read)).toBe(read)
   })
 })
+
+// Code review (high): a shiny obtained but not registered showed in the Shinydex with an empty
+// gold bar — the panel builds the bar for registered shinies only. Under C5 there is no such
+// state: a shiny obtained has its bar full. Retiring a shiny companion and reading an older save
+// both register it.
+describe('a shiny obtained is a shiny registered', () => {
+  it('registers the shiny of a shiny companion that leaves the stage', () => {
+    const before = state({
+      active: mon({ pathIDs: [129], stageIndex: 0, isShiny: true }),
+      species: { 129: { ...freshSpeciesProgress(), unlocked: true, lineRarity: 'common' } },
+    })
+    expect(retireCompanion(before).species[129]).toMatchObject({
+      shinyUnlocked: true,
+      shinyRegistered: true,
+      companionShiny: true,
+    })
+  })
+
+  it('registers, when the save is read, a shiny an older build left only obtained', () => {
+    const raw = JSON.parse(
+      encodeCompanionState(
+        state({ species: { 7: { ...freshSpeciesProgress(), unlocked: true, shinyUnlocked: true } } }),
+      ),
+    )
+    expect(decodeCompanionState(raw).species[7]).toMatchObject({ shinyRegistered: true })
+  })
+})
