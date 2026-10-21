@@ -52,6 +52,8 @@ let dexSelected: number | undefined
 let dexQuery = ''
 /** The Pokédex grid's order (view state): number by default, as a Pokédex reads. */
 let dexSort: SortID = 'number'
+/** The Pokédex's sort turned around (plan 9.8): its natural direction flipped. */
+let dexReverse = false
 let dexOwnedOnly = false
 /** The region the Pokédex grid is narrowed to (`kanto`…), or none. View state only. */
 let dexRegion: string | undefined
@@ -111,6 +113,10 @@ let cardOpen: number | undefined
 /** The PC box's search and sort (view state, kept while the panel lives). */
 let pcQuery = ''
 let pcSort: SortID = 'progress'
+let pcReverse = false
+/** The box's chips (plan 9.8): one status and one region at a time, each toggled off again. */
+let pcFilter: PanelState['pcBox']['filters'][number]['id'] | undefined
+let pcRegion: string | undefined
 /**
  * The encounter whose entrance has already played. Home is repainted wholesale — by every state
  * push, and it used to be by every menu click — and the entrance hung off the scene's own class,
@@ -1745,6 +1751,9 @@ function renderDex(state: PanelState): string {
           sorts: summary.sorts,
           sort: dexSort,
           sortAttr: 'data-dex-sort',
+          dirAttr: 'data-dex-dir',
+          reverse: dexReverse,
+          strings: state.strings,
         })}
         <button class="chip" data-dex-owned aria-pressed="${dexOwnedOnly}">
           ${escapeHTML(state.strings.dexOwnedOnly)}
@@ -1774,8 +1783,15 @@ function renderDex(state: PanelState): string {
         if (sp === undefined || sp.status === 'seen') return -1
         return dexSort === 'rarity' ? sp.rarityRank : sp.percent
       }
-      ids.sort((a, b) => key(b) - key(a) || a - b)
-    }
+      // Turned around, the obtained still lead: the silhouettes have no progress or rarity to
+      // order by, so they stay after them in number order either way.
+      ids.sort((a, b) => {
+        const ka = key(a)
+        const kb = key(b)
+        if (ka < 0 !== kb < 0) return ka < 0 ? 1 : -1
+        return (dexReverse ? ka - kb : kb - ka) || a - b
+      })
+    } else if (dexReverse) ids.reverse()
     for (const id of ids) {
       const sp = byID.get(id)
       const selected = id === dexSelected ? ' selected' : ''
@@ -2446,6 +2462,24 @@ document.addEventListener('click', (event) => {
     }
     return
   }
+  // The sort's direction, in either list; the box's chips. Focus stays on what was pressed.
+  if (target.closest('[data-dex-dir]') !== null) {
+    dexReverse = !dexReverse
+    invalidate('dex')
+    render()
+    document.querySelector<HTMLElement>('[data-dex-dir]')?.focus()
+    return
+  }
+  const pcControl = target.closest<HTMLElement>('[data-pc-dir], [data-pc-filter], [data-pc-region]')
+  if (pcControl !== null) {
+    if (pcControl.dataset['pcDir'] !== undefined) pcReverse = !pcReverse
+    const filter = pcControl.dataset['pcFilter'] as typeof pcFilter
+    if (filter !== undefined) pcFilter = filter === pcFilter ? undefined : filter
+    const region = pcControl.dataset['pcRegion']
+    if (region !== undefined) pcRegion = region === pcRegion ? undefined : region
+    repaintPCTools(pcControl)
+    return
+  }
   const pcPick = target.closest('[data-pc-pick]')
   if (pcPick !== null) {
     const id = Number((pcPick as HTMLElement).dataset['pcPick'])
@@ -3084,17 +3118,7 @@ vscode.postMessage({ type: 'ready' })
 function pcBox(state: PanelState): string {
   const box = state.pcBox
   // Search and sort only when there is something to search: an empty box keeps its one sentence.
-  const tools =
-    box.items.length === 0
-      ? ''
-      : `<div class="pc-tools">${listTools({
-          searchAttr: 'data-pc-search',
-          query: pcQuery,
-          placeholder: box.searchPlaceholder,
-          sorts: box.sorts,
-          sort: pcSort,
-          sortAttr: 'data-pc-sort',
-        })}</div>`
+  const tools = box.items.length === 0 ? '' : pcTools(state)
   return `<div class="pc-backdrop" data-pc-close></div>
     <div class="pc-box" role="dialog" aria-modal="true" aria-label="${escapeHTML(box.title)}">
       <div class="pc-head">
@@ -3109,11 +3133,47 @@ function pcBox(state: PanelState): string {
     </div>`
 }
 
+/**
+ * The box's search, sort and direction, then its chips (plan 9.8): status (registered, still to
+ * register, shiny, as the core counts them) and the Pokédex's regions.
+ */
+function pcTools(state: PanelState): string {
+  const box = state.pcBox
+  const status = box.filters
+    .map(
+      (f) =>
+        `<button class="chip" data-pc-filter="${f.id}" aria-pressed="${f.id === pcFilter}" ${f.count === 0 ? 'disabled' : ''}>${escapeHTML(f.label)}<span class="region-pct">${f.count}</span></button>`,
+    )
+    .join('')
+  const regions = state.dexSummary.regions
+    .map(
+      (r) =>
+        `<button class="chip region region-${escapeHTML(r.id)}" data-pc-region="${escapeHTML(r.id)}" aria-pressed="${r.id === pcRegion}">${escapeHTML(r.name)}</button>`,
+    )
+    .join('')
+  return `<div class="pc-tools">
+      <div class="pc-tools-row">${listTools({
+        searchAttr: 'data-pc-search',
+        query: pcQuery,
+        placeholder: box.searchPlaceholder,
+        sorts: box.sorts,
+        sort: pcSort,
+        sortAttr: 'data-pc-sort',
+        dirAttr: 'data-pc-dir',
+        reverse: pcReverse,
+        strings: state.strings,
+      })}</div>
+      <div class="pc-chips" role="group">${status}</div>
+      <div class="pc-chips" role="group">${regions}</div>
+    </div>`
+}
+
 /** The box's grid for the current search and sort. Re-painted alone while typing, keeping focus. */
 function pcGrid(state: PanelState): string {
   const box = state.pcBox
   if (box.items.length === 0) return `<p class="pc-empty">${escapeHTML(box.emptyText)}</p>`
   const query = pcQuery.trim().toLowerCase()
+  const region = state.dexSummary.regions.find((r) => r.id === pcRegion)
   const shown = box.items
     .filter(
       (item) =>
@@ -3121,6 +3181,16 @@ function pcGrid(state: PanelState): string {
         item.name.toLowerCase().includes(query) ||
         String(item.id) === query.replace(/^#/, ''),
     )
+    .filter(
+      (item) =>
+        pcFilter === undefined ||
+        (pcFilter === 'registered'
+          ? item.registered
+          : pcFilter === 'unregistered'
+            ? !item.registered
+            : item.shinyRegistered),
+    )
+    .filter((item) => region === undefined || (item.id >= region.from && item.id <= region.to))
     // The core's order is the progress sort; the other two only reorder it, ties by number.
     .sort((a, b) =>
       pcSort === 'number'
@@ -3129,6 +3199,7 @@ function pcGrid(state: PanelState): string {
           ? b.rarityRank - a.rarityRank || a.id - b.id
           : 0,
     )
+  if (pcReverse) shown.reverse()
   if (shown.length === 0) return `<p class="pc-empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
   return `<div class="pc-grid">${shown
     .map(
@@ -3261,6 +3332,22 @@ document.addEventListener('change', (event) => {
   document.querySelector<HTMLElement>('[data-dex-sort]')?.focus()
 })
 
+/** The box's tools and grid after a chip or the direction: the pressed control keeps focus. */
+function repaintPCTools(pressed: HTMLElement): void {
+  const tools = document.querySelector<HTMLElement>('#pc-layer .pc-tools')
+  if (tools === null || current === undefined) return
+  const selector = ['pcDir', 'pcFilter', 'pcRegion']
+    .filter((key) => pressed.dataset[key] !== undefined)
+    .map((key) => {
+      const attr = `data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
+      const value = pressed.dataset[key]
+      return value === '' ? `[${attr}]` : `[${attr}="${value}"]`
+    })[0]
+  tools.outerHTML = pcTools(current)
+  repaintPCGrid()
+  if (selector !== undefined) document.querySelector<HTMLElement>(`#pc-layer ${selector}`)?.focus()
+}
+
 function repaintPCGrid(): void {
   const wrap = document.querySelector<HTMLElement>('#pc-layer .pc-grid-wrap')
   if (wrap === null || current === undefined) return
@@ -3284,7 +3371,14 @@ function listTools(o: {
   sorts: { id: SortID; label: string }[]
   sort: SortID
   sortAttr: string
+  /** The direction toggle (plan 9.8): its attribute, whether the sort is turned around, and the
+   *  core's names for the two orders. */
+  dirAttr: string
+  reverse: boolean
+  strings: PanelState['strings']
 }): string {
+  const ascending = sortAscends(o.sort) !== o.reverse
+  const dirLabel = ascending ? o.strings.sortAscending : o.strings.sortDescending
   const options = o.sorts
     .map(
       (s) =>
@@ -3293,7 +3387,18 @@ function listTools(o: {
     .join('')
   return `<input ${o.searchAttr} class="list-search" type="search" value="${escapeHTML(o.query)}"
                  placeholder="${escapeHTML(o.placeholder)}" aria-label="${escapeHTML(o.placeholder)}">
-          <select ${o.sortAttr} class="list-sort" aria-label="${escapeHTML(o.sorts.map((s) => s.label).join(' / '))}">${options}</select>`
+          <select ${o.sortAttr} class="list-sort" aria-label="${escapeHTML(o.sorts.map((s) => s.label).join(' / '))}">${options}</select>
+          <button ${o.dirAttr} class="list-dir" aria-pressed="${o.reverse}" aria-label="${escapeHTML(dirLabel)}" title="${escapeHTML(dirLabel)}">
+            <i class="codicon codicon-arrow-${ascending ? 'up' : 'down'}" aria-hidden="true"></i>
+          </button>`
+}
+
+/**
+ * The order a sort reads in before it is turned around: numbers count up, progress and rarity
+ * put the most advanced and the rarest first. The toggle flips it, and names what it shows.
+ */
+function sortAscends(sort: SortID): boolean {
+  return sort === 'number'
 }
 
 // MARK: - Dialog, letter by letter

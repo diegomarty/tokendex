@@ -716,7 +716,21 @@ button.action.secondary {
   border-radius: var(--r-s);
   padding: 3px 6px;
 }
+.list-dir {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  font: inherit;
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground));
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: var(--r-s);
+  padding: 3px 4px;
+  cursor: pointer;
+}
 .list-search:focus-visible,
+.list-dir:focus-visible,
 .list-sort:focus-visible {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: -1px;
@@ -4141,7 +4155,7 @@ button.btn.priced:not(:has(.verb)) .cost {
   margin-bottom: 0;
 }
 /* The fields and chips in the screen's own light: phosphor on dark glass. */
-.dex-filters :is(.list-search, .list-sort) {
+.dex-filters :is(.list-search, .list-sort, .list-dir) {
   position: relative;
   z-index: 1;
   color: var(--lcd-ink);
@@ -5620,9 +5634,34 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
 }
 /* The box's search and sort: one row under its head (`listTools`, styled with the Pokédex's). */
 .pc-tools {
-  display: flex;
+  display: grid;
   gap: 6px;
   padding: 8px 10px 0;
+}
+.pc-tools-row,
+.pc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* On the box's paper, in its ink: the editor's panel border vanished against it. */
+.pc-chips .chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  opacity: 0.85;
+}
+.pc-chips .chip[aria-pressed='true'] {
+  opacity: 1;
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+.pc-chips .chip:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .pc-grid-wrap {
   display: flex;
