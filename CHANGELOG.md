@@ -64,7 +64,7 @@
 - Home's Wild drawer lists the next three in rows with their party icons, then how many more
   wait. Bag pockets are never greyed out: an empty one says how it fills.
 - The battle dialog writes itself letter by letter in every encounter, not only the first.
-- The Shinydex shows only the shinies registered, its region chips count shinies, and the
+- The Shinydex shows the shinies you have obtained, its region chips count shinies, and the
   Pokédex grid is a list of entry cards that scrolls on its own and keeps its place between
   Collection and Shinydex.
 - Every experience and registration bar is the companion plate's EXP bar: Pokédex cells, the
@@ -74,6 +74,21 @@
 
 - A registered species' catch card showed an empty green pill: its text was painted the pill's
   own colour. It reads "+5% registered" again, and a test keeps a pill's colours its own.
+- **A window still on an older version can no longer wipe your progress.** It rewrites the save
+  without the keys it does not know, and the registry used to be rebuilt from scratch when read
+  back. The registry and the rest of the new game are now kept beside the save and restored.
+- Choosing a companion at an evolved form (a caught Charmeleon) no longer marks the forms before
+  it as obtained.
+- A Ditto's reveal no longer takes away a species you already owned, and switching away from a
+  Ditto still in disguise reveals it rather than leaving the species it showed shiny.
+- The automatic move-on no longer undoes a companion you had just chosen in another window.
+- An egg's guarantee can only be upgraded, never bought twice or downgraded.
+- Merging saves pays a challenge only the other machine had completed, instead of losing it.
+- A Rare Candy is never spent without its experience.
+- A lure never makes a first form less likely within its line.
+- The Pokédex reads complete only when nothing is missing (646 of 649 used to show 100%).
+- A shiny caught before shiny bars existed now appears in the Shinydex.
+- A species card refreshes when what you own changes, and says so if its entry cannot be read.
 
 ## [0.5.0] - 2026-10-20
 
