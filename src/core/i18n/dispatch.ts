@@ -238,7 +238,7 @@ export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
         '보유하면 이로치 포켓몬이 태어날 확률이 올라가요.',
         'While owned, raises the chance of hatching a shiny.',
         '持っていると色違いが生まれる確率が上がります。',
-        'Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.',
+        'Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon shiny.',
       )
     // Ball copy states the multiplier rather than a catch percentage: the real odds depend on
     // the species' capture rate, and a single number in the shop would be a lie for most of them.
@@ -412,7 +412,7 @@ export const trainerLabel = (lang: AppLanguage): string =>
   t(lang, '트레이너', 'Trainer', 'トレーナー', 'Entrenador')
 
 /** Badge on a catch-log row that came from a wild capture rather than a raised line. */
-export const wildCaughtBadge = (lang: AppLanguage): string => t(lang, '야생', 'wild', 'やせい', 'salvaje')
+export const wildCaughtBadge = (lang: AppLanguage): string => t(lang, '야생', 'Wild', 'やせい', 'Salvaje')
 
 /**
  * Native confirmation before letting a wild Pokémon go. Built only for encounters worth the
@@ -585,15 +585,15 @@ export function streakProgressText(lang: AppLanguage, days: number, needed: numb
   return t(
     lang,
     `${needed}일 중 ${days}일`,
-    `${days} of ${needed} days`,
-    `${needed}日のうち${days}日`,
-    `${days} de ${needed} días`,
+    `${days} / ${needed} days`,
+    `${days} / ${needed}日`,
+    `${days} / ${needed} días`,
   )
 }
 
 /** Replaces the count once the week has paid out: there is nothing left to count toward. */
 export function streakEarnedText(lang: AppLanguage): string {
-  return t(lang, '전설 획득!', 'Legendary earned', 'でんせつ かくとく！', 'Legendario logrado')
+  return t(lang, '전설 획득!', 'Legendary earned!', 'でんせつ かくとく！', '¡Legendario conseguido!')
 }
 
 // MARK: - Pokédex browsing
@@ -607,7 +607,7 @@ export function dexSearchPlaceholder(lang: AppLanguage): string {
 }
 
 export function dexOwnedOnlyLabel(lang: AppLanguage): string {
-  return t(lang, '보유한 것만', 'Owned only', '所持のみ', 'Solo obtenidos')
+  return t(lang, '보유한 것만', 'Obtained only', '所持のみ', 'Solo obtenidos')
 }
 
 /** The chip that clears the catch log's rarity narrowing. */
@@ -743,13 +743,13 @@ export function turnResultText(
 
 /** The trail line added to a legendary's flee: it can still be tracked, and for how long. */
 export function trailLeftText(lang: AppLanguage, hours: number): string {
-  const days = Math.round(hours / 24)
+  const h = Math.round(hours)
   return t(
     lang,
-    `발자국이 ${days}일 동안 남아 있어요.`,
-    `Its tracks will stay for ${days} days.`,
-    `足あとが${days}日のこっています。`,
-    `Su rastro seguirá ${days} días.`,
+    `흔적이 ${h}시간 동안 남아 있어요.`,
+    `Its trail will stay for ${h} h.`,
+    `あしあとが ${h}時間 のこっています。`,
+    `Su rastro seguirá ${h} h.`,
   )
 }
 
@@ -936,13 +936,7 @@ export function collectAllLabel(lang: AppLanguage): string {
 }
 
 export function trailTitle(lang: AppLanguage): string {
-  return t(
-    lang,
-    '놓친 전설의 발자국',
-    'Tracks of legendaries that got away',
-    'にげた伝説の足あと',
-    'Rastro de legendarios que se escaparon',
-  )
+  return t(lang, '전설의 흔적', 'Legendary trail', 'でんせつの あしあと', 'Rastro legendario')
 }
 
 /** How long a trail stays warm. `hours` is rounded up so "0 h" never shows while it is still there. */
@@ -1011,7 +1005,7 @@ export function trackExpiredText(lang: AppLanguage): string {
   return t(
     lang,
     '발자국이 사라져 버렸어요.',
-    'The tracks have gone cold.',
+    'The trail has gone cold.',
     '足あとが消えてしまった。',
     'El rastro se ha enfriado.',
   )
@@ -1163,9 +1157,9 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
       return t(
         lang,
         `${event.name}이(가) 도감에 등록되었어요!`,
-        `${event.name} graduated into the Pokédex!`,
+        `${event.name} registered in the Pokédex!`,
         `${event.name}がずかんにとうろくされた！`,
-        `¡${event.name} se ha graduado a la Pokédex!`,
+        `¡${event.name} registrado en la Pokédex!`,
       )
     case 'challengeDone':
       return t(
@@ -1231,7 +1225,7 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `야생 ${event.name}이(가) 나타났어요!`,
         `A wild ${event.name} appeared!`,
         `やせいの${event.name}があらわれた！`,
-        `¡Un ${event.name} salvaje apareció!`,
+        `¡Ha aparecido un ${event.name} salvaje!`,
       )
       return event.isShiny ? `${text} ✨` : text
     }
@@ -1291,7 +1285,7 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
 
 /** The celebration toast's single button. */
 export function openPanelLabel(lang: AppLanguage): string {
-  return t(lang, '패널 열기', 'Open panel', 'パネルをひらく', 'Abrir panel')
+  return statusOpenPanel(lang) // the tooltip link's words: one "open panel" in the whole app
 }
 
 /**
@@ -1426,9 +1420,9 @@ export function caughtRegisteredText(lang: AppLanguage, percent: number): string
   return t(
     lang,
     `도감 등록 ${percent}%!`,
-    `Registered at ${percent}%!`,
+    `${percent}% registered!`,
     `ずかん登録 ${percent}%!`,
-    `¡Registrado al ${percent}%!`,
+    `¡${percent}% registrado!`,
   )
 }
 
@@ -1481,7 +1475,7 @@ export function catchShareText(lang: AppLanguage, percent: number): string {
     `등록 +${percent}%`,
     `+${percent}% registered`,
     `とうろく +${percent}%`,
-    `+${percent}% de registro`,
+    `+${percent}% registrado`,
   )
 }
 
@@ -1573,13 +1567,7 @@ export function shinyBoostTitle(lang: AppLanguage, name: string): string {
 
 /** Nothing to buy: the wallet is empty. */
 export function shinyBoostNoFundsText(lang: AppLanguage): string {
-  return t(
-    lang,
-    '토큰이 부족해요.',
-    'Not enough tokens to boost.',
-    'トークンが たりない。',
-    'No tienes tokens para impulsarla.',
-  )
+  return trackCantAffordText(lang) // one sentence for one fact, wherever the wallet is short
 }
 
 /** Nothing to buy: the boost cap (`percent` of the bar) was bought, the rest is played. */
@@ -1629,7 +1617,7 @@ export function lureLabel(lang: AppLanguage, name: string, hours: number, price:
     `${name}을(를) ${hours}시간 유인하기, 토큰 ${price}`,
     `Lure ${name} for ${hours} hours, ${price} tokens`,
     `${name}を ${hours}じかん おびきよせる、トークン${price}`,
-    `Atraer a ${name} durante ${hours} h, ${price} tokens`,
+    `Atraer a ${name} durante ${hours} horas, ${price} tokens`,
   )
 }
 
@@ -1642,7 +1630,7 @@ export function lureConfirmTitle(lang: AppLanguage, name: string, replaces: bool
     '(지금 유인을 대신해요)',
     '(replaces the lure running)',
     '(いまの おびきよせと いれかわる)',
-    '(sustituye al señuelo activo)',
+    '(sustituye a la atracción activa)',
   )}`
 }
 
@@ -1665,7 +1653,7 @@ export function lureFailedText(lang: AppLanguage): string {
     '지금은 유인할 수 없어요. 아무것도 쓰지 않았어요.',
     'That lure no longer fits. Nothing was charged.',
     'いまは おびきよせられない。なにも はらっていない。',
-    'Ese señuelo ya no cabe. No se ha cobrado nada.',
+    'Ya no puedes atraerlo. No se ha cobrado nada.',
   )
 }
 
@@ -1945,7 +1933,7 @@ export function challengesSummary(lang: AppLanguage, done: number, total: number
     `${done} / ${total} 완료`,
     `${done} / ${total} done`,
     `${done} / ${total} たっせい`,
-    `${done} / ${total} hechos`,
+    `${done} / ${total} cumplidos`,
   )
 }
 

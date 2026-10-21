@@ -563,7 +563,7 @@ describe('the streak row', () => {
     const row = streak({})
     expect(row.days).toHaveLength(StreakBalance.windowDays)
     expect(new Set(row.days)).toEqual(new Set(['off']))
-    expect(row.text).toBe('0 of 3 days')
+    expect(row.text).toBe('0 / 3 days')
     expect(row.value).toBe(0)
     expect(row.max).toBe(StreakBalance.days)
     expect(row.earned).toBe(false)
@@ -574,7 +574,7 @@ describe('the streak row', () => {
   it('fills the days that accrued, in calendar order, ending today', () => {
     const row = streak({ accrualDays: [daysAgo(3), daysAgo(0)] })
     expect(row.days).toEqual(['off', 'off', 'off', 'on', 'off', 'off', 'on'])
-    expect(row.text).toBe('2 of 3 days')
+    expect(row.text).toBe('2 / 3 days')
     expect(row.value).toBe(2)
     expect(row.earned).toBe(false)
   })
@@ -582,7 +582,7 @@ describe('the streak row', () => {
   it('does not draw or count a day that has left the window', () => {
     const row = streak({ accrualDays: [daysAgo(StreakBalance.windowDays), daysAgo(0)] })
     expect(row.days.filter((d) => d !== 'off')).toHaveLength(1)
-    expect(row.text).toBe('1 of 3 days')
+    expect(row.text).toBe('1 / 3 days')
   })
 
   // The payout is marked on the day it actually happened, not on "the third filled dot" —
@@ -593,7 +593,7 @@ describe('the streak row', () => {
       lastStreakAwardDate: daysAgo(0),
     })
     expect(row.days).toEqual(['off', 'off', 'off', 'off', 'on', 'on', 'award'])
-    expect(row.text).toBe('Legendary earned')
+    expect(row.text).toBe('Legendary earned!')
     expect(row.earned).toBe(true)
   })
 
@@ -616,12 +616,12 @@ describe('the streak row', () => {
       lastStreakAwardDate: daysAgo(StreakBalance.windowDays),
     })
     expect(row.earned).toBe(false)
-    expect(row.text).toBe('1 of 3 days')
+    expect(row.text).toBe('1 / 3 days')
   })
 
   it('has an accessible name and follows the panel language', () => {
     expect(streak({}).label).toBe("This week's streak")
-    expect(build({ state: state({ language: 'es' }) }).wild.streak.text).toBe('0 de 3 días')
+    expect(build({ state: state({ language: 'es' }) }).wild.streak.text).toBe('0 / 3 días')
   })
 })
 

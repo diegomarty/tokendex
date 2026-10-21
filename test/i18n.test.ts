@@ -570,3 +570,21 @@ describe('time left', () => {
     expect(d.lureActiveText('es', '#5', 5)).toContain(d.timeLeftText('es', 5))
   })
 })
+
+describe('one word for one thing', () => {
+  // The end of a line is a registration now, not a graduation; and the shiny form is "shiny" in
+  // every language's Latin-script strings, never also "variocolor". Read from the sources, so a
+  // new string cannot bring the old word back.
+  it('says registered, not graduated, and shiny, not variocolor', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const sources = ['core/i18n/dispatch.ts', 'core/i18n/strings.ts'].map((f) =>
+      readFileSync(join(sourceRoot(), f), 'utf8'),
+    )
+    for (const source of sources) {
+      expect(source).not.toMatch(/variocolor/i)
+      expect(source).not.toMatch(/graduarse|se ha graduado|graduated into|to graduation/)
+    }
+    expect(d.celebrationText('en', { kind: 'graduated', name: 'Venusaur' })).toContain('registered')
+  })
+})
