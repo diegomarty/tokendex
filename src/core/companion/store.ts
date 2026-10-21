@@ -134,6 +134,11 @@ import { EconomyBalance } from './economy.js'
 
 export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
 
+/** A choice never carries the move-on's re-check, so `'moved'` cannot come back from one. */
+function asChoice(outcome: SetCompanionOutcome | 'moved'): SetCompanionOutcome {
+  return outcome === 'moved' ? 'locked' : outcome
+}
+
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
 const GRADUATE_EVENT_WINDOW_MS = 6_000
@@ -668,8 +673,18 @@ export class CompanionStore {
       .sort((a, b) => a - b)
     while (pool.length > 0) {
       const next = pool.splice(this.rng() % pool.length, 1)[0]!
-      const outcome = await this.putOnStage(next, this.state.species[next]?.baseID, 'auto')
-      if (outcome === 'offline') return
+      const outcome = await this.putOnStage(
+        next,
+        this.state.species[next]?.baseID,
+        'auto',
+        (state) =>
+          state.active !== undefined &&
+          currentSpeciesID(state.active) === here &&
+          state.keepCompletedCompanion !== true &&
+          state.active.chosenWhenRegistered !== true &&
+          companionIsDone(state.active, line, state.species),
+      )
+      if (outcome === 'offline' || outcome === 'moved') return
       if (outcome === 'set') {
         const to = this.line === undefined ? '' : localizedName(this.line, next, this.state.language)
         this.pendingEvents.push({ kind: 'companionSwitched', from, to })
@@ -1031,7 +1046,7 @@ export class CompanionStore {
     await this.load()
     const progress = this.state.species[speciesID]
     if (progress?.unlocked !== true) return 'locked'
-    return this.putOnStage(speciesID, progress.baseID, 'player')
+    return asChoice(await this.putOnStage(speciesID, progress.baseID, 'player'))
   }
 
   /**
@@ -1045,7 +1060,13 @@ export class CompanionStore {
     speciesID: number,
     knownBaseID: number | undefined,
     by: 'player' | 'starter' | 'auto',
-  ): Promise<SetCompanionOutcome> {
+    /**
+     * The move-on's own check, run again inside the hold (code review 9.12 #5): the line was
+     * fetched outside it, and another window may have put a choice on stage meanwhile. False
+     * leaves the stage alone and answers `'moved'`.
+     */
+    stillDone?: (state: CompanionState) => boolean,
+  ): Promise<SetCompanionOutcome | 'moved'> {
     const starter = by === 'starter'
     const baseID = knownBaseID ?? this.baseFromHistory(speciesID) ?? speciesID
     let line: EvoLine
@@ -1057,7 +1078,8 @@ export class CompanionStore {
     }
     this.noteNetworkSuccess()
 
-    const result = await this.transact((): SetCompanionOutcome => {
+    const result = await this.transact((): SetCompanionOutcome | 'moved' => {
+      if (stillDone !== undefined && !stillDone(this.state)) return 'moved'
       if (starter && !isFreshGame(this.state)) return 'locked'
       const path = pathToSpecies(line.tree, speciesID)
       const node = evoNodeWithID(line.tree, speciesID)
@@ -1125,7 +1147,7 @@ export class CompanionStore {
   async chooseStarter(speciesID: number): Promise<SetCompanionOutcome> {
     await this.load()
     if (!isStarterID(speciesID) || !isFreshGame(this.state)) return 'locked'
-    return this.putOnStage(speciesID, speciesID, 'starter')
+    return asChoice(await this.putOnStage(speciesID, speciesID, 'starter'))
   }
 
   /** Puts an egg on the stage: the paused one, or one from the stock. */

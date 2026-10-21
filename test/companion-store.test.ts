@@ -1681,6 +1681,44 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.drainEvents().some((e) => e.kind === 'companionSwitched')).toBe(true)
   })
 
+  // [trigger branch] Code review 9.12 #5. The move-on fetches its candidate's line outside the
+  // lock; meanwhile the player, in another window, puts a species on stage. The move-on's write
+  // re-reads the save — that choice is now on stage — and must not then switch it away.
+  it('never switches away a companion another window chose while it was looking', async () => {
+    let clock = 1_700_000_000_000
+    let path = ''
+    let otherWindowChooses: (() => Promise<void>) | undefined
+    const provider = stubProvider({
+      line: async (baseID: number) => {
+        if (baseID === 600 && otherWindowChooses !== undefined) {
+          const choose = otherWindowChooses
+          otherWindowChooses = undefined
+          await choose()
+        }
+        return stubProvider().line(baseID)
+      },
+    })
+    const s = store({ now: () => clock, provider })
+    path = (s as unknown as { filePath: string }).filePath
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    const base = s.snapshot().active!.baseID
+    const both =
+      PokemonBalance.phaseThreshold('common', 2, 0) + PokemonBalance.phaseThreshold('common', 2, 1)
+    await s.update(obs(PokemonBalance.eggHatchThreshold + both))
+    s.drainEvents()
+    otherWindowChooses = async () => {
+      const other = store({ now: () => clock, filePath: path })
+      await other.load()
+      expect(await other.setCompanion(base)).toBe('set')
+    }
+    clock += 60_000
+    await s.update(obs(PokemonBalance.eggHatchThreshold + both + 10))
+    expect(otherWindowChooses).toBeUndefined() // the move-on did look
+    expect(currentSpeciesID(s.snapshot().active!)).toBe(base)
+    expect(s.drainEvents().some((e) => e.kind === 'companionSwitched')).toBe(false)
+  })
+
   it('keeps a finished companion on stage when the setting says so', async () => {
     const { s, base } = await finished(true)
     expect(currentSpeciesID(s.snapshot().active!)).toBe(base + 1)
