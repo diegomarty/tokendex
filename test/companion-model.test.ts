@@ -114,9 +114,8 @@ describe('balance', () => {
   it('prices guaranteed eggs so the higher tier is not a worse deal', () => {
     const uncommon = FreshEgg.price_('uncommon')
     const rare = FreshEgg.price_('rare')
-    expect(FreshEgg.price_(undefined)).toBe(FreshEgg.price)
-    expect(uncommon).toBe(2_500_000_000)
-    expect(rare).toBe(4_000_000_000)
+    expect(uncommon).toBe(50_000_000)
+    expect(rare).toBe(80_000_000)
     expect(rare).toBeLessThan(uncommon * 2) // one rare egg beats two uncommon ones on price
   })
 

@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { EconomyBalance } from '../src/core/companion/economy.js'
 import { encounterCatchChance } from '../src/core/companion/encounters.js'
 import {
+  FreshEgg,
+  Mint,
   Pokeball,
+  PokemonBalance,
   RARITIES,
+  RareCandy,
   captureRateCeiling,
   type BallKind,
   type Rarity,
@@ -77,5 +81,45 @@ describe('EconomyBalance', () => {
     expect(economy.RareCandy).toBe(model.RareCandy)
     expect(economy.StealBalance).toBe(encounters.StealBalance)
     expect(economy.FIND_TABLE).toBe(encounters.FIND_TABLE)
+  })
+})
+
+// Phase 4: what the shop charges, against what it buys. The scale stays at a fifteenth (Diego),
+// so the prices move to it rather than the other way round.
+describe('shop prices', () => {
+  /** The most a candy is ever worth: its share of the costliest stage of any line. */
+  const bestCandyXP = Math.max(
+    ...RARITIES.flatMap((rarity) =>
+      [1, 2, 3].flatMap((forms) =>
+        Array.from(
+          { length: forms },
+          (_, stage) => RareCandy.stageShare * PokemonBalance.phaseThreshold(rarity, forms, stage),
+        ),
+      ),
+    ),
+  )
+
+  // Bought, a candy is never cheap experience: it costs more than it is worth at its best, so
+  // the free grant at a full limit window stays the good deal and the shop one is a sink.
+  it('prices a candy above the most experience it can ever give', () => {
+    expect(RareCandy.price).toBeGreaterThan(bestCandyXP)
+    expect(RareCandy.price).toBeLessThanOrEqual(2 * bestCandyXP)
+  })
+
+  it('prices a mint at a fifth of a candy', () => {
+    expect(Mint.price).toBe(RareCandy.price / 5)
+  })
+
+  // Eggs arrive free, one a day; the shop sells only the guarantee on the one incubating.
+  it('sells only guarantees with a tier', () => {
+    expect(FreshEgg.shopTiers).not.toContain(undefined)
+    expect(FreshEgg.shopTiers.length).toBeGreaterThan(0)
+  })
+
+  // A guaranteed rare is a shortcut, limited by the one egg a day — cheaper than the cheapest
+  // rare catch, so it is worth buying, but not by a margin that makes catching pointless.
+  it('prices a rare guarantee below the cheapest rare catch', () => {
+    expect(FreshEgg.price_('rare')).toBeLessThan(cheapestCatch('rare'))
+    expect(FreshEgg.price_('rare')).toBeGreaterThan(cheapestCatch('rare') / 2)
   })
 })

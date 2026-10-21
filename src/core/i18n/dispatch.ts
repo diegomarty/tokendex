@@ -449,10 +449,10 @@ export const shopGroupEggs = (lang: AppLanguage): string => t(lang, '알', 'Eggs
 export const shopEggsNote = (lang: AppLanguage): string =>
   t(
     lang,
-    '어떤 알이든 지금 포켓몬을 놓아주고 부화를 처음부터 다시 시작해요.',
-    'Every egg sends off your current Pokémon and starts incubation over.',
-    'どのタマゴも、いまのポケモンを手放してふかをやり直します。',
-    'Cualquier huevo suelta a tu Pokémon actual y reinicia la incubación.',
+    '품고 있는 알의 등급을 보장해요. 부화 진행은 그대로예요.',
+    'Guarantees the rarity of the egg you are incubating. Its progress stays.',
+    'あたためている タマゴの レアリティを ほしょうします。すすみぐあいは そのまま。',
+    'Garantiza la rareza del huevo que incubas. Su progreso se mantiene.',
   )
 
 /** The call-to-action under an empty ball rack — the moment of highest purchase intent. */

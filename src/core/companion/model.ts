@@ -264,10 +264,12 @@ export const RareCandy = {
   weeklyGrant: 5,
   /**
    * Shop price. Tokens double as growth meter and shop wallet, so a candy priced at its XP
-   * value would be free extra growth; the price is deliberately far above what a candy is
-   * worth at any stage, and the free grant at 100% usage always stays the better deal.
+   * value would be free extra growth; the price stays above the most a candy is worth at any
+   * stage (25% of a one-form legendary's 400M = 100M), and the free grant at 100% usage always
+   * stays the better deal. Phase 4 brought it from 500M to 1.5× that ceiling, so buying one is
+   * a sink a heavy user can use, not a price nobody pays. `test/economy.test.ts` holds it.
    */
-  price: 500_000_000,
+  price: 150_000_000,
 } as const
 
 /** Mint balance. */
@@ -277,7 +279,7 @@ export const Mint = {
    * price. One fifth of a candy, cheap enough to reroll a nature until you like it. Grants
    * no growth, so no double-counting.
    */
-  price: 100_000_000,
+  price: 30_000_000,
 } as const
 
 /** Shiny Charm balance — passive, bought once, never consumed. */
@@ -342,20 +344,21 @@ export const Pokeball = {
 /** Fresh egg (reroll) balance — discards the current Pokémon and starts a new egg. */
 export const FreshEgg = {
   /**
-   * Premium reroll for a hatch you dislike. The discarded Pokémon does not graduate, it
-   * simply disappears, so it never touches the Pokédex or the branch-diversity odds — as if
-   * never drawn. The new egg must incubate from scratch (5M) and stage growth is lost, which
-   * naturally suppresses spam farming.
+   * The base the guarantee prices scale from (`price_`). Eggs themselves arrive free, one a day;
+   * the shop sells only the guarantee on the one incubating. Phase 4 put it at 20M, so the rare
+   * guarantee (80M) sits just under the cheapest rare catch (~102M): a shortcut, rationed by
+   * the one egg a day, never a reason to stop catching. `test/economy.test.ts` holds it there.
    */
-  price: 1_000_000_000,
+  price: 20_000_000,
 
   /**
-   * Eggs sold in the shop: no guarantee, uncommon-or-better, rare-or-better. **No
-   * legendary-only egg is sold** — the floor cannot be expressed via capture_rate, and the
-   * top tier should not be a guaranteed purchase. Legendaries still appear inside the
-   * uncommon/rare eggs at their natural weight (~10% for a rare egg).
+   * Guarantees sold in the shop: uncommon-or-better, rare-or-better. Not "no guarantee" — with
+   * eggs free it bought nothing but a reroll. **No legendary-only egg is sold** — the floor
+   * cannot be expressed via capture_rate, and the top tier should not be a guaranteed purchase.
+   * Legendaries still appear inside the uncommon/rare eggs at their natural weight (~10% for a
+   * rare egg).
    */
-  shopTiers: [undefined, 'uncommon', 'rare'] as (Rarity | undefined)[],
+  shopTiers: ['uncommon', 'rare'] as (Rarity | undefined)[],
 
   /**
    * Guaranteed-tier price. The multiplier reuses the **existing graduation table** rather

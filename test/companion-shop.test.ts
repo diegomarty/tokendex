@@ -220,9 +220,15 @@ const incubating = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + ext
 
 describe('buying eggs', () => {
   it('requires an egg on the stage, not a Pokémon', () => {
-    expect(canBuyEgg(incubating(), undefined)).toBe(true)
-    expect(canBuyEgg(rich(), undefined)).toBe(false)
-    expect(canBuyEgg(state({ usedSinceInstall: 10, eggUsage: 1 }), undefined)).toBe(false)
+    expect(canBuyEgg(incubating(), 'uncommon')).toBe(true)
+    expect(canBuyEgg(rich(), 'uncommon')).toBe(false)
+    expect(canBuyEgg(state({ usedSinceInstall: 10, eggUsage: 1 }), 'uncommon')).toBe(false)
+  })
+
+  // [trigger branch] With eggs free, "no guarantee" bought nothing but a reroll: not sold.
+  it('refuses a guarantee with no tier', () => {
+    expect(canBuyEgg(incubating(), undefined)).toBe(false)
+    expect(buyEgg(incubating(), undefined)).toBeUndefined()
   })
 
   // Buying an unsatisfiable guarantee would leave both roll paths with zero candidates: the
@@ -236,9 +242,9 @@ describe('buying eggs', () => {
   // [trigger branch] Buying used to discard the companion and restart the egg; now it only
   // writes the guarantee, so the incubation keeps what it has.
   it('keeps the incubation’s progress and discards nothing', () => {
-    const after = buyEgg(incubating(), undefined)!
+    const after = buyEgg(incubating(), 'uncommon')!
     expect(after.eggUsage).toBe(1_000_000)
-    expect(after.spentTokens).toBe(FreshEgg.price)
+    expect(after.spentTokens).toBe(FreshEgg.price_('uncommon'))
   })
 
   it('records the guarantee so an offline roll can honour it later', () => {

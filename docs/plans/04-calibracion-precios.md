@@ -1,7 +1,7 @@
 # Fase 4 — Calibración de precios
 
 **Plan maestro:** `00-master.md` § Fase 4. Hereda C3, C5 y C6.
-**Estado:** borrador. Se detalla en modo plan justo antes de implementar.
+**Estado:** detallado (2026-10-21), en implementación.
 **Depende de:** fases 1b, 3 y 3b. Calibra lo que **ya existe** más los duplicados; el impulso shiny y el señuelo los calibran sus propias fases (5 y 6) con el simulador parametrizado, para no crear un ciclo.
 
 ## Objetivo
@@ -30,6 +30,36 @@ Que cada precio y recompensa esté justificado por el simulador y fijado en test
 - Usuario intenso: gasta el 40–70 % de lo que gana.
 - Usuario medio: Pokédex en 1–2 años; primera shiny en < 1 mes si se lo propone.
 - Usuario de chat (2M/día): un encuentro al día y una evolución a la semana.
+
+## Decisiones de Diego (2026-10-21)
+
+- **Sumideros para el intenso:** se esperan a la fase 5 (el impulso shiny). La fase 4 solo recalibra los precios que ya existen.
+- **Escala:** se mantiene ÷15. Usar poco la IA no debe empujar a terminar antes. El objetivo de 6–12 meses para la Pokédex se mide con el uso real de Diego, no con el perfil medio; después viene la Shinydex, más larga.
+- **Ampliar la Pokédex más allá de la #649** (hay más de 1000 especies): idea para una fase propia (ver `07-ideas.md`). Los sprites animados solo llegan a la #649 (gen V), así que las especies nuevas usarían sprites estáticos. Cada especie añadida encarece completar la Pokédex.
+- **Garantías de huevo:** bajarlas mucho.
+
+## Diseño detallado
+
+| Elemento | Antes | Ahora | Por qué |
+|---|---|---|---|
+| Garantía «poco común o mejor» | 2,5B | **50M** | Base de 20M con la proporción de la tabla de graduación (1 : 2,5 : 4), que impide que la de rara salga peor que comprar dos poco comunes. |
+| Garantía «rara o mejor» | 4B | **80M** | Por debajo de la captura rara más barata (102M), pero limitada a un huevo al día que hay que incubar. |
+| Huevo «sin garantía» | 1B | **retirado** | Ya no da un huevo; solo volvía a sortear la especie. |
+| Caramelo Raro | 500M | **150M** | Sigue por encima de lo máximo que vale (25 % de la etapa más cara = 100M, legendario de una forma). Nunca es experiencia barata, pero es un sumidero útil. |
+| Menta | 100M | **30M** | Un quinto del caramelo, como dice su regla. |
+| Balls, bayas, rastro, robos, hallazgos, duplicados | — | sin cambios | El simulador no muestra problema: el perfil ligero gasta casi todo en balls y el medio la mitad. |
+
+Los tests fijan las relaciones (`test/economy.test.ts`):
+- caramelo > su máximo valor en experiencia;
+- menta = caramelo ÷ 5;
+- garantía rara < la captura rara más barata;
+- la garantía rara no sale peor que la poco común;
+- la tienda no vende garantías sin tier.
+
+## Notas de la implementación
+
+- Fallo de la fase 2 encontrado al calibrar: la tienda del panel enseñaba las garantías con un compañero en juego (deshabilitadas) y no con un huevo incubando, y la nota del grupo seguía diciendo que el huevo «suelta a tu Pokémon». Ahora se listan solo con `eggOnStage`, igual que `canBuyEgg`, y la nota explica que garantizan la rareza del huevo que incubas.
+- Simulador, 180 días: casi sin cambios (medio, 56 % gastado; intenso, 17–18 %), porque la política del simulador no compra garantías y casi no compra caramelos. El sumidero del intenso queda para la fase 5, como decidió Diego.
 
 ## Verificación
 

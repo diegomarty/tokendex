@@ -7,7 +7,9 @@ import {
   ANIMATED_SPECIES_MAX,
   EGG_STOCK_MAX,
   RareCandy,
+  FreshEgg,
   freshCompanionState,
+  freshSpeciesProgress,
   makeEvoLine,
   type SpeciesProgress,
   shopEntryPrice,
@@ -62,7 +64,14 @@ const state = (over: Partial<CompanionState> = {}): CompanionState => ({
   ...over,
 })
 
-/** Any Pokémon on stage: the eggs are only offered while there is one to discard. */
+/** A game that has begun with an egg on stage: what the shop sells guarantees for. */
+const incubating = {
+  ...freshCompanionState('en'),
+  species: { 1: { ...freshSpeciesProgress(), unlocked: true } },
+  eggUsage: 1_000,
+} as CompanionState
+
+/** Any Pokémon on stage. */
 const activeMon: MonState = {
   baseID: 25,
   pathIDs: [25],
@@ -379,14 +388,14 @@ describe('the shop', () => {
 
   // [trigger branch] All three eggs opened with "Send off your current Pokémon…" — the price
   // they share, said three times, while the guarantee that separates them trailed at the end.
-  it('leaves each egg only its guarantee, with the shared cost on the heading', () => {
-    const panel = build({ state: state({ active: activeMon }) })
+  it('leaves each egg only its guarantee, with the shared clause on the heading', () => {
+    const panel = build({ state: incubating })
     const eggs = panel.shop.filter((item) => item.group === 'eggs')
-    expect(eggs).toHaveLength(3)
+    expect(eggs).toHaveLength(FreshEgg.shopTiers.length)
     const lines = eggs.map((e) => e.description!)
-    expect(new Set(lines).size).toBe(3)
+    expect(new Set(lines).size).toBe(eggs.length)
     // The shared clause lives once, on the group note.
-    expect(panel.strings.shopEggsNote).toContain('sends off your current Pokémon')
+    expect(panel.strings.shopEggsNote).toContain('egg you are incubating')
     for (const line of lines) {
       expect(panel.strings.shopEggsNote).not.toContain(line)
       // Short enough to sit on the one line a card now gets.
@@ -398,17 +407,21 @@ describe('the shop', () => {
   // The eggs were the one row drawn as an emoji beside a shelf of sprites. The emoji stays as
   // the fallback for a sprite that fails to load.
   it('gives every egg row the egg sprite, with the emoji behind it', () => {
-    const eggs = build({ state: state({ active: activeMon }) }).shop.filter(
-      (item) => item.group === 'eggs',
-    )
-    expect(eggs).toHaveLength(3)
+    const eggs = build({ state: incubating }).shop.filter((item) => item.group === 'eggs')
+    expect(eggs).toHaveLength(FreshEgg.shopTiers.length)
     for (const egg of eggs) {
       expect(egg.sprite).toBe('egg')
       expect(egg.emoji).toBe('🥚')
     }
   })
 
-  it('sells eggs only while there is a Pokémon to discard', () => {
+  // [trigger branch] A guarantee is for the egg on stage: none with a companion there, none on a
+  // new game before the starter.
+  it('lists guarantees only while an egg is incubating', () => {
+    expect(build({ state: incubating }).shop.some((item) => item.group === 'eggs')).toBe(true)
+    expect(
+      build({ state: state({ active: activeMon }) }).shop.some((item) => item.group === 'eggs'),
+    ).toBe(false)
     expect(build().shop.some((item) => item.group === 'eggs')).toBe(false)
   })
 

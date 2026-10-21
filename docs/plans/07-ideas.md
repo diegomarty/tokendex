@@ -14,3 +14,12 @@
 | **Guardería** (un segundo Pokémon gana un % pequeño de xp pasiva) | Progreso en paralelo sin romper "la xp va a uno" | `species`, `creditDelta` | 2 |
 
 Criterio para priorizar: primero lo que da objetivos intermedios (medallas, regiones), porque la escala de 1–2 años necesita metas a 1–2 semanas.
+
+## Ampliar la Pokédex más allá de la #649 (Diego, 2026-10-21)
+
+Hay más de 1000 especies; hoy el juego se limita a las 649 con sprite animado (gen V, `ANIMATED_SPECIES_MAX`). Para ampliarla:
+- sprites estáticos (o los de Showdown) para las especies nuevas;
+- índice, salvajes y huevos que respeten el nuevo tope;
+- recalibrar la escala: cada especie añadida encarece completar la Pokédex (hoy 46,5B a ÷15).
+
+Va en una fase propia, después de la Shinydex.

@@ -94,7 +94,7 @@ import {
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
 import { progressOf, registrationPercent } from '../companion/registry.js'
 import { STARTERS, starterName, starterType } from '../companion/starters.js'
-import { eggIsPaused, isFreshGame } from '../companion/eggs.js'
+import { eggIsPaused, eggOnStage, isFreshGame } from '../companion/eggs.js'
 import { todayKey } from '../usage/entry.js'
 import { compact, cost, grouped, percent } from '../tokenFormatter.js'
 import * as D from '../i18n/dispatch.js'
@@ -272,7 +272,9 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     if (sprite !== undefined) row.sprite = sprite
     shop.push(row)
   }
-  if (state.active !== undefined) {
+  // Guarantees are sold for the egg on stage, so they are listed only while there is one — the
+  // same rule `canBuyEgg` enforces, not a card shown greyed out next to a companion.
+  if (eggOnStage(state)) {
     for (const tier of FreshEgg.shopTiers) {
       const name = D.eggName(lang, tier)
       const priceText = compact(FreshEgg.price_(tier))
@@ -281,8 +283,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         emoji: '🥚',
         sprite: 'egg',
         title: name,
-        // Only the guarantee. What all three eggs cost you — the Pokémon you are raising — is
-        // said once under the heading, as `strings.shopEggsNote`.
+        // Only the guarantee. What they all do — fix the rarity of the egg incubating — is said
+        // once under the heading, as `strings.shopEggsNote`.
         description: D.eggDescription(lang, tier),
         actions: [
           {
