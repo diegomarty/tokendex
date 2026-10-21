@@ -229,9 +229,17 @@ function gameMeter(percent: number, o: MeterOptions): string {
  */
 function expMeter(
   percent: number,
-  o: { label?: string; hidden?: boolean; inner?: string; size?: 'thin' | 'large' } = {},
+  o: { label?: string; hidden?: boolean; inner?: string; size?: 'thin' | 'large'; done?: boolean } = {},
 ): string {
-  return gameMeter(percent, { surface: 'device', glyph: 'EXP', glyphClass: 'label', ...o })
+  const { done, ...rest } = o
+  // A road at its end — a registered form, in the Pokédex — turns green (Diego).
+  return gameMeter(percent, {
+    surface: 'device',
+    glyph: 'EXP',
+    glyphClass: 'label',
+    ...(done === true ? { tone: 'done' as const } : {}),
+    ...rest,
+  })
 }
 
 /** Name, meta line, progress bar and evolution strip — everything about the companion except
@@ -1087,10 +1095,10 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
       .map(
         (berry) => `<button class="command item" data-feed="${escapeHTML(encounterID)}"
               data-berry="${escapeHTML(berry.kind)}" data-sprite="${escapeHTML(berry.sprite)}"
-              aria-label="${escapeHTML(berry.name)} ×${berry.count}. ${escapeHTML(berry.effectText)}">
+              aria-label="${escapeHTML(berry.name)} ${escapeHTML(berry.countText)}. ${escapeHTML(berry.effectText)}">
           <img src="${itemSpriteURL(berry.sprite)}" alt="">
           <span class="command-name">${escapeHTML(berry.name)}<small>${escapeHTML(berry.effectText)}</small></span>
-          <span class="command-count">×${berry.count}</span>
+          <span class="command-count">${escapeHTML(berry.countText)}</span>
         </button>`,
       )
       .join('')
@@ -1105,7 +1113,7 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
   const balls = wild.balls
     .map((ball) => {
       const none = ball.count === 0
-      const label = `${escapeHTML(ball.name)} ×${ball.count}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}`
+      const label = `${escapeHTML(ball.name)} ${escapeHTML(ball.countText)}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}`
       return `<button class="command ball${none ? ' none' : ''}" data-throw="${escapeHTML(encounterID)}"
             data-ball="${escapeHTML(ball.kind)}" data-sprite="${escapeHTML(ball.sprite)}"
             ${none ? 'data-tab="shop"' : ''} title="${none ? `${escapeHTML(ball.name)} · ${escapeHTML(strings.getBalls)}` : escapeHTML(ball.name)}"
@@ -1113,7 +1121,7 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
         <span class="ball-sprite"><img src="${itemSpriteURL(ball.sprite)}" alt="">${
           none
             ? '<span class="ball-count shop"><i class="codicon codicon-add" aria-hidden="true"></i></span>'
-            : `<span class="ball-count">×${ball.count}</span>`
+            : `<span class="ball-count">${escapeHTML(ball.countText)}</span>`
         }</span>
         <span class="ball-odds">${ball.oddsText === undefined ? '' : escapeHTML(ball.oddsText)}</span>
         <span class="ball-name">${escapeHTML(ball.name)}</span>
@@ -1203,7 +1211,7 @@ function renderFinds(wild: PanelState['wild']): string {
             ) => `<button class="find rarity-${escapeHTML(find.rarity)}" data-collect="${escapeHTML(find.id)}"
                 title="${escapeHTML(find.label)} — ${escapeHTML(find.rarityText)}" aria-label="${escapeHTML(find.label)}">
               ${find.sprite === undefined ? `<span class="emoji">${find.emoji}</span>` : `<img src="${itemSpriteURL(find.sprite)}" alt="">`}
-              ${find.count > 1 ? `<span class="count">×${find.count}</span>` : ''}
+              ${find.count > 1 ? `<span class="count">${escapeHTML(find.countText)}</span>` : ''}
             </button>`,
           )
           .join('')}</div>
@@ -1283,6 +1291,7 @@ function shopAction(
   action: PanelShopAction,
   withPrice: boolean,
   withWord: boolean,
+  o: { ghost?: boolean; attrs?: string } = {},
 ): string {
   // Dimmed and italic, never struck through: a line through a price reads as a discount, and
   // this row has a real one two millimetres away.
@@ -1296,12 +1305,16 @@ function shopAction(
   const price = withPrice
     ? `<span class="price-tag"><span class="cost${cant}">${escapeHTML(action.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>${save}</span>`
     : ''
-  return `<button class="btn${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"
+  const face = `${withWord ? `<span class="verb">${escapeHTML(action.text)}</span>` : ''}${price}`
+  // A ghost is the same face with nothing to press: it only lends its width (the pack stepper).
+  if (o.ghost === true)
+    return `<button class="btn${withPrice ? ' priced' : ''} pack-ghost" tabindex="-1" aria-hidden="true" disabled>${face}</button>`
+  return `<button class="btn${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"${o.attrs ?? ''}
                 data-title="${escapeHTML(action.confirmTitle)}" data-price="${escapeHTML(action.priceText)}"
                 data-confirm="${escapeHTML(state.strings.buy)}"
                 aria-label="${escapeHTML(action.label)}"
                 ${action.enabled ? '' : 'disabled'}>
-          ${withWord ? `<span class="verb">${escapeHTML(action.text)}</span>` : ''}${price}
+          ${face}
         </button>`
 }
 
@@ -1321,32 +1334,63 @@ function packStepper(
   if (step === undefined) return ''
   const up = packs[index + 1]
   const down = packs[index - 1]
-  const button = shopAction(state, item, step, !item.owned, withWord).replace(
-    '<button class="btn',
-    `<button id="pack-${escapeHTML(item.id)}" data-pack-keys="${escapeHTML(item.id)}" class="btn`,
-  )
+  const button = shopAction(state, item, step, !item.owned, withWord, {
+    attrs: ` id="pack-${escapeHTML(item.id)}" data-pack-keys="${escapeHTML(item.id)}"`,
+  })
+  // The last step, invisible, in the same cell: the most it buys is the longest word and the
+  // highest price, so the cell is as wide as any step will be and stepping never widens it.
+  const last = packs[packs.length - 1]
+  const ghost =
+    last === undefined ? '' : shopAction(state, item, last, !item.owned, withWord, { ghost: true })
   return `<div class="pack-stepper" data-pack-row="${escapeHTML(item.id)}">
-      ${button}
+      <div class="pack-face">${ghost}${button}</div>
       <div class="stepper" role="group">
-        <button id="pack-up-${escapeHTML(item.id)}" class="step up" data-pack-step="${escapeHTML(item.id)}" data-step="1"
+        <button id="pack-up-${escapeHTML(item.id)}" class="step up" data-pack-keys="${escapeHTML(item.id)}" data-pack-step="${escapeHTML(item.id)}" data-step="1"
           aria-label="${escapeHTML(up?.text ?? step.text)}" ${up === undefined ? 'disabled' : ''}>
           <i class="codicon codicon-triangle-up" aria-hidden="true"></i></button>
-        <button id="pack-down-${escapeHTML(item.id)}" class="step down" data-pack-step="${escapeHTML(item.id)}" data-step="-1"
+        <button id="pack-down-${escapeHTML(item.id)}" class="step down" data-pack-keys="${escapeHTML(item.id)}" data-pack-step="${escapeHTML(item.id)}" data-step="-1"
           aria-label="${escapeHTML(down?.text ?? step.text)}" ${down === undefined ? 'disabled' : ''}>
           <i class="codicon codicon-triangle-down" aria-hidden="true"></i></button>
       </div>
     </div>`
 }
 
-/** Moves a row's pack multiplier one step, within the core's steps. */
+/**
+ * Moves a row's pack multiplier one step, within the core's steps, and redraws that row only:
+ * a repaint of the whole shop recreated every sprite and every drawer under the player's
+ * fingers, which read as the shop resetting on each arrow key (Diego).
+ */
 function stepPack(state: PanelState, itemID: string, by: number): void {
-  const packs = state.shop.find((i) => i.id === itemID)?.actions.find((a) => a.packs !== undefined)?.packs
-  if (packs === undefined) return
+  const item = state.shop.find((i) => i.id === itemID)
+  const packs = item?.actions.find((a) => a.packs !== undefined)?.packs
+  if (item === undefined || packs === undefined) return
   const next = Math.max(0, Math.min(packs.length - 1, (packSteps.get(itemID) ?? 0) + by))
   if (next === (packSteps.get(itemID) ?? 0)) return
   packSteps.set(itemID, next)
-  invalidate('shop')
-  render()
+  const row = document.querySelector<HTMLElement>(`#shop [data-pack-row="${CSS.escape(itemID)}"]`)
+  if (row === null) {
+    invalidate('shop')
+    render()
+    return
+  }
+  const focused = focusInside(row)
+  row.outerHTML = packStepper(state, item, packs, item.owned || item.actions.length > 1)
+  if (focused === undefined) return
+  // A disabled control cannot hold focus: the arrow pressed at an end of the range, or the tag
+  // of a step the wallet cannot cover. Focus goes to the other arrow, then to anything in the
+  // row still enabled — never to the page, where the arrow keys would stop stepping.
+  const usable = (id: string): boolean => {
+    const el = document.getElementById(id)
+    return el instanceof HTMLButtonElement && !el.disabled
+  }
+  const back = by > 0 ? `pack-down-${itemID}` : `pack-up-${itemID}`
+  const target = [
+    focused.id,
+    back,
+    `pack-${itemID}`,
+    by > 0 ? `pack-up-${itemID}` : `pack-down-${itemID}`,
+  ].find(usable)
+  if (target !== undefined) restoreFocus({ id: target, start: null, end: null })
 }
 
 function renderShop(state: PanelState): string {
@@ -1372,6 +1416,7 @@ function renderShop(state: PanelState): string {
           <div class="title">${escapeHTML(item.title)}${stat}</div>
           ${desc}
         </div>`
+    const hasPacks = item.actions.some((a) => (a.packs?.length ?? 0) >= 2)
     return `
       <div class="row shop-item${item.owned ? ' owned' : ''}">
         ${itemIcon(item.sprite, item.emoji)}
@@ -1379,7 +1424,10 @@ function renderShop(state: PanelState): string {
         <div class="buys">${item.actions
           .map((a) =>
             a.packs === undefined || a.packs.length < 2
-              ? shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)
+              ? hasPacks
+                ? // Beside a pack, the single keeps the arrows' slot empty, so both prices end at one edge.
+                  `<div class="pack-stepper single"><div class="pack-face">${shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)}</div></div>`
+                : shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)
               : packStepper(state, item, a.packs, item.owned || item.actions.length > 1),
           )
           .join('')}</div>
@@ -1488,7 +1536,7 @@ function renderBag(state: PanelState): string {
       ) => `<button class="bag-row" data-bag-select="${escapeHTML(item.id)}" aria-pressed="${item.id === selected?.id}">
         ${itemIcon(item.sprite, item.emoji)}
         <span class="bag-name">${escapeHTML(item.title)}</span>
-        <span class="bag-count">×${item.count}</span>
+        <span class="bag-count">${escapeHTML(item.countText)}</span>
       </button>`,
     )
     .join('')
@@ -1601,7 +1649,7 @@ function speciesCard(
         ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'line')}
         <div class="dex-entry-game">
           <div class="reg-line">
-            ${expMeter(sp.percent, { label: sp.percentText })}
+            ${expMeter(sp.percent, { label: sp.percentText, done: sp.status === 'registered' })}
             <span class="desc">${escapeHTML(sp.percentText)}</span>
           </div>
           ${entries}
@@ -1934,7 +1982,7 @@ function renderDex(state: PanelState): string {
     const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
       if (region !== undefined && (id < region.from || id > region.to)) return false
       if (dexOwnedOnly && (sp === undefined || sp.status === 'seen')) return false
-      if (dexOwnedOnly && shinydex && sp?.shiny !== 'registered') return false
+      if (dexOwnedOnly && shinydex && sp?.shiny === 'none') return false
       if (query === '') return true
       if (numeric !== undefined) return String(id).includes(numeric)
       return sp !== undefined && sp.name.toLowerCase().includes(query)
@@ -2021,7 +2069,7 @@ function renderDex(state: PanelState): string {
       ${state.dexLogFilters
         .map(
           (filter) => `<button class="chip" data-dex-filter="${escapeHTML(filter.id)}"
-            aria-pressed="${filter.id === dexLogFilter}">${escapeHTML(filter.label)} ${filter.count}</button>`,
+            aria-pressed="${filter.id === dexLogFilter}">${escapeHTML(filter.label)} ${escapeHTML(filter.countText)}</button>`,
         )
         .join('')}
     </div>`
@@ -2050,11 +2098,12 @@ function renderDex(state: PanelState): string {
 }
 
 /**
- * One Pokédex entry in the grid: a paper card with the number and the rarity on top, the sprite
- * on the device's little screen, the name, the bar and its line. What is not had yet is the
- * games' silhouette on a dark screen; met, on a lit one. In the Shinydex only a registered shiny
- * shows itself — everything else is a silhouette, with the gold bar of the road to its shiny
- * when that road has begun (Diego).
+ * One Pokédex entry in the grid: a paper card with the number and the rarity (or "companion")
+ * on top, the sprite on the device's little screen, right under it the bar with its percentage —
+ * green and without one at 100% — and the name. What is not had yet is the games' silhouette on
+ * a dark screen; met, on a lit one. In the Shinydex a shiny shows itself once it is the player's
+ * (its shiny form unlocked or registered), with the gold bar; everything else is a silhouette,
+ * with the gold road to its shiny when that road has begun (Diego).
  */
 function dexCell(
   state: PanelState,
@@ -2065,12 +2114,15 @@ function dexCell(
 ): string {
   const selected = id === dexSelected ? ' selected' : ''
   const tabIndex = ` tabindex="${focusable ? 0 : -1}"`
-  const shown = sp !== undefined && sp.status !== 'seen' && (!shinydex || sp.shiny === 'registered')
+  // A shiny the player has shows in the Shinydex from the moment its shiny form is unlocked, not
+  // only once its gold bar is full (Diego). The core decides which those are; the count agrees.
+  const isShinyOwned = sp !== undefined && sp.shiny !== 'none'
+  const shown = sp !== undefined && sp.status !== 'seen' && (!shinydex || isShinyOwned)
   if (!shown) {
     const seen = sp !== undefined
     const road =
       shinydex && sp?.shinyBar !== undefined
-        ? gameMeter(sp.shinyBar.percent, { surface: 'paper', size: 'thin', tone: 'shiny', hidden: true })
+        ? `<span class="cell-bar">${gameMeter(sp.shinyBar.percent, { surface: 'device', tone: 'shiny', glyph: '★', size: 'thin', hidden: true })}<span class="cell-pct">${escapeHTML(sp.shinyBar.percentShortText)}</span></span>`
         : ''
     return `
         <button class="cell locked${seen ? ' seen' : ''}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
@@ -2079,37 +2131,43 @@ function dexCell(
           ${road}
         </button>`
   }
-  const shiny = sp.shiny === 'registered' || (!shinydex && sp.isShiny)
+  const shiny = shinydex ? isShinyOwned : sp.shiny === 'registered' || sp.isShiny
   // A species whose line never loaded has no name yet, only the core's `#N` fallback — and the
   // number is already on the card.
   const name = sp.name === `#${id}` ? '' : `<span class="name">${escapeHTML(sp.name)}</span>`
+  // Under the screen, the bar and its figure on its right: the EXP bar and how far it is, or in
+  // the Shinydex the gold road to the shiny and how far that is.
   const bar = shinydex
-    ? gameMeter(sp.shinyBar?.percent ?? 100, {
-        surface: 'paper',
-        size: 'thin',
-        tone: 'shiny',
-        hidden: true,
-      })
-    : expMeter(sp.percent, { size: 'thin', hidden: true })
+    ? `${gameMeter(sp.shiny === 'registered' ? 100 : (sp.shinyBar?.percent ?? 0), { surface: 'device', tone: 'shiny', glyph: '★', size: 'thin', hidden: true })}${
+        sp.shiny === 'registered'
+          ? ''
+          : `<span class="cell-pct">${escapeHTML(sp.shinyBar?.percentShortText ?? '')}</span>`
+      }`
+    : sp.status === 'registered'
+      ? expMeter(100, { size: 'thin', hidden: true, done: true })
+      : `${expMeter(sp.percent, { size: 'thin', hidden: true })}<span class="cell-pct">${escapeHTML(sp.percentShortText)}</span>`
   const star = shiny
     ? '<span class="star" title="shiny">★</span>'
     : sp.shiny === 'unlocked'
       ? '<span class="star open" title="shiny">☆</span>'
       : ''
-  const line = sp.isCompanion
-    ? `<span class="tag xs state cell-line">${escapeHTML(state.strings.companionBadge)}</span>`
-    : `<span class="cell-line">${escapeHTML(shinydex ? (sp.shinyBar?.text ?? sp.percentText) : sp.percentText)}</span>`
+  const road = shinydex && sp.shinyBar !== undefined ? sp.shinyBar.text : sp.percentText
+  // The companion says so in words — on its card, where the rarity would be, and in its name —
+  // not only with its blue edge; the rarity moves to the name then.
+  const label = [sp.name, sp.isCompanion ? state.strings.companionBadge : sp.rarityText, road].join(' · ')
+  const corner = sp.isCompanion
+    ? `<span class="tag xs state">${escapeHTML(state.strings.companionBadge)}</span>`
+    : `<span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>`
   return `
         <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
-                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.percentText)}">
+                data-dex="${id}"${tabIndex} title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">
           <span class="cell-top">
             <span class="num">${dexNumber(id)}</span>
-            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+            ${corner}
           </span>
           <span class="cell-screen">${star}<img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy"></span>
+          <span class="cell-bar">${bar}</span>
           ${name}
-          ${bar}
-          ${line}
         </button>`
 }
 
@@ -2989,7 +3047,8 @@ function restoreFocus(focused: ReturnType<typeof focusInside>): void {
   if (focused === undefined) return
   const fresh = document.getElementById(focused.id) as HTMLInputElement | null
   if (fresh === null) return
-  fresh.focus()
+  // Putting focus back is not a move: the page stays where the reader left it.
+  fresh.focus({ preventScroll: true })
   if (focused.start !== null && typeof fresh.setSelectionRange === 'function')
     fresh.setSelectionRange(focused.start, focused.end ?? focused.start)
 }

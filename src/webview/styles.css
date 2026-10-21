@@ -686,10 +686,10 @@ button.action.secondary {
 /* ---- dex ---- */
 /* ---- the Pokédex grid: an entry card per species (Diego) ----
    The list scrolls on its own, under the head that stays put: it takes the window from where it
-   starts down to the page's own bottom air (`--scroll-top`, set by fitScrollers() in main.ts). Each species is a paper card —
-   its number and rarity on top, the sprite on the device's little screen, its name, its bar and
-   the bar's line — with the rarity along its foot. Not had yet: the games' silhouette on a dark
-   screen; met: on a lit one. */
+   starts down to the page's own bottom air (`--scroll-top`, set by fitScrollers() in main.ts).
+   Each species is a paper card of fixed rows — its number and rarity on top, the sprite on the
+   device's little screen, the bar with its percentage right under it, its name — with the rarity
+   along its foot. Not had yet: the games' silhouette on a dark screen; met: on a lit one. */
 .dex-scroll {
   /* Never under 240px: in a short panel (the bottom one, ~300px) the window left under the head
      is next to nothing, so the list keeps a usable height and the page scrolls to it instead. */
@@ -708,9 +708,12 @@ button.action.secondary {
 }
 .dex .cell {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  /* Fixed rows — number, screen, bar, name — so every card is the same height, whatever it
+     holds: a Pokémon, a silhouette, or the Shinydex's view of either (Diego). */
+  display: grid;
+  grid-template-rows: 15px 100px 14px 17px;
+  row-gap: 4px;
+  align-content: start;
   min-width: 0;
   padding: 5px 4px 7px;
   border: 2px solid var(--paper-edge);
@@ -775,20 +778,23 @@ button.action.secondary {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dex .cell .game-meter {
-  margin-top: 1px;
+/* Right under the screen, the bar with its figure on its right. */
+.dex .cell-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
-.dex .cell .cell-line {
-  align-self: center;
-  max-width: 100%;
+.dex .cell-bar .game-meter {
+  flex: 1;
+  min-width: 0;
+}
+.dex .cell .cell-pct {
+  flex: none;
   font-size: var(--fs-xs);
-  opacity: 0.7;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dex .cell .tag.cell-line {
-  opacity: 1;
 }
 /* The rarity along the card's foot. */
 .dex .cell.owned::after {
@@ -3775,8 +3781,28 @@ button.btn.priced .save {
   gap: 3px;
   min-width: 0;
 }
-.pack-stepper > button.btn.priced {
+/* The tag shares its cell with an invisible copy of the last step — the longest word and the
+   highest price — so the cell is as wide as any step and stepping never widens the tag: a wider
+   "×100 · 720M" took width from the name beside it, its description broke onto another line and
+   the row jumped (Diego). */
+.pack-face {
   flex: 1;
+  display: grid;
+  min-width: 0;
+}
+.pack-face > button.btn {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.pack-face > .pack-ghost {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Beside a pack, a single price keeps the arrows' room — their 22px and the 3px between — so
+   both prices end at one edge. Room, not an empty element: an empty slot beside it stood twice
+   the tag's height. */
+.pack-stepper.single {
+  padding-right: 25px;
 }
 .stepper {
   display: grid;
