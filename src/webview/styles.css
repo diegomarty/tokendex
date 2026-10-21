@@ -3639,6 +3639,48 @@ button.btn.priced .save {
     padding-left: 6px;
   }
 }
+/* The ten-pack's multiplier (plan 09 §9.1): ▲▼ stacked beside the price tag, the device's two
+   small buttons; the tag becomes the step they choose. */
+.pack-stepper {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  min-width: 0;
+}
+.pack-stepper > button.btn.priced {
+  flex: 1;
+}
+.stepper {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+}
+.stepper .step {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  min-height: 13px;
+  padding: 0;
+  border: 1px solid var(--lcd-edge);
+  border-radius: var(--r-s);
+  background: var(--lcd-glass);
+  color: var(--lcd-ink);
+  cursor: pointer;
+}
+.stepper .step .codicon {
+  font-size: 11px;
+}
+.stepper .step:hover:not(:disabled) {
+  background: var(--lcd-glass-hi);
+}
+.stepper .step:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.stepper .step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 /* A tag that is only a price: the screen fills it, centred. */
 button.btn.priced:not(:has(.verb)) {
   justify-content: center;
