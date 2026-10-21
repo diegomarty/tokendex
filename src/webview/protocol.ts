@@ -84,6 +84,8 @@ export interface PanelShopAction {
   /** What the host's native confirmation names — `Poké Ball`, or `Poké Ball ×10`. */
   confirmTitle: string
   priceText: string
+  /** The same price in tokens: what a group's "from" summary is the least of. Never shown as is. */
+  price: number
   /** The saving this quantity gives, already formatted (`−10%`). Absent when there is none. */
   saveText?: string
   enabled: boolean
@@ -749,6 +751,8 @@ export interface PanelState {
    * one on stage, unfinished first. Picking one posts `setCompanion`.
    */
   pcBox: PanelPCBox
+  /** The shop's drawers (Diego): each group with something in it, its title and a summary line. */
+  shopGroups: { id: PanelShopItem['group']; title: string; summary: string }[]
   /** The lid (Diego): usage folded into it, and its three lights reading the official limits. */
   lid: PanelLid
   /** The player's avatar: a Showdown trainer slug from the core's roster. */

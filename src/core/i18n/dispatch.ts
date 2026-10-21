@@ -2111,3 +2111,14 @@ export function emptyState(
 export function emptyBagAction(lang: AppLanguage): string {
   return t(lang, '상점으로', 'Go to the shop', 'ショップへ', 'Ir a la tienda')
 }
+
+/** A shop drawer folded: how many things, and the cheapest. */
+export function shopGroupSummary(lang: AppLanguage, count: number, from: string): string {
+  return t(
+    lang,
+    `${count}개 · ${from}부터`,
+    `${count} · from ${from}`,
+    `${count}こ · ${from}から`,
+    `${count} · desde ${from}`,
+  )
+}

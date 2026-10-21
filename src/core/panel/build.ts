@@ -243,6 +243,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         label: owned ? D.ownedActionLabel(lang, name) : D.buyActionLabel(lang, name, singlePrice),
         confirmTitle: name,
         priceText: singlePrice,
+        price: shopEntryPrice({ kind: 'item', item: kind }),
         enabled: canBuyItem(state, kind),
       },
     ]
@@ -256,6 +257,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         label: D.bundleBuyLabel(lang, bundleName, bundlePrice, bundleDiscount),
         confirmTitle: bundleName,
         priceText: bundlePrice,
+        price: shopEntryPrice({ kind: 'item', item: kind, quantity }),
         // Grouping the two prices onto one row is only an improvement while the ten-pack is
         // still visibly the cheaper ball. Without this the saving would survive nowhere but in
         // arithmetic the reader has to do.
@@ -307,6 +309,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
             label: D.buyActionLabel(lang, name, priceText),
             confirmTitle: name,
             priceText,
+            price: FreshEgg.price_(tier),
             enabled: canBuyEgg(state, tier),
           },
         ],
@@ -560,6 +563,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     dexSummary: dexSummary(state, species, dexLog.length, lang),
     medals: medalsPanel(state, lang),
     pcBox: pcBoxPanel(species, lang),
+    shopGroups: shopGroupsPanel(shop, lang),
     ...challengesPanel(state, now, lang),
     eggs: eggsPanel(state, lang),
     dexLog,
@@ -833,6 +837,27 @@ function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage
 
   drawer('streak', panel.wild.streak.text, false)
   return drawers
+}
+
+/**
+ * The shop's drawers (Diego): each group that has something in it, with how many things and the
+ * cheapest price — the rows' own figures, so the summary and the drawer never disagree.
+ */
+function shopGroupsPanel(shop: readonly PanelShopItem[], lang: AppLanguage): PanelState['shopGroups'] {
+  const strings = panelStrings(lang)
+  const titles: Record<PanelShopItem['group'], string> = {
+    balls: strings.shopBalls,
+    berries: strings.shopBerries,
+    items: strings.shopItems,
+    eggs: strings.shopEggs,
+  }
+  return (['balls', 'berries', 'items', 'eggs'] as const).flatMap((id) => {
+    const items = shop.filter((item) => item.group === id)
+    if (items.length === 0) return []
+    const prices = items.flatMap((item) => item.actions.map((a) => a.price)).filter((p) => p > 0)
+    const from = prices.length === 0 ? '' : compact(Math.min(...prices))
+    return [{ id, title: titles[id], summary: D.shopGroupSummary(lang, items.length, from) }]
+  })
 }
 
 /**

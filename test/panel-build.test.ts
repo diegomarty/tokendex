@@ -1324,3 +1324,19 @@ describe('the empty incubator', () => {
     ).toBeUndefined()
   })
 })
+
+describe('the shop’s drawers', () => {
+  // The shop folds into drawers like Home (Diego): each group a title and one summary line — how
+  // many things, and the cheapest — formatted here, in the shop's own group order.
+  it('sums up each shop group in one line, cheapest first', () => {
+    const groups = build({ state: state({ active: activeMon }) }).shopGroups
+    expect(groups.map((g) => g.id)).toEqual(['balls', 'berries', 'items', 'eggs'])
+    const balls = groups[0]!
+    expect(balls.title).toBe(build().strings.shopBalls)
+    expect(balls.summary).toBe(D.shopGroupSummary('en', 4, compact(Pokeball.price.pokeBall)))
+  })
+
+  it('leaves out a group with nothing in it', () => {
+    expect(build().shopGroups.map((g) => g.id)).not.toContain('eggs') // before the starter
+  })
+})
