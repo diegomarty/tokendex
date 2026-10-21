@@ -19,7 +19,16 @@ import type {
   Rarity,
   WildEncounter,
 } from '../companion/model.js'
-import { BALL_KINDS, BERRY_KINDS, PokemonBalance, PokemonOdds } from '../companion/model.js'
+import {
+  BALL_KINDS,
+  BERRY_KINDS,
+  EGG_STOCK_MAX,
+  PokemonBalance,
+  PokemonOdds,
+  currentSpeciesID,
+} from '../companion/model.js'
+import { creditDelta } from '../companion/ledger.js'
+import { markSeen, registerShiny } from '../companion/registry.js'
 import {
   appendTrail,
   enqueueEncounter,
@@ -245,4 +254,36 @@ export function setEggTier(state: CompanionState, tier: Rarity | undefined): Com
   // the new one, or the tier being tested is not the tier that gets honoured.
   delete next.pendingHatchID
   return next
+}
+
+/** Experience for the species on stage, through the same credit a fold uses. */
+export function grantSpeciesXP(state: CompanionState, amount: number): CompanionState {
+  return creditDelta(state, amount)
+}
+
+/** Fills the companion's bar; the next `grow` registers it and moves on if it can. */
+export function registerNow(state: CompanionState): CompanionState {
+  const active = state.active
+  if (active === undefined) return state
+  const threshold = PokemonBalance.phaseThreshold(active.rarity, active.totalForms, active.stageIndex)
+  const missing = Math.max(0, threshold - active.usedAtStage)
+  return creditDelta(state, missing)
+}
+
+/** Registers the shiny of the species on stage, as catching or hatching one does (`obtainShiny`). */
+export function registerShinyNow(state: CompanionState): CompanionState {
+  const active = state.active
+  if (active === undefined) return state
+  return registerShiny(state, currentSpeciesID(active))
+}
+
+export function markSeenDev(state: CompanionState, speciesID: number): CompanionState {
+  return markSeen(state, speciesID)
+}
+
+export function grantEgg(state: CompanionState): CompanionState {
+  return {
+    ...state,
+    eggStock: { ...state.eggStock, count: Math.min(EGG_STOCK_MAX, state.eggStock.count + 1) },
+  }
 }

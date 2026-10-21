@@ -34,6 +34,7 @@ import {
   Pokeball,
   type PokemonNature,
   type Rarity,
+  type SpeciesProgress,
   type Temperament,
   type TrailEntry,
   type WildEncounter,
@@ -41,6 +42,9 @@ import {
   sortRank,
 } from './model.js'
 import type { RNG } from './growth.js'
+import { spendableBalance } from './ledger.js'
+import { progressOf, registerShiny, registerXP, registrationPercent, shareXP } from './registry.js'
+import { EconomyBalance } from './economy.js'
 
 // MARK: - Balance
 
@@ -583,7 +587,7 @@ export const StealBalance = {
 /** Tokens an attack by this encounter would take right now. */
 export function stealAmount(state: CompanionState, encounter: WildEncounter): number {
   const amount = StealBalance.amount[encounter.rarity]
-  const wallet = Math.max(0, state.usedSinceInstall - state.spentTokens)
+  const wallet = spendableBalance(state)
   const left = amount * StealBalance.perEncounter - (encounter.stolen ?? 0)
   return Math.max(0, Math.min(amount, wallet, left))
 }
@@ -657,7 +661,7 @@ export function trackLegendary(
   if (trailIsCold(entry, now)) return { state, outcome: 'expired' }
   if (queuedCount(state) >= EncounterBalance.maxQueue) return { state, outcome: 'noRoom' }
   const price = trailPrice(entry)
-  if (state.usedSinceInstall - state.spentTokens < price) return { state, outcome: 'cantAfford' }
+  if (spendableBalance(state) < price) return { state, outcome: 'cantAfford' }
 
   const trackedCount = entry.trackedCount + 1
   const encounter: WildEncounter = {
@@ -805,8 +809,11 @@ export interface Attack {
 }
 
 export type TurnOutcome =
-  /** `refunded`: what it had stolen, paid back by catching it. */
-  | { kind: 'caught'; shakes: number; refunded: number }
+  /**
+   * `refunded`: what it had stolen, paid back by catching it. A first catch says how far its
+   * registration now reads (`registeredPercent`); a duplicate, what it paid (`reward`).
+   */
+  | { kind: 'caught'; shakes: number; refunded: number; registeredPercent?: number; reward?: number }
   /** The ball failed and it is still there — and it may have struck back. */
   | { kind: 'broke'; shakes: number; attack?: Attack }
   /** It ate the berry and stayed — and it may have struck back anyway. */
@@ -821,6 +828,55 @@ export type TurnOutcome =
 export interface TurnResult {
   state: CompanionState
   outcome: TurnOutcome
+}
+
+/**
+ * A catch, in the registry. A species not yet obtained is unlocked and fills
+ * `EconomyBalance.catchShare` of its bar — owed as `pendingShare` until its line fixes the
+ * threshold. One already obtained is a duplicate: it pays `duplicateReward` into `earnedTokens`
+ * (never off `spentTokens`, which clamps at zero and would swallow it) and adds no experience.
+ * A shiny marks the shiny form obtained either way.
+ */
+function caughtSpecies(
+  state: CompanionState,
+  encounter: WildEncounter,
+): { state: CompanionState; registeredPercent?: number; reward?: number } {
+  const id = encounter.speciesID
+  const before = progressOf(state, id)
+  const p: SpeciesProgress = { ...before, unlocked: true, caught: before.caught + 1 }
+  // A shiny caught registers its shiny through the one path, which also dresses the companion
+  // when it is this species.
+  const shiny = (s: CompanionState) => (encounter.isShiny ? registerShiny(s, id) : s)
+  if (before.unlocked) {
+    const reward = EconomyBalance.duplicateReward[encounter.line?.rarity ?? encounter.rarity]
+    return {
+      state: shiny({
+        ...state,
+        earnedTokens: state.earnedTokens + reward,
+        species: { ...state.species, [id]: p },
+      }),
+      reward,
+    }
+  }
+  // The encounter knows where the form sits (an index with forms): its position and threshold
+  // are fixed here, as `growth`'s `fix` would on stage, and the share lands as experience at once.
+  const line = encounter.line
+  if (p.threshold === undefined && line !== undefined) {
+    p.threshold = registerXP(line.rarity, line.totalForms, line.stageIndex)
+    p.baseID = line.baseID
+    p.stageIndex = line.stageIndex
+    p.totalForms = line.totalForms
+    p.lineRarity = line.rarity
+  }
+  if (p.threshold !== undefined) {
+    p.xp = Math.min(p.threshold, p.xp + shareXP(EconomyBalance.catchShare, p.threshold))
+  } else {
+    p.pendingShare = Math.min(1, (p.pendingShare ?? 0) + EconomyBalance.catchShare)
+  }
+  return {
+    state: shiny({ ...state, species: { ...state.species, [id]: p } }),
+    registeredPercent: registrationPercent(p),
+  }
 }
 
 /** The Pokédex entry a wild catch files: one species, not a raised line. See rule 2 in the header. */
@@ -923,15 +979,24 @@ export function takeTurn(
     const roll = resolveThrow(encounter, action.ball, rng)
     if (roll.caught) {
       const refunded = Math.min(encounter.stolen ?? 0, spent.spentTokens)
-      return {
-        state: {
+      const filed = caughtSpecies(
+        {
           ...spent,
           spentTokens: spent.spentTokens - refunded,
           wild: spent.wild.filter((_, i) => i !== index),
           dex: [...spent.dex, wildDexEntry(encounter, now)],
         },
-        outcome: { kind: 'caught', shakes: roll.shakes, refunded },
+        encounter,
+      )
+      // The lure has done its job once its species is caught.
+      if (filed.state.lure?.speciesID === encounter.speciesID) {
+        filed.state = { ...filed.state }
+        delete filed.state.lure
       }
+      const outcome: TurnOutcome = { kind: 'caught', shakes: roll.shakes, refunded }
+      if (filed.registeredPercent !== undefined) outcome.registeredPercent = filed.registeredPercent
+      if (filed.reward !== undefined) outcome.reward = filed.reward
+      return { state: filed.state, outcome }
     }
 
     const missed: WildEncounter = {

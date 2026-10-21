@@ -38,7 +38,7 @@ const TAB_ICONS: Record<PanelTabID, string> = {
  * never says which one is current, or that they control anything. The roving `tabindex` is set
  * by `render` alongside `aria-selected`, so the strip is one tab stop like the Pokédex grid.
  */
-export const PANEL_BODY_HTML = `  <nav class="tabs" role="tablist">
+export const PANEL_BODY_HTML = `  <nav class="tabs device-casing" role="tablist">
 ${PANEL_TABS.map(
   (tab, index) =>
     `    <button id="tab-${tab}" class="tab" role="tab" data-tab="${tab}" aria-controls="${tab}" aria-selected="${index === 0}" tabindex="${index === 0 ? 0 : -1}"${

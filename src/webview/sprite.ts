@@ -74,14 +74,29 @@ export function sceneSpriteURL(speciesID: number, shiny: boolean): string {
 }
 
 /**
+ * The small icon the games' party menu draws a Pokémon with: Gen VII's set, 40×30, species 1–809.
+ * Newer species have none, so a caller gives the still sprite as its `data-fallback`.
+ */
+export function menuIconURL(speciesID: number): string {
+  return `${SPRITE_BASE}/versions/generation-vii/icons/${speciesID}.png`
+}
+
+/**
  * The egg's sprite is not an item: PokéAPI keeps it with the Pokémon, on their 96px sheet with
  * the egg drawn in the middle 28×30.
  */
 const EGG_SPRITE = 'egg'
+/**
+ * The egg as the games' menus draw it, for the small spots beside item sprites: Gen VII's 40×30
+ * icon, the egg ~16px — the scale of an item's drawing in its 30px box. The sheet's 28×30 crop
+ * filled the same box and read twice as big. The large egg stays on stage.
+ */
+const EGG_ICON = 'egg-icon'
 
 /** One item sprite, by its PokéAPI filename (`poke-ball`, `rare-candy`, ...) — or the egg. */
 export function itemSpriteURL(name: string): string {
   if (name === EGG_SPRITE) return `${SPRITE_BASE}/egg.png`
+  if (name === EGG_ICON) return `${SPRITE_BASE}/versions/generation-vii/icons/egg.png`
   return `${ITEM_SPRITE_BASE}/${name}.png`
 }
 

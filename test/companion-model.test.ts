@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { challengesFor } from '../src/core/companion/challenges.js'
 import {
   FreshEgg,
   PokemonBalance,
@@ -103,9 +104,10 @@ describe('balance', () => {
     expect(last).toBeGreaterThan(first)
   })
 
-  it('keeps one candy below the cheapest evolution threshold', () => {
-    // Otherwise a single candy could chain evolutions or force a graduation.
-    expect(RareCandy.xp).toBeLessThan(PokemonBalance.phaseThreshold('common', 1, 0))
+  it('keeps one candy below any stage threshold', () => {
+    // A candy is a share of the stage it is fed to, so it can never chain evolutions or force
+    // a graduation on its own — and two of them (the cap) cover at most half a stage.
+    expect(RareCandy.stageShare * RareCandy.maxPerSpecies).toBeLessThanOrEqual(0.5)
   })
 
   // Pricing eggs by probability ratio would make two uncommon eggs beat one rare egg on every
@@ -113,14 +115,15 @@ describe('balance', () => {
   it('prices guaranteed eggs so the higher tier is not a worse deal', () => {
     const uncommon = FreshEgg.price_('uncommon')
     const rare = FreshEgg.price_('rare')
-    expect(FreshEgg.price_(undefined)).toBe(FreshEgg.price)
-    expect(uncommon).toBe(2_500_000_000)
-    expect(rare).toBe(4_000_000_000)
+    expect(uncommon).toBe(50_000_000)
+    expect(rare).toBe(80_000_000)
     expect(rare).toBeLessThan(uncommon * 2) // one rare egg beats two uncommon ones on price
   })
 
   it('prices the shiny charm as a premium permanent upgrade', () => {
-    expect(ShinyCharm.price).toBe(PokemonBalance.graduationTotal('rare'))
+    // Shop prices are wallet tokens and did not move with the registration scale: the charm
+    // still costs more than any line's registration, including a legendary's.
+    expect(ShinyCharm.price).toBeGreaterThan(PokemonBalance.graduationTotal('legendary'))
     expect(ShinyCharm.shinyDenominator).toBeLessThan(64) // strictly better odds than the base
   })
 
@@ -236,6 +239,221 @@ describe('MonState', () => {
 })
 
 describe('CompanionState decoding', () => {
+  // [trigger branch] "absent" is the one value that must not read as "none": a save from before
+  // the registry is seeded from what it shows; a save that carries the key — even empty — has
+  // been seeded once and is honoured verbatim.
+  it('seeds the registry only when the key is absent', () => {
+    const legacy = {
+      dex: [
+        {
+          id: 'w1',
+          baseID: 10,
+          finalID: 10,
+          chainOrder: [10],
+          rarity: 'common',
+          isShiny: false,
+          source: 'wild',
+        },
+      ],
+      collectedFinals: ['1:3'],
+      active: {
+        baseID: 129,
+        pathIDs: [129, 130],
+        stageIndex: 1,
+        usedAtStage: 378_478_170,
+        rarity: 'common',
+        totalForms: 2,
+      },
+    }
+    const seeded = decodeCompanionState(legacy)
+    expect(
+      Object.keys(seeded.species)
+        .map(Number)
+        .sort((a, b) => a - b),
+    ).toEqual([1, 3, 10, 129, 130])
+    expect(seeded.species[10]).toMatchObject({ unlocked: true, xp: 0 })
+    // [trigger branch] The seed runs last: decoded after it, the companion brought its old-scale
+    // progress back (378M against a 33M threshold) and graduated on the first fold. Found on
+    // the real save, not by the suite — hence this line.
+    expect(seeded.active?.usedAtStage).toBe(0)
+    expect(decodeCompanionState({ ...legacy, species: {} }).species).toEqual({})
+  })
+
+  // The nature a companion left the stage with: a real one is kept, anything else is dropped
+  // rather than read as a nature the player never had.
+  it('keeps a species’ recorded nature only when it is one', () => {
+    const state = decodeCompanionState({
+      species: { '4': { unlocked: true, nature: 'bold' }, '5': { unlocked: true, nature: 'grumpy' } },
+    })
+    expect(state.species[4]?.nature).toBe('bold')
+    expect(state.species[5]?.nature).toBeUndefined()
+  })
+
+  // [trigger branch] A position that contradicts the species it prices is dropped: a base must be
+  // its own line's base, an evolved form must not be.
+  it('drops a wild line that does not fit its species', () => {
+    const encounter = { id: 'w1', speciesID: 6, captureRate: 45, rarity: 'rare' }
+    const decode = (line: unknown) =>
+      decodeCompanionState({ wild: [{ ...encounter, line }] }).wild[0]?.line
+    expect(decode({ baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'rare' })).toEqual({
+      baseID: 4,
+      stageIndex: 2,
+      totalForms: 3,
+      rarity: 'rare',
+    })
+    expect(decode({ baseID: 6, stageIndex: 2, totalForms: 3, rarity: 'rare' })).toBeUndefined()
+    expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
+  })
+
+  // [trigger branch] The board is rebuilt from the generator: only its own challenges, with the
+  // targets it deals, keep the progress saved. Ten thousand forged weekly items paying 40M each
+  // come back as the three the date deals.
+  it('keeps the progress of the challenges the date deals, and nothing else', () => {
+    const dealt = challengesFor('2026-10-21')
+    const first = dealt[0]!
+    const forged = Array.from({ length: 10_000 }, (_, i) => ({
+      ...first,
+      id: `week:x:${i}`,
+      period: 'week',
+      target: 1,
+      progress: 1,
+    }))
+    const board = decodeCompanionState({
+      challenges: {
+        day: '2026-10-21',
+        week: '2026-W43',
+        items: [{ ...first, progress: 1, target: 1 }, ...forged],
+      },
+    }).challenges!
+    expect(board.items.map((c) => c.id)).toEqual(dealt.map((c) => c.id))
+    expect(board.items[0]).toMatchObject({ target: first.target, progress: 1 })
+    expect(decodeCompanionState({ challenges: { items: [] } }).challenges).toBeUndefined()
+  })
+
+  // An id this build does not know is kept: a newer build celebrated it, and dropping it would
+  // have that build announce it again after a sync.
+  it('keeps the medals celebrated, including ids from a newer build', () => {
+    const state = decodeCompanionState({
+      medals: ['registered-1', 'region-galar', 7, 'shiny-1', 'shiny-1'],
+      medalsSeeded: true,
+    })
+    expect(state.medals).toEqual(['registered-1', 'region-galar', 'shiny-1'])
+    expect(state.medalsSeeded).toBe(true)
+  })
+
+  it('keeps a lure that is whole, and drops one that is not', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
+    expect(decodeCompanionState({ lure }).lure).toEqual(lure)
+    expect(decodeCompanionState({ lure: { ...lure, speciesID: -1 } }).lure).toBeUndefined()
+    expect(decodeCompanionState({ lure: { speciesID: 5 } }).lure).toBeUndefined()
+    // A position that contradicts its species, as a wild line's: a base is its own line's base.
+    expect(decodeCompanionState({ lure: { ...lure, baseID: 1, stageIndex: 0 } }).lure).toBeUndefined()
+    expect(decodeCompanionState({ lure: { ...lure, baseID: 5, stageIndex: 2 } }).lure).toBeUndefined()
+  })
+
+  it('keeps that the companion on stage was chosen by hand while registered', () => {
+    const active = {
+      baseID: 1,
+      pathIDs: [1],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'common',
+      totalForms: 2,
+    }
+    expect(
+      decodeCompanionState({ active: { ...active, chosenWhenRegistered: true } }).active
+        ?.chosenWhenRegistered,
+    ).toBe(true)
+    expect(decodeCompanionState({ active }).active?.chosenWhenRegistered).toBeUndefined()
+  })
+
+  it('keeps that the companion raised as a species was shiny', () => {
+    const state = decodeCompanionState({
+      species: {
+        '4': { unlocked: true, companionShiny: true },
+        '5': { unlocked: true, companionShiny: 'yes' },
+      },
+    })
+    expect(state.species[4]?.companionShiny).toBe(true)
+    expect(state.species[5]?.companionShiny).toBeUndefined()
+  })
+
+  it('reads the registry entry by entry and drops what it cannot read', () => {
+    const state = decodeCompanionState({
+      species: {
+        '4': { xp: 12, unlocked: true, threshold: 8_333_333, lineRarity: 'common', pendingShare: 0.05 },
+        '5': { xp: 1.5, unlocked: 'yes' },
+        '0': { xp: 1, unlocked: true },
+        abc: { xp: 1, unlocked: true },
+        '7': 'nope',
+      },
+    })
+    expect(state.species[4]).toMatchObject({
+      xp: 12,
+      unlocked: true,
+      threshold: 8_333_333,
+      lineRarity: 'common',
+      pendingShare: 0.05,
+    })
+    // A float xp reads as 0 and a non-boolean flag as false — and an entry left with nothing
+    // to say is dropped rather than kept as a blank.
+    expect(state.species[5]).toBeUndefined()
+    expect(state.species[0]).toBeUndefined()
+    expect(state.species[7]).toBeUndefined()
+    expect(Object.keys(state.species)).toHaveLength(1)
+  })
+
+  it('drops an empty entry and keeps one that only owes a share', () => {
+    const state = decodeCompanionState({ species: { 9: {}, 4: { pendingShare: 0.5 } } })
+    expect(state.species[9]).toBeUndefined()
+    expect(state.species[4]).toMatchObject({ pendingShare: 0.5 })
+  })
+
+  // [trigger branch] A key that is present but unusable must count as absent, or a corrupt
+  // `"species": null` would skip the seed and read a full Pokédex as never obtained.
+  it('seeds when the registry key is present but unusable', () => {
+    const legacy = {
+      dex: [
+        {
+          id: 'w1',
+          baseID: 10,
+          finalID: 10,
+          chainOrder: [10],
+          rarity: 'common',
+          isShiny: false,
+          source: 'wild',
+        },
+      ],
+    }
+    expect(decodeCompanionState({ ...legacy, species: null }).species[10]?.unlocked).toBe(true)
+    expect(decodeCompanionState({ ...legacy, species: 'x' }).species[10]?.unlocked).toBe(true)
+  })
+
+  it('reads the egg stock within its capacity, and grants nothing for a missing key', () => {
+    expect(decodeCompanionState({}).eggStock).toEqual({ count: 0 })
+    expect(decodeCompanionState({ eggStock: { count: 9, lastGrantDay: '2026-10-20' } }).eggStock).toEqual(
+      {
+        count: 3,
+        lastGrantDay: '2026-10-20',
+      },
+    )
+    expect(decodeCompanionState({ eggStock: { count: 1, lastGrantDay: 'today' } }).eggStock).toEqual({
+      count: 1,
+    })
+  })
+
+  it('reads where a species sits in its line', () => {
+    const state = decodeCompanionState({
+      species: { 5: { unlocked: true, baseID: 4, stageIndex: 1, totalForms: 3 } },
+    })
+    expect(state.species[5]).toMatchObject({ baseID: 4, stageIndex: 1, totalForms: 3 })
+  })
+
+  it('never reads a negative payout', () => {
+    expect(decodeCompanionState({ earnedTokens: -5 }).earnedTokens).toBe(0)
+    expect(decodeCompanionState({ earnedTokens: 5 }).earnedTokens).toBe(5)
+  })
+
   it('round-trips', () => {
     const state = decodeCompanionState({
       installBaselineSet: true,

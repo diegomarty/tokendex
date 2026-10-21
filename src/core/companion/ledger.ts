@@ -7,7 +7,9 @@
  * reachable from a test.
  */
 
-import type { CompanionState } from './model.js'
+import { type CompanionState, currentSpeciesID } from './model.js'
+import { creditSpeciesXP } from './registry.js'
+import { isFreshGame } from './eggs.js'
 import { MilestoneBalance, StreakBalance, grantLegendaryEncounter } from './encounters.js'
 
 export interface LedgerObservation {
@@ -305,19 +307,29 @@ function daysSinceStreakAward(lastAward: string | undefined, today: string): num
 /**
  * Routes an accrued delta into either egg incubation or the active Pokémon's growth meter.
  * Growth itself (evolution, graduation) is handled separately in `growth.ts`.
+ *
+ * Before the starter is chosen there is neither: the delta is currency only. Crediting the egg
+ * would end the new game behind the player's back and hatch a random species in its place.
  */
 export function creditDelta(state: CompanionState, delta: number): CompanionState {
   if (delta <= 0) return state
   const next: CompanionState = { ...state, usedSinceInstall: state.usedSinceInstall + delta }
+  if (isFreshGame(state)) return next
   if (next.active === undefined) {
     next.eggUsage = next.eggUsage + delta
-  } else {
-    next.active = { ...next.active, usedAtStage: next.active.usedAtStage + delta }
+    return next
   }
-  return next
+  next.active = { ...next.active, usedAtStage: next.active.usedAtStage + delta }
+  // The registry mirrors the meter here, in the one place that knows the delta went to the
+  // companion: raw, settled against the line by the next `grow`. A caller that credited the meter
+  // and forgot the bar would make the two tell different stories.
+  return creditSpeciesXP(next, currentSpeciesID(next.active), delta)
 }
 
-/** Spendable currency: what has been used, minus what has been spent in the shop. */
+/**
+ * Spendable currency: what has been used, plus what has been earned, minus what has been spent.
+ * The one definition of the wallet — the shop, the trail and an attack all read it from here.
+ */
 export function spendableBalance(state: CompanionState): number {
-  return Math.max(0, state.usedSinceInstall - state.spentTokens)
+  return Math.max(0, state.usedSinceInstall + state.earnedTokens - state.spentTokens)
 }

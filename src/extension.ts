@@ -29,6 +29,7 @@ import {
   type PanelRequestKind,
   anySurfaceOpen,
   broadcastThrow,
+  deliverNews,
   reloadSurfaces,
   updateSurfaces,
 } from './surface.js'
@@ -57,7 +58,14 @@ import {
 import { deviceIdentity } from './core/companion/device.js'
 import { mergeSaves, withRevision } from './core/companion/merge.js'
 import type { AppLanguage, Rarity } from './core/companion/model.js'
-import { BALL_KINDS, ITEM_KINDS, Pokeball, isBerryKind, itemIsBundled } from './core/companion/model.js'
+import {
+  ANIMATED_SPECIES_MAX,
+  BALL_KINDS,
+  ITEM_KINDS,
+  parsePackQuantity,
+  isBerryKind,
+  itemIsBundled,
+} from './core/companion/model.js'
 import { purchaseNeedsConfirmation } from './core/companion/shop.js'
 import { isTrainerID } from './core/companion/trainers.js'
 import { freshCompanionState, systemDefaultLanguage } from './core/companion/model.js'
@@ -367,9 +375,11 @@ function startWorker(context: vscode.ExtensionContext): void {
   worker = instance
 
   instance.on('message', (response: ScanResponse | CelebrateBroadcast) => {
-    // Celebrations arrive outside the request/response ids: the game's peak moments as
-    // toasts, each carrying a way into the panel.
+    // Celebrations arrive outside the request/response ids. On a surface on screen they are
+    // news the panel draws with the catch's card (plan 08 §7: one way to celebrate); only when
+    // none is do they become toasts, each carrying a way into the panel.
     if ('celebrate' in response) {
+      if (deliverNews(response.news)) return
       for (const message of response.celebrate) {
         void vscode.window.showInformationMessage(message, response.openLabel).then((choice) => {
           if (choice === response.openLabel) void vscode.commands.executeCommand('tokendex.open')
@@ -516,9 +526,9 @@ const requestAction = (payload: WorkerAction, fromLastScan = false): Promise<Sca
  * Translates an opaque panel id back into a typed action. Unknown ids are ignored rather than
  * trusted: the webview is a separate bundle and could be stale after an update.
  *
- * The quantity segment (`item:pokeBall:10`) is accepted only when it names exactly the bundle
- * size the shop sells — any other number is a stale or hand-crafted id and fails closed, so the
- * bundle discount can never be claimed for an arbitrary count.
+ * The quantity segment (`item:pokeBall:30`) is accepted only when it names a pack quantity the
+ * shop sells (`parsePackQuantity`: ×10 … ×100) — any other number is a stale or hand-crafted id
+ * and fails closed, so the bundle discount can never be claimed for an arbitrary count.
  */
 function parseEntryID(id: string): WorkerAction | undefined {
   const [kind, value, quantityRaw] = id.split(':')
@@ -526,8 +536,9 @@ function parseEntryID(id: string): WorkerAction | undefined {
     const item = ITEM_KINDS.find((i) => i === value)
     if (item === undefined) return undefined
     if (quantityRaw === undefined) return { action: 'buyItem', item }
-    if (quantityRaw !== String(Pokeball.bundleSize) || !itemIsBundled(item)) return undefined
-    return { action: 'buyItem', item, quantity: Pokeball.bundleSize }
+    const quantity = parsePackQuantity(quantityRaw)
+    if (quantity === undefined || !itemIsBundled(item)) return undefined
+    return { action: 'buyItem', item, quantity }
   }
   if (kind === 'egg') {
     const tiers: Rarity[] = ['common', 'uncommon', 'rare', 'legendary']
@@ -566,9 +577,18 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'track',
   'run',
   'setTrainer',
+  'setKeepCompleted',
+  'boostShiny',
+  'setLure',
+  'setCompanion',
+  'chooseStarter',
+  'incubateEgg',
 ])
 
 /** Ids echoed back by the webview are opaque, but a bounded string is the least they must be. */
+const isSpeciesID = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= ANIMATED_SPECIES_MAX
+
 function isOpaqueID(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 80
 }
@@ -576,6 +596,13 @@ function isOpaqueID(value: unknown): value is string {
 async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
   let response: ScanResponse
   switch (request.kind) {
+    case 'dexEntry': {
+      // Read-only, and for the asking card alone: no panel state, no broadcast.
+      if (!isSpeciesID(request.speciesID)) return
+      const answer = await send((id) => ({ id, type: 'dexEntry', speciesID: request.speciesID }))
+      if (answer.ok && 'dexEntry' in answer) request.reply(answer.dexEntry)
+      return
+    }
     case 'refresh':
       // Rebuilt from the last scan: this path runs on every `ready` handshake, every time the
       // sidebar becomes visible again and after every action, and none of those need fresh I/O.
@@ -697,6 +724,60 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     case 'setTrainer': {
       if (!isTrainerID(request.trainerID)) return
       response = await requestAction({ action: 'setTrainer', trainerID: request.trainerID }, true)
+      break
+    }
+
+    case 'setKeepCompleted': {
+      if (typeof request.keep !== 'boolean') return
+      response = await requestAction({ action: 'setKeepCompleted', keep: request.keep }, true)
+      break
+    }
+
+    // A purchase like any other: a native modal labelled with the core's text (length-capped),
+    // and the worker re-checks in the hold that charges it.
+    case 'setLure': {
+      if (!isSpeciesID(request.speciesID)) return
+      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
+      const confirm = await vscode.window.showWarningMessage(
+        `${String(request.title).slice(0, 120)} — ${String(request.priceText).slice(0, 20)}`,
+        { modal: true },
+        confirmLabel,
+      )
+      if (confirm !== confirmLabel) return
+      response = await requestAction({ action: 'setLure', speciesID: request.speciesID }, true)
+      break
+    }
+
+    // Spends the wallet, so it asks like a purchase: a native modal the user approves, labelled
+    // with the core's text (length-capped, as `buy` does). The amount is only shape-checked here;
+    // the worker re-checks it against the room in the same hold that charges it.
+    case 'boostShiny': {
+      if (!isSpeciesID(request.speciesID)) return
+      if (!Number.isSafeInteger(request.amount) || request.amount <= 0) return
+      const confirmLabel = (request.confirmLabel ?? 'Buy').slice(0, 30) || 'Buy'
+      const confirm = await vscode.window.showWarningMessage(
+        `${String(request.title).slice(0, 80)} — ${String(request.priceText).slice(0, 20)}`,
+        { modal: true },
+        confirmLabel,
+      )
+      if (confirm !== confirmLabel) return
+      response = await requestAction(
+        { action: 'boostShiny', speciesID: request.speciesID, amount: request.amount },
+        true,
+      )
+      break
+    }
+
+    // A species id, not an opaque string: an integer inside the Pokédex, or nothing happens.
+    case 'setCompanion':
+    case 'chooseStarter': {
+      if (!isSpeciesID(request.speciesID)) return
+      response = await requestAction({ action: request.kind, speciesID: request.speciesID }, true)
+      break
+    }
+
+    case 'incubateEgg': {
+      response = await requestAction({ action: 'incubateEgg' }, true)
       break
     }
 

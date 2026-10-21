@@ -71,6 +71,280 @@ describe('applyUsage', () => {
     expect(result.events).toEqual([{ kind: 'graduated' }])
   })
 
+  // The registry rides along: the same delta that moves `usedAtStage` fills the current
+  // species' bar, and evolving caps the old species at its threshold (registered) and hands the
+  // overflow to the new one — the two never disagree about where the tokens went.
+  it('fills the current species’ bar and fixes its threshold once the line is known', () => {
+    const result = applyUsage(mon(), 1_000, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({
+      xp: 1_000,
+      unlocked: true,
+      registered: false,
+      threshold: thr(0),
+      lineRarity: 'common',
+    })
+  })
+
+  // [trigger branch] Crediting the whole delta in one block would leave species 1 above its
+  // threshold and species 2 at zero.
+  it('registers the species it evolves from and carries the overflow to the next', () => {
+    const result = applyUsage(mon(), thr(0) + 777, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({ xp: thr(0), registered: true })
+    expect(result.species[2]).toMatchObject({
+      xp: 777,
+      unlocked: true,
+      threshold: thr(1),
+      registered: false,
+    })
+  })
+
+  it('accrues raw experience without a line, and settles it once there is one', () => {
+    const offline = applyUsage(mon(), thr(0) + 5, undefined, new Set(), fixedRNG(0), {})
+    expect(offline.species[1]).toMatchObject({ xp: thr(0) + 5, registered: false })
+    expect(offline.species[1]?.threshold).toBeUndefined()
+    const settled = applyUsage(offline.mon, 0, line, new Set(), fixedRNG(0), offline.species)
+    expect(settled.species[1]).toMatchObject({ xp: thr(0), registered: true })
+    expect(settled.species[2]).toMatchObject({ xp: 5 })
+  })
+
+  // [trigger branch] Registered at the leaf, the companion stays: no second `graduated`, the
+  // meter pinned at the threshold, and nothing to evolve into.
+  it('keeps a registered final form on stage and graduates it only once', () => {
+    const atLast = mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: 0 })
+    const first = applyUsage(atLast, thr(2), line, new Set(), fixedRNG(0), {})
+    expect(first.graduated).toBe(true)
+    const again = applyUsage(first.mon, thr(2), line, new Set(), fixedRNG(0), first.species)
+    expect(again.graduated).toBe(false)
+    expect(again.events).toEqual([])
+    expect(again.mon.usedAtStage).toBe(thr(2))
+    expect(again.mon.pathIDs).toEqual([1, 2, 3])
+  })
+
+  it('keeps evolving a registered species while a branch below is unregistered', () => {
+    const registered = {
+      xp: thr(0),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+    }
+    const pending = applyUsage(mon(), thr(0), line, new Set(), fixedRNG(0), { 1: registered })
+    expect(pending.mon.stageIndex).toBe(1)
+    const done = { ...registered, xp: thr(1) }
+    const settled = applyUsage(mon(), thr(0), line, new Set(), fixedRNG(0), {
+      1: registered,
+      2: { ...done, registered: true },
+      3: { ...done, registered: true },
+    })
+    expect(settled.mon.stageIndex).toBe(0)
+    expect(settled.mon.usedAtStage).toBe(thr(0))
+  })
+
+  // [trigger branch] The plan points at a branch that is all registered while a sibling is not:
+  // the companion takes the sibling, not the dead end it would never leave.
+  it('steers a registered species toward the branch that still has something to register', () => {
+    const eevee = makeEvoLine(133, node(133, [node(134), node(135)]), 'rare', {})
+    const t = (stage: number) => PokemonBalance.phaseThreshold('rare', 2, stage)
+    const registered = {
+      xp: t(0),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+    }
+    const result = applyUsage(
+      mon({ baseID: 133, pathIDs: [133], plannedPathIDs: [133, 134], totalForms: 2, rarity: 'rare' }),
+      t(0),
+      eevee,
+      new Set([133, 134, 135]),
+      fixedRNG(0),
+      { 133: registered, 134: { ...registered, xp: t(1) } },
+    )
+    expect(result.mon.pathIDs).toEqual([133, 135])
+    expect(result.mon.plannedPathIDs).toEqual([133, 135])
+  })
+
+  // [trigger branch] A species caught before its line was known owes its share; the line fixes
+  // the threshold, the share becomes experience, and the meter starts where the bar is.
+  it('settles a share owed by a catch once the line fixes the threshold', () => {
+    const owed = {
+      xp: 0,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      pendingShare: 0.05,
+    }
+    const result = applyUsage(mon(), 0, line, new Set(), fixedRNG(0), { 1: owed })
+    expect(result.species[1]?.xp).toBe(Math.ceil(0.05 * thr(0)))
+    expect(result.species[1]?.pendingShare).toBeUndefined()
+    expect(result.mon.usedAtStage).toBe(Math.ceil(0.05 * thr(0)))
+  })
+
+  // [trigger branch] The meter never lags the bar: a hatch into a caught species starts the
+  // meter at zero while its bar already reads the catch's share.
+  it('starts the meter where the species bar already is', () => {
+    const caught = {
+      xp: 1_000,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      threshold: thr(0),
+    }
+    const result = applyUsage(mon(), 10, line, new Set(), fixedRNG(0), { 1: caught })
+    expect(result.mon.usedAtStage).toBe(1_010)
+    expect(result.species[1]?.xp).toBe(1_010)
+  })
+
+  // [trigger branch] The same rule on evolving: the next form was caught earlier and owes its
+  // share, so the meter it starts with is the overflow plus that share, not the overflow alone.
+  it('starts an evolved form’s meter where its bar already is', () => {
+    const owed = {
+      xp: 0,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      pendingShare: 0.05,
+    }
+    const result = applyUsage(mon(), thr(0) + 7, line, new Set(), fixedRNG(0), { 2: owed })
+    expect(result.mon.stageIndex).toBe(1)
+    const share = Math.ceil(0.05 * thr(1))
+    expect(result.species[2]?.xp).toBe(7 + share)
+    expect(result.mon.usedAtStage).toBe(7 + share)
+  })
+
+  describe('the shiny bar', () => {
+    const target = 8 * PokemonBalance.graduationTotal('common')
+    const done = (over = {}) => ({
+      xp: thr(2),
+      unlocked: true,
+      seen: false,
+      registered: true,
+      caught: 0,
+      candiesUsed: 0,
+      threshold: thr(2),
+      lineRarity: 'common' as const,
+      ...over,
+    })
+    const atLast = (used = thr(2)) => mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: used })
+
+    // [trigger branch] A registered final form on stage: what it earns past its bar fills its
+    // shiny bar, and its own bar stays where it was.
+    it('sends a registered companion’s surplus to its shiny bar', () => {
+      const result = applyUsage(atLast(), 1_000, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(result.species[3]).toMatchObject({ xp: thr(2), shinyXP: 1_000 })
+      expect(result.mon.usedAtStage).toBe(thr(2))
+    })
+
+    // The same for a registered species with nothing left to register below it.
+    it('fills the shiny bar of a registered species with nothing left below', () => {
+      const species = {
+        1: done({ xp: thr(0), threshold: thr(0) }),
+        2: done({ xp: thr(1), threshold: thr(1) }),
+        3: done(),
+      }
+      const result = applyUsage(mon({ usedAtStage: thr(0) }), 500, line, new Set(), fixedRNG(0), species)
+      expect(result.species[1]).toMatchObject({ xp: thr(0), shinyXP: 500 })
+    })
+
+    // [trigger branch] The first registration's own overflow is surplus too.
+    it('sends the overflow of the registering refresh to the shiny bar', () => {
+      const fresh = done({ registered: false, xp: 0 })
+      const result = applyUsage(atLast(0), thr(2) + 300, line, new Set(), fixedRNG(0), { 3: fresh })
+      expect(result.graduated).toBe(true)
+      expect(result.species[3]).toMatchObject({ registered: true, shinyXP: 300 })
+    })
+
+    // [trigger branch] The requirement is eight times the LINE's total for every form, not eight
+    // times the stage: at 8 × the stage threshold Charmander would be nowhere near.
+    it('registers the shiny at eight times the line’s total, and dresses the companion', () => {
+      const stageEight = 8 * thr(2)
+      const short = applyUsage(atLast(), stageEight, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(short.species[3]?.shinyRegistered ?? false).toBe(false)
+      const full = applyUsage(atLast(), target + 5, line, new Set(), fixedRNG(0), { 3: done() })
+      expect(full.species[3]).toMatchObject({
+        shinyXP: target,
+        shinyRegistered: true,
+        shinyUnlocked: true,
+      })
+      expect(full.mon.isShiny).toBe(true)
+      expect(full.events).toContainEqual({ kind: 'shinyRegistered', speciesID: 3 })
+    })
+
+    it('leaves a registered shiny’s bar where it is', () => {
+      const shiny = done({ shinyRegistered: true, shinyXP: target })
+      expect(
+        applyUsage(atLast(), 1_000, line, new Set(), fixedRNG(0), { 3: shiny }).species[3]?.shinyXP,
+      ).toBe(target)
+    })
+  })
+
+  it('records where the species sits in its line when the threshold is fixed', () => {
+    const result = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {})
+    expect(result.species[1]).toMatchObject({ baseID: 1, stageIndex: 0, totalForms: 3 })
+  })
+
+  it('registers the final form on graduation', () => {
+    const atLast = mon({ pathIDs: [1, 2, 3], stageIndex: 2, usedAtStage: 0 })
+    const result = applyUsage(atLast, thr(2), line, new Set(), fixedRNG(0), {})
+    expect(result.species[3]).toMatchObject({ xp: thr(2), registered: true, unlocked: true })
+  })
+
+  // The reveal moves what this life earned to Ditto and nothing more: a real Bulbasaur raised
+  // earlier keeps its own bar.
+  it('moves only this life’s experience to Ditto on the reveal', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0 })
+    const prior = {
+      1: { xp: 12, unlocked: true, seen: false, registered: true, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), prior)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]).toMatchObject({ xp: 12, registered: true })
+    expect(result.species[132]).toMatchObject({ xp: thr(0), unlocked: true })
+  })
+
+  // [trigger branch] The disguise species was unlocked by the hatch alone — never caught, never
+  // raised. The reveal takes that back, or its first real catch would count as a duplicate.
+  it('takes back an unlock the disguise alone gave', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0, disguiseUnlocked: true })
+    const byHatch = {
+      1: { xp: 0, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), byHatch)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]?.unlocked ?? false).toBe(false)
+    const caught = { 1: { ...byHatch[1], caught: 1 } }
+    expect(applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), caught).species[1]?.unlocked).toBe(
+      true,
+    )
+  })
+
+  // [trigger branch] Code review 9.12 #3: a species owned before the hatch at 0 xp (every
+  // species of a migrated save, a starter set aside) looked exactly like one the disguise alone
+  // unlocked, and the reveal took it away. Only the hatch's own unlock is ever taken back.
+  it('never takes back a species that was owned before the disguise hatched', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0, disguiseUnlocked: false })
+    const ownedBefore = {
+      1: { xp: 0, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), ownedBefore)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]?.unlocked).toBe(true)
+  })
+
+  it('returns the very same registry when a zero delta settles nothing', () => {
+    const settled = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {}).species
+    const again = applyUsage(mon({ usedAtStage: 1 }), 0, line, new Set(), fixedRNG(0), settled)
+    expect(again.species).toBe(settled)
+  })
+
   // A disguised Ditto can become a leaf after asset normalisation, so the reveal must be
   // checked BEFORE terminal graduation or the disguise species enters the Pokédex.
   it('reveals the Ditto instead of graduating the species it was disguised as', () => {
@@ -167,18 +441,18 @@ describe('branch diversity', () => {
   it('prefers a branch whose finals are not collected yet', () => {
     const parent = node(1, [node(2), node(4)])
     // 4 is already owned, so 2 must be chosen regardless of the RNG value.
-    const chosen = pickPlannedChild(parent, 1, new Set(['1:4']), fixedRNG(1))
+    const chosen = pickPlannedChild(parent, new Set([4]), fixedRNG(1))
     expect(chosen.speciesID).toBe(2)
   })
 
   it('falls back to the whole set once everything is owned', () => {
     const parent = node(1, [node(2), node(4)])
-    const chosen = pickPlannedChild(parent, 1, new Set(['1:2', '1:4']), fixedRNG(1))
+    const chosen = pickPlannedChild(parent, new Set([2, 4]), fixedRNG(1))
     expect([2, 4]).toContain(chosen.speciesID)
   })
 
   it('plans a full path down to a leaf', () => {
-    expect(makeEvolutionPlan(node(1, [node(2, [node(3)])]), 1, new Set(), fixedRNG(0))).toEqual([1, 2, 3])
+    expect(makeEvolutionPlan(node(1, [node(2, [node(3)])]), new Set(), fixedRNG(0))).toEqual([1, 2, 3])
   })
 })
 

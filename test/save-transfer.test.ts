@@ -20,6 +20,8 @@ import {
   freshCompanionState,
   type CompanionState,
   type MonState,
+  EGG_STOCK_MAX,
+  RareCandy,
 } from '../src/core/companion/model.js'
 import { decodeCompanionState } from '../src/core/companion/persistence.js'
 import { EncounterBalance } from '../src/core/companion/encounters.js'
@@ -118,13 +120,20 @@ describe('sanitized', () => {
     expect(s.eggUsage).toBe(MAX_TOKEN_VALUE)
   })
 
-  // An egg guarantee belongs to the egg being incubated. Left alongside an active Pokémon it
-  // leaks onto the next egg and becomes permanently premium.
-  it('drops an egg guarantee that coexists with an active Pokémon', () => {
+  // A companion chosen while an egg incubated pauses the egg; its guarantee and pre-roll are
+  // the egg's and stay with it. (They used to be dropped here.)
+  it('keeps a paused egg’s guarantee beside the active Pokémon', () => {
     const s = sanitized(state({ active: mon(), eggTier: 'rare', pendingHatchID: 25 }))
-    expect(s.eggTier).toBeUndefined()
-    // The pre-roll goes too, or the free post-graduation egg hatches a premium result.
-    expect(s.pendingHatchID).toBeUndefined()
+    expect(s.eggTier).toBe('rare')
+    expect(s.pendingHatchID).toBe(25)
+  })
+
+  it('clamps the egg stock to its capacity', () => {
+    expect(sanitized(state({ eggStock: { count: 99, lastGrantDay: '2026-10-20' } })).eggStock).toEqual({
+      count: EGG_STOCK_MAX,
+      lastGrantDay: '2026-10-20',
+    })
+    expect(sanitized(state({ eggStock: { count: -1 } })).eggStock).toEqual({ count: 0 })
   })
 
   // Legendary cannot be expressed via capture_rate, so both roll paths find nothing, the
@@ -334,5 +343,35 @@ describe('expiredBackups', () => {
   it('never touches a file that is not one of our backups', () => {
     const names = ['companion-state.json', 'usage-cache.json.gz', 'base-index.json', 'dev-state.json']
     expect(expiredBackups([...names, ...stamps.map(backup)], 0)).toEqual(stamps.map(backup))
+  })
+})
+
+describe('the registry in sanitized', () => {
+  it('clamps every counter and keeps the candy count at its cap', () => {
+    const s = sanitized(
+      state({
+        earnedTokens: -5,
+        species: {
+          4: {
+            xp: -1,
+            unlocked: true,
+            seen: false,
+            registered: false,
+            caught: -2,
+            candiesUsed: 99,
+            pendingShare: 7,
+            threshold: 0,
+          },
+        },
+      }),
+    )
+    expect(s.earnedTokens).toBe(0)
+    expect(s.species[4]).toMatchObject({
+      xp: 0,
+      caught: 0,
+      candiesUsed: RareCandy.maxPerSpecies,
+      pendingShare: 1,
+      threshold: 1,
+    })
   })
 })

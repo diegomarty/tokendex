@@ -18,8 +18,19 @@ import type {
   PanelDexEntry,
   PanelDexFilter,
   PanelDexSpecies,
+  PanelDexSummary,
+  PanelEggs,
+  PanelEncounterResult,
   PanelMoodMeter,
+  PanelLure,
+  PanelChallenges,
+  PanelPCBox,
+  PanelDrawer,
+  PanelMedals,
+  PanelLureOffer,
+  PanelShinyBar,
   PanelShopAction,
+  PanelShopPack,
   PanelShopItem,
   PanelState,
   PanelStreak,
@@ -27,17 +38,23 @@ import type {
   PanelWild,
 } from '../../webview/protocol.js'
 import type { UsageSnapshot } from '../snapshot.js'
+import type { TurnOutcome } from '../companion/encounters.js'
+import { eggProgress, eggTokensToHatch } from '../companion/display.js'
+import { stageProgress, tokensToNext } from '../companion/growth.js'
 import {
+  ANIMATED_SPECIES_MAX,
   APP_LANGUAGES,
   type AppLanguage,
   BALL_KINDS,
   BERRY_KINDS,
   type CompanionState,
+  EGG_STOCK_MAX,
   type EvoLine,
   FreshEgg,
   type WildEncounter,
   ITEM_KINDS,
   Pokeball,
+  PokemonBalance,
   RARITIES,
   currentSpeciesID,
   isBallKind,
@@ -49,17 +66,30 @@ import {
   languageLabel,
   natureName,
   shopEntryPrice,
+  packQuantities,
+  resolveName,
 } from '../companion/model.js'
 import {
   canBuyEgg,
   canBuyItem,
   canUseMint,
   canUseRareCandy,
+  candyRoomLeft,
   itemCount,
   ownedItems,
+  lurePrice,
+  shinyBoostCapLeft,
+  shinyBoostOffers,
 } from '../companion/shop.js'
 import { spendableBalance, streakWindow } from '../companion/ledger.js'
-import { dexCount, dexEntriesSorted, dexSpecies, entryName, lineItems } from '../companion/dexView.js'
+import {
+  dexCount,
+  dexEntriesSorted,
+  dexSpecies,
+  dexTally,
+  entryName,
+  lineItems,
+} from '../companion/dexView.js'
 import {
   EncounterBalance,
   TrailBalance,
@@ -75,6 +105,12 @@ import {
   trailPrice,
 } from '../companion/encounters.js'
 import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
+import { progressOf, registrationPercent, shinyTarget } from '../companion/registry.js'
+import { EconomyBalance } from '../companion/economy.js'
+import { STARTERS, starterName, starterType } from '../companion/starters.js'
+import { MEDALS, medalProgress } from '../companion/medals.js'
+import { REGIONS, regionProgress } from '../companion/regions.js'
+import { eggIsPaused, eggOnStage, isFreshGame } from '../companion/eggs.js'
 import { todayKey } from '../usage/entry.js'
 import { compact, cost, grouped, percent } from '../tokenFormatter.js'
 import * as D from '../i18n/dispatch.js'
@@ -84,6 +120,55 @@ import { panelStrings } from '../i18n/panelStrings.js'
 /** Selectable refresh intervals, in seconds. One list for the host's timer, the setting's enum
  *  and the panel's picker — three copies would drift. */
 export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
+
+/**
+ * When a species was registered, for its card (Diego: one descriptive date). The moment the
+ * registry stamped, else — a save from before it kept one — the graduation of that very form;
+ * otherwise nothing, never a guess.
+ */
+function registrationDate(
+  state: CompanionState,
+  speciesID: number,
+  lang: AppLanguage,
+  locale: string | undefined,
+): { registeredDateText?: string; registeredLabel?: string } {
+  const progress = state.species[speciesID]
+  if (progress?.registered !== true) return {}
+  const graduations = state.dex
+    .filter((e) => e.finalID === speciesID && e.source !== 'wild' && e.caughtAt !== undefined)
+    .map((e) => e.caughtAt!)
+  const at = progress.registeredAt ?? (graduations.length > 0 ? Math.min(...graduations) : undefined)
+  if (at === undefined) return {}
+  const dateText = D.registeredDateText(new Date(at), locale)
+  return { registeredDateText: dateText, registeredLabel: D.registeredOnText(lang, dateText) }
+}
+
+/** Each species' name in the game's language, for the Pokédex's search; empty until read. */
+function searchNames(
+  names: Record<number, Record<string, string>> | undefined,
+  lang: AppLanguage,
+): Record<number, string> {
+  const out: Record<number, string> = {}
+  for (const [id, byLang] of Object.entries(names ?? {})) {
+    const name = resolveName(lang, byLang)
+    if (name !== undefined) out[Number(id)] = name
+  }
+  return out
+}
+
+/**
+ * A collection's completion, for its bar: rounded, but never 0 with something in it (four of 649
+ * is a sliver, not an empty bar) and never 100 with something missing (646–648 of 649 used to
+ * read complete; code review 9.12 #13).
+ */
+export function completion(done: number, total: number): number {
+  if (done <= 0 || total <= 0) return 0
+  if (done >= total) return 100
+  return Math.min(99, Math.max(1, Math.round((100 * done) / total)))
+}
+
+/** How many waiting encounters Home's Wild drawer lists behind the one on stage (plan 9.4). */
+export const WILD_QUEUE_SHOWN = 3
 
 export interface PanelBuildInputs {
   /** The scan this panel accompanies. May be a reused one — nothing time-critical lives in it. */
@@ -106,6 +191,8 @@ export interface PanelBuildInputs {
    * worker's.
    */
   walletChange?: { previous: number; id: number } | undefined
+  /** Every species' names, once the worker has read them — what the Pokédex's search matches. */
+  speciesNames?: Record<number, Record<string, string>> | undefined
 }
 
 /**
@@ -197,8 +284,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     // A ball and its ten-pack are one product sold at two quantities, not two products. They
     // were two cards, and the ×10 card had nothing of its own to say — its description was the
     // same generated sentence on all three, so a third of the tab was a repeated clause. The
-    // ids are untouched: `parseEntryID` still sees `item:pokeBall` and `item:pokeBall:10`, and
-    // still refuses any quantity that is not exactly the bundle size.
+    // ids are untouched: `parseEntryID` sees `item:pokeBall` and `item:pokeBall:<pack>`, and
+    // refuses any quantity `parsePackQuantity` does not list.
     const bundled = itemIsBundled(kind)
     const singlePrice = compact(shopEntryPrice({ kind: 'item', item: kind }))
     const actions: PanelShopAction[] = [
@@ -210,25 +297,33 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         label: owned ? D.ownedActionLabel(lang, name) : D.buyActionLabel(lang, name, singlePrice),
         confirmTitle: name,
         priceText: singlePrice,
+        price: shopEntryPrice({ kind: 'item', item: kind }),
         enabled: canBuyItem(state, kind),
       },
     ]
     if (bundled) {
-      const quantity = Pokeball.bundleSize
-      const bundleName = `${name} ×${quantity}`
-      const bundlePrice = compact(shopEntryPrice({ kind: 'item', item: kind, quantity }))
-      actions.push({
-        id: `item:${kind}:${quantity}`,
-        text: `×${quantity}`,
-        label: D.bundleBuyLabel(lang, bundleName, bundlePrice, bundleDiscount),
-        confirmTitle: bundleName,
-        priceText: bundlePrice,
-        // Grouping the two prices onto one row is only an improvement while the ten-pack is
-        // still visibly the cheaper ball. Without this the saving would survive nowhere but in
-        // arithmetic the reader has to do.
-        saveText: D.bundleSaveText(bundleDiscount),
-        enabled: canBuyItem(state, kind, quantity),
-      })
+      const pack = (quantity: number): PanelShopPack => {
+        const bundleName = `${name} ×${quantity}`
+        const price = shopEntryPrice({ kind: 'item', item: kind, quantity })
+        const priceText = compact(price)
+        return {
+          id: `item:${kind}:${quantity}`,
+          text: `×${quantity}`,
+          label: D.bundleBuyLabel(lang, bundleName, priceText, bundleDiscount),
+          confirmTitle: bundleName,
+          priceText,
+          price,
+          // Grouping the two prices onto one row is only an improvement while the ten-pack is
+          // still visibly the cheaper ball. Without this the saving would survive nowhere but in
+          // arithmetic the reader has to do.
+          saveText: D.bundleSaveText(bundleDiscount),
+          enabled: canBuyItem(state, kind, quantity),
+        }
+      }
+      // The ten-pack is the row's second price; its steps (×10 … ×100) ride on it, each one
+      // priced and checked against the wallet here, so the stepper only walks a list.
+      const packs = packQuantities().map(pack)
+      actions.push({ ...packs[0]!, packs })
     }
     const row: PanelShopItem = {
       id: `item:${kind}`,
@@ -252,17 +347,20 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     if (sprite !== undefined) row.sprite = sprite
     shop.push(row)
   }
-  if (state.active !== undefined) {
-    for (const tier of FreshEgg.shopTiers) {
+  // The eggs are on the shelf once the game has begun (Diego): the egg itself, for the stock, and
+  // the guarantees after it — those greyed out (`canBuyEgg`) until an egg is incubating, since
+  // they are bought for that egg.
+  if (!isFreshGame(state)) {
+    for (const tier of [undefined, ...FreshEgg.shopTiers]) {
       const name = D.eggName(lang, tier)
       const priceText = compact(FreshEgg.price_(tier))
       shop.push({
         id: `egg:${tier ?? 'any'}`,
         emoji: '🥚',
-        sprite: 'egg',
+        sprite: 'egg-icon',
         title: name,
-        // Only the guarantee. What all three eggs cost you — the Pokémon you are raising — is
-        // said once under the heading, as `strings.shopEggsNote`.
+        // Only the guarantee. What they all do — fix the rarity of the egg incubating — is said
+        // once under the heading, as `strings.shopEggsNote`.
         description: D.eggDescription(lang, tier),
         actions: [
           {
@@ -271,6 +369,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
             label: D.buyActionLabel(lang, name, priceText),
             confirmTitle: name,
             priceText,
+            price: FreshEgg.price_(tier),
             enabled: canBuyEgg(state, tier),
           },
         ],
@@ -296,18 +395,18 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       title: D.itemName(lang, item.kind),
       description: D.itemDescription(lang, item.kind),
       count: item.count,
+      countText: D.itemCountText(item.count),
       usable,
       pocket: isBallKind(item.kind) ? 'balls' : isBerryKind(item.kind) ? 'berries' : 'items',
     }
     if (!usable && itemIsPassive(item.kind)) entry.hint = str(lang, 'shinyCharmEffectHint')
     if (isBerryKind(item.kind)) entry.hint = D.berryBagHint(lang)
+    // Candies in hand that the species on stage can no longer take: say why Use is greyed out.
+    if (item.kind === 'rareCandy' && state.active !== undefined && !candyRoomLeft(state))
+      entry.hint = D.candyFullHint(lang)
     return entry
   })
 
-  const activeID =
-    state.active === undefined
-      ? undefined
-      : `active-${state.active.baseID}-${currentSpeciesID(state.active)}`
   const dexLog: PanelDexEntry[] = dexEntriesSorted(state, line).map((e) => {
     const row: PanelDexEntry = {
       finalID: e.finalID,
@@ -315,7 +414,6 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       isShiny: e.isShiny,
       rarity: e.rarity,
       rarityText: D.rarityLabel(lang, e.rarity),
-      isActive: e.id === activeID,
       isWild: e.source === 'wild',
     }
     if (e.caughtAt !== undefined) {
@@ -329,22 +427,45 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   // meant, and `dexCount` is the counter written for it. A tier with nothing in it is left out
   // rather than shown as a zero: an empty chip is a control that does nothing.
   const dexLogFilters: PanelDexFilter[] = [
-    { id: 'all', label: D.dexFilterAllLabel(lang), count: dexLog.length },
-    ...RARITIES.map((rarity) => ({
-      id: rarity,
-      label: D.rarityLabel(lang, rarity),
-      count: dexCount(state, line, rarity),
-    })).filter((chip) => chip.count > 0),
+    {
+      id: 'all',
+      label: D.dexFilterAllLabel(lang),
+      count: dexLog.length,
+      countText: String(dexLog.length),
+    },
+    ...RARITIES.map((rarity) => {
+      const count = dexCount(state, line, rarity)
+      return { id: rarity, label: D.rarityLabel(lang, rarity), count, countText: String(count) }
+    }).filter((chip) => chip.count > 0),
   ]
 
-  const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => ({
-    id: sp.id,
-    name: sp.name,
-    isShiny: sp.isShiny,
-    isRaising: sp.isRaising,
-    rarityText: D.rarityLabel(lang, sp.rarity),
-    rarity: sp.rarity,
-  }))
+  const companionSpeciesID = state.active === undefined ? undefined : currentSpeciesID(state.active)
+  const species: PanelDexSpecies[] = dexSpecies(state, line, lang).map((sp) => {
+    const isCompanion = sp.id === companionSpeciesID
+    return {
+      id: sp.id,
+      name: sp.name,
+      isShiny: sp.isShiny,
+      isRaising: sp.isRaising,
+      rarityText: D.rarityLabel(lang, sp.rarity),
+      rarity: sp.rarity,
+      status: sp.status,
+      shiny: sp.shiny,
+      percent: sp.percent,
+      percentText: D.registrationText(lang, sp.percent, sp.status === 'registered'),
+      percentShortText: percent(sp.percent),
+      ...registrationDate(state, sp.id, lang, locale),
+      // Anything owned can be the companion — a seen species is not owned yet, and the one on
+      // stage is already chosen.
+      canChoose: sp.status !== 'seen' && !isCompanion,
+      rarityRank: Math.max(0, RARITIES.indexOf(sp.rarity as (typeof RARITIES)[number])),
+      isCompanion,
+      ...lureOffer(state, sp.id, now, lang),
+      ...(sp.status === 'registered' || sp.shiny === 'registered'
+        ? { shinyBar: shinyBarFor(state, sp.id, sp.name, lang) }
+        : {}),
+    }
+  })
 
   const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
   const threshold = encounterThresholdFor(state.encountersSeen)
@@ -397,6 +518,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
           title: row.stolenText,
         })
       }
+      if (progressOf(state, e.speciesID).unlocked) row.ownedText = D.ownedText(lang)
       // Running from a common stays one click; discarding what hurts to lose asks first.
       if (e.rarity === 'rare' || e.rarity === 'legendary' || e.isShiny) {
         row.runConfirmText = D.runAwayConfirm(lang, row.name)
@@ -405,6 +527,10 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     }),
     waitingText: D.wildBadgeTooltip(lang, state.wild.length),
     ...(state.wild.length > 1 ? { moreText: D.moreWaitingText(lang, state.wild.length - 1) } : {}),
+    queueShown: WILD_QUEUE_SHOWN,
+    ...(state.wild.length > 1 + WILD_QUEUE_SHOWN
+      ? { queueMoreText: D.moreWaitingText(lang, state.wild.length - 1 - WILD_QUEUE_SHOWN) }
+      : {}),
     nextText: D.wildNextEncounterText(lang, compact(toNext)),
     progressPercent: Math.max(0, Math.min(100, Math.round(100 * (1 - toNext / threshold)))),
     streak: streakRow(state, lang, now),
@@ -413,6 +539,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         kind,
         name: D.itemName(lang, kind),
         count: itemCount(state, kind),
+        countText: D.itemCountText(itemCount(state, kind)),
         sprite: itemSpriteName(kind) ?? 'poke-ball',
       }
       if (staged !== undefined) {
@@ -429,6 +556,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       kind,
       name: D.itemName(lang, kind),
       count: itemCount(state, kind),
+      countText: D.itemCountText(itemCount(state, kind)),
       sprite: itemSpriteName(kind) ?? 'oran-berry',
       effectText: D.itemDescription(lang, kind),
     })),
@@ -438,6 +566,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
         id: find.id,
         name,
         count: find.count,
+        countText: D.itemCountText(find.count),
         emoji: itemEmoji(find.item),
         rarity: find.rarity,
         rarityText: D.rarityLabel(lang, find.rarity),
@@ -473,6 +602,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   if (state.finds.length > 0) wild.findsText = D.findsText(lang, state.finds.length)
 
   const panel: PanelState = {
+    drawers: [],
+    lid: { usageText: '', usageShortText: '', lights: [], columns: [], toggleLabel: '' },
     totals: {
       todayText: compact(usage.totals.todayTokens),
       todayExactText: grouped(usage.totals.todayTokens, locale),
@@ -498,10 +629,18 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     shop,
     bag,
     dexSpecies: species,
+    dexSummary: dexSummary(state, species, dexLog.length, lang, inputs.speciesNames),
+    medals: medalsPanel(state, lang),
+    pcBox: pcBoxPanel(species, lang),
+    shopGroups: shopGroupsPanel(shop, lang),
+    ...challengesPanel(state, now, lang),
+    eggs: eggsPanel(state, lang),
     dexLog,
     dexLogFilters,
     wild,
     trainerID: trainerIDOrDefault(state.trainerID),
+    keepCompletedCompanion: state.keepCompletedCompanion === true,
+    ...lureRunning(state, now, lang),
     trainers: [...TRAINER_IDS],
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
@@ -512,6 +651,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   const view = usage.companion
   if (view !== undefined) {
     const c: NonNullable<PanelState['companion']> = {
+      ...expBar(state, lang),
       isShiny: view.isShiny,
       progress: view.progress,
       toNextText: view.toNextText,
@@ -529,8 +669,16 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     if (state.active !== undefined) {
       c.rarityText = D.rarityLabel(lang, state.active.rarity)
       if (state.active.nature !== undefined) c.natureText = natureName(state.active.nature, lang)
+      c.registrationPercent = registrationPercent(progressOf(state, currentSpeciesID(state.active)))
     }
     panel.companion = c
+  }
+  if (isFreshGame(state)) {
+    panel.starters = STARTERS.map((id) => ({
+      id,
+      name: starterName(id, lang),
+      types: [starterType(id)],
+    }))
   }
   if (inputs.refreshSeconds !== undefined) {
     panel.refresh = {
@@ -541,6 +689,407 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       })),
     }
   }
+  panel.drawers = homeDrawers(state, panel, lang)
+  panel.lid = {
+    usageText: D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText),
+    usageShortText: D.usageShortText(lang, panel.totals.todayText),
+    columns: [
+      {
+        label: D.usageColumnLabel(lang, 'today'),
+        tokensText: panel.totals.todayText,
+        exactText: panel.totals.todayExactText,
+        costText: panel.totals.todayCostText,
+      },
+      {
+        label: D.usageColumnLabel(lang, 'month'),
+        tokensText: panel.totals.monthText,
+        exactText: panel.totals.monthExactText,
+        costText: panel.totals.monthCostText,
+      },
+    ],
+    toggleLabel: D.lidToggleLabel(lang),
+    lights: [0, 1, 2].map((i) => {
+      const limit = panel.limits[i]
+      if (limit === undefined) return 'off' as const
+      return limit.severity === 'crit' ? 'crit' : limit.severity === 'warn' ? 'warn' : 'ok'
+    }),
+  }
   if (inputs.dev !== undefined) panel.dev = inputs.dev
   return panel
+}
+
+/**
+ * The EXP bar, like the games': the stage meter against what the stage costs, or an egg toward
+ * its hatch. Both figures are formatted here; the webview paints them in the bar's colour.
+ */
+function expBar(
+  state: CompanionState,
+  lang: AppLanguage,
+): Pick<NonNullable<PanelState['companion']>, 'expPercent' | 'expText' | 'expLeftText'> {
+  // The progress and what is left come from the same helpers as the status bar's line
+  // (`eggProgress`/`eggTokensToHatch`, `stageProgress`/`tokensToNext`), so the two never disagree.
+  const mon = state.active
+  if (mon === undefined) {
+    if (isFreshGame(state)) return { expPercent: 0 }
+    const total = PokemonBalance.eggHatchThreshold
+    const left = eggTokensToHatch(state)
+    return {
+      expPercent: Math.floor(100 * eggProgress(state)),
+      expText: D.expProgressText(compact(total - left), compact(total)),
+      expLeftText: D.expLeftText(lang, compact(left)),
+    }
+  }
+  const total = PokemonBalance.phaseThreshold(mon.rarity, mon.totalForms, mon.stageIndex)
+  const left = tokensToNext(mon)
+  const full = left === 0 && progressOf(state, currentSpeciesID(mon)).registered
+  return {
+    expPercent: Math.floor(100 * stageProgress(mon)),
+    expText: D.expProgressText(compact(total - left), compact(total)),
+    expLeftText: full ? D.registrationText(lang, 100, true) : D.expLeftText(lang, compact(left)),
+  }
+}
+
+/**
+ * The egg stock on Home. The incubate button exists only while a companion is on stage — with
+ * none, the egg already is — and reads "Resume" for an egg set aside mid-incubation, which needs
+ * no stock.
+ */
+function eggsPanel(state: CompanionState, lang: AppLanguage): PanelEggs {
+  const count = state.eggStock.count
+  const paused = eggIsPaused(state)
+  const eggs: PanelEggs = { count, max: EGG_STOCK_MAX, stockText: D.eggStockText(lang, count), paused }
+  if (count === 0) eggs.emptyText = D.eggsEmptyText(lang)
+  if (paused) eggs.incubateText = D.resumeEggText(lang)
+  else if (state.active !== undefined && count > 0) eggs.incubateText = D.incubateEggText(lang)
+  return eggs
+}
+
+/** The Pokédex's counts, formatted here so the webview paints them instead of counting. */
+function dexSummary(
+  state: CompanionState,
+  species: readonly PanelDexSpecies[],
+  logCount: number,
+  lang: AppLanguage,
+  speciesNames: PanelBuildInputs['speciesNames'],
+): PanelDexSummary {
+  const { owned, registered, shinyRegistered } = dexTally(species)
+  const total = ANIMATED_SPECIES_MAX
+  const strings = panelStrings(lang)
+  return {
+    owned,
+    registered,
+    total,
+    percent: completion(registered, total),
+    progressText: D.dexProgressText(registered, total),
+    speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
+    logSegmentText: D.countedLabel(strings.segmentLog, logCount),
+    sorts: (['number', 'progress', 'rarity'] as const).map((id) => ({
+      id,
+      label: D.pcSortLabel(lang, id),
+    })),
+    regions: regionProgress(state).map((r) => {
+      const region = REGIONS.find((x) => x.id === r.id)!
+      return {
+        id: r.id,
+        name: D.regionName(lang, r.id),
+        registered: r.registered,
+        total: r.total,
+        percent: completion(r.registered, r.total),
+        progressText: D.dexProgressText(r.registered, r.total),
+        shinyRegistered: r.shinyRegistered,
+        shinyPercent: completion(r.shinyRegistered, r.total),
+        shinyProgressText: D.dexProgressText(r.shinyRegistered, r.total),
+        from: region.from,
+        to: region.to,
+      }
+    }),
+    shinyRegistered,
+    shinyPercent: completion(shinyRegistered, total),
+    shinyProgressText: D.dexProgressText(shinyRegistered, total),
+    shinySegmentText: D.countedLabel(D.shinydexLabel(lang), shinyRegistered),
+    names: searchNames(speciesNames, lang),
+  }
+}
+
+/** The lure running, for Home, with the hours left rounded up; nothing once its day is over. */
+function lureRunning(state: CompanionState, now: number, lang: AppLanguage): { lure?: PanelLure } {
+  const lure = state.lure
+  if (lure === undefined || lure.until <= now) return {}
+  const hoursLeft = Math.ceil((lure.until - now) / 3_600_000)
+  return {
+    lure: {
+      speciesID: lure.speciesID,
+      text: D.lureActiveText(lang, lureName(lure.speciesID), hoursLeft),
+    },
+  }
+}
+
+/**
+ * The lure button on a species that can be lured (`lurePrice`), or nothing. Named by its number:
+ * a lure is only for a species seen and not obtained, whose name the Pokédex keeps hidden.
+ */
+function lureOffer(
+  state: CompanionState,
+  speciesID: number,
+  now: number,
+  lang: AppLanguage,
+): { lure?: PanelLureOffer } {
+  const price = lurePrice(state, speciesID)
+  if (price === undefined) return {}
+  const hours = Math.round(EconomyBalance.lure.durationMs / 3_600_000)
+  const priceText = compact(price)
+  const name = lureName(speciesID)
+  const running = state.lure !== undefined && state.lure.until > now
+  return {
+    lure: {
+      text: D.lureButtonText(lang, hours),
+      priceText,
+      label: D.lureLabel(lang, name, hours, priceText),
+      confirmTitle: D.lureConfirmTitle(lang, name, running),
+      enabled: spendableBalance(state) >= price,
+    },
+  }
+}
+
+/** A lured species' name: its number, as the Pokédex names a species it has no name for. */
+function lureName(speciesID: number): string {
+  return `#${speciesID}`
+}
+
+/**
+ * Home's drawers (plan 08 §8): one summary line per system, in a fixed order, built from what the
+ * panel already carries so a drawer and the tab it summarises can never disagree. A drawer with
+ * nothing to say is absent. `attention` marks what waits on the player.
+ */
+function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage): PanelDrawer[] {
+  const drawers: PanelDrawer[] = []
+  const drawer = (id: PanelDrawer['id'], summary: string, attention: boolean) =>
+    drawers.push({ id, title: D.drawerTitle(lang, id), summary, attention })
+
+  // The incubator: the egg on stage, one paused, or only the stock. Nothing before the starter.
+  if (!isFreshGame(state)) {
+    const stock = state.eggStock.count
+    if (eggOnStage(state)) {
+      drawer(
+        'incubator',
+        D.incubatorSummary(lang, { percent: Math.floor(100 * eggProgress(state)), stock }),
+        false,
+      )
+    } else if (eggIsPaused(state)) {
+      drawer('incubator', D.incubatorSummary(lang, { paused: true, stock }), true)
+    } else {
+      drawer('incubator', D.incubatorSummary(lang, { stock }), stock > 0)
+    }
+  }
+
+  const challenges = panel.challenges
+  if (challenges !== undefined && challenges.items.length > 0) {
+    const done = challenges.items.filter((c) => c.done).length
+    drawer(
+      'challenges',
+      D.challengesSummary(lang, done, challenges.items.length),
+      done < challenges.items.length,
+    )
+  }
+
+  // The trail is the one thing that runs out: flagged while it lasts.
+  const trail = panel.wild.trail
+  if (trail.length > 0) {
+    const first = trail[0]!
+    drawer('trail', D.trailSummary(lang, first.name, first.expiresText, trail.length - 1), true)
+  }
+
+  const waiting = state.wild.length
+  const toNext = tokensToNextEncounter(state.encounterUsage, state.encountersSeen)
+  const wildLine = waiting > 0 ? panel.wild.waitingText : D.nextEncounterShort(lang, compact(toNext))
+  drawer('wild', panel.lure === undefined ? wildLine : `${wildLine} · ${panel.lure.text}`, waiting > 0)
+
+  // Finds wait to be picked up: their own drawer, flagged while there is something to collect.
+  const finds = state.finds.length
+  // The same sentence the Wild tab heads its finds with: one fact, one wording.
+  if (finds > 0) drawer('finds', D.findsText(lang, finds), true)
+
+  drawer('streak', panel.wild.streak.text, false)
+  return drawers
+}
+
+/**
+ * The shop's drawers (Diego): each group that has something in it, with how many things and the
+ * cheapest price — the rows' own figures, so the summary and the drawer never disagree.
+ */
+function shopGroupsPanel(shop: readonly PanelShopItem[], lang: AppLanguage): PanelState['shopGroups'] {
+  const strings = panelStrings(lang)
+  const titles: Record<PanelShopItem['group'], string> = {
+    balls: strings.shopBalls,
+    berries: strings.shopBerries,
+    items: strings.shopItems,
+    eggs: strings.shopEggs,
+  }
+  return (['balls', 'berries', 'items', 'eggs'] as const).flatMap((id) => {
+    const items = shop.filter((item) => item.group === id)
+    if (items.length === 0) return []
+    const prices = items.flatMap((item) => item.actions.map((a) => a.price)).filter((p) => p > 0)
+    const from = prices.length === 0 ? '' : compact(Math.min(...prices))
+    return [{ id, title: titles[id], summary: D.shopGroupSummary(lang, items.length, from) }]
+  })
+}
+
+/**
+ * The PC box (Diego): what the companion can switch to — every species `canChoose` allows, the
+ * unfinished ones first and the most advanced of those first, then the registered. From the
+ * Pokédex's own cells, so the box and the Pokédex never disagree.
+ */
+function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): PanelPCBox {
+  const items = species
+    .filter((sp) => sp.canChoose)
+    .map((sp) => ({
+      id: sp.id,
+      name: sp.name,
+      isShiny: sp.isShiny,
+      rarity: sp.rarity,
+      percent: sp.percent,
+      percentText: sp.percentText,
+      registered: sp.status === 'registered',
+      shinyRegistered: sp.shiny === 'registered',
+      rarityRank: sp.rarityRank,
+    }))
+    .sort((a, b) => Number(a.registered) - Number(b.registered) || b.percent - a.percent || a.id - b.id)
+  const matches: Record<PanelPCBox['filters'][number]['id'], (item: (typeof items)[number]) => boolean> =
+    {
+      unregistered: (item) => !item.registered,
+      registered: (item) => item.registered,
+      shiny: (item) => item.shinyRegistered,
+    }
+  return {
+    title: D.pcBoxTitle(lang),
+    items,
+    emptyText: D.pcBoxEmptyText(lang),
+    searchPlaceholder: D.dexSearchPlaceholder(lang),
+    sorts: (['progress', 'number', 'rarity'] as const).map((id) => ({
+      id,
+      label: D.pcSortLabel(lang, id),
+    })),
+    filters: (['unregistered', 'registered', 'shiny'] as const).map((id) => ({
+      id,
+      label: D.pcFilterLabel(lang, id),
+      count: items.filter(matches[id]).length,
+      countText: String(items.filter(matches[id]).length),
+    })),
+  }
+}
+
+/** The challenges board for Home, formatted; nothing before the first fold of a day. */
+function challengesPanel(
+  state: CompanionState,
+  now: number,
+  lang: AppLanguage,
+): { challenges?: PanelChallenges } {
+  const board = state.challenges
+  // Yesterday's board, before today's fold, is not today's: nothing rather than a wrong label.
+  if (board === undefined || board.day !== todayKey(now)) return {}
+  return {
+    challenges: {
+      heading: D.challengesHeading(lang),
+      items: board.items.map((c) => ({
+        id: c.id,
+        period: c.period,
+        periodText: D.challengePeriodText(lang, c.period),
+        text: D.challengeText(lang, c),
+        // Tokens read compact ("500K / 2M"), as every figure on the panel; counts read as counts.
+        progressText:
+          c.kind === 'useTokens'
+            ? D.dexProgressText(compact(c.progress), compact(c.target))
+            : D.dexProgressText(c.progress, c.target),
+        percent: Math.min(100, Math.floor((100 * c.progress) / c.target)),
+        done: c.done,
+        rewardText: `+${compact(D.challengeReward(c))}`,
+      })),
+    },
+  }
+}
+
+/**
+ * The medal catalogue with each medal's progress. Earned is what the save celebrated, not a
+ * fresh derivation, so a medal never flickers back when a merge or a migration moves a count.
+ */
+function medalsPanel(state: CompanionState, lang: AppLanguage): PanelMedals {
+  const celebrated = new Set(state.medals ?? [])
+  const items = MEDALS.map((medal) => {
+    const progress = medalProgress(state, medal.id)!
+    const earned = celebrated.has(medal.id)
+    const current = earned ? Math.max(progress.current, progress.target) : progress.current
+    return {
+      id: medal.id,
+      name: D.medalName(lang, medal.id),
+      description: D.medalDescription(lang, medal.id),
+      earned,
+      progressText: D.dexProgressText(Math.min(current, progress.target), progress.target),
+      percent: Math.min(100, Math.floor((100 * current) / progress.target)),
+    }
+  })
+  const earned = items.filter((m) => m.earned).length
+  return { earned, total: items.length, headingText: D.medalsHeading(lang, earned, items.length), items }
+}
+
+/**
+ * A registered species' shiny bar: how full, the sentence, and the boosts the wallet can buy
+ * (`shinyBoostOffers`) — or why it cannot. Every figure formatted here.
+ */
+function shinyBarFor(
+  state: CompanionState,
+  speciesID: number,
+  name: string,
+  lang: AppLanguage,
+): PanelShinyBar {
+  const p = progressOf(state, speciesID)
+  if (p.shinyRegistered === true) {
+    return { percent: 100, percentShortText: percent(100), text: D.shinyRegisteredText(lang), boosts: [] }
+  }
+  const target = p.lineRarity === undefined ? undefined : shinyTarget(p.lineRarity)
+  const done = p.shinyXP ?? 0
+  const filled = target === undefined ? 0 : Math.min(100, Math.floor((100 * done) / target))
+  const bar: PanelShinyBar = {
+    percent: filled,
+    percentShortText: percent(filled),
+    text: D.shinyBarText(lang, filled, compact(done), target === undefined ? '?' : compact(target)),
+    boosts: shinyBoostOffers(state, speciesID).map((amount) => {
+      const priceText = compact(amount)
+      return {
+        amount,
+        text: `+${priceText}`,
+        label: D.shinyBoostLabel(lang, name, priceText),
+        confirmTitle: D.shinyBoostTitle(lang, name),
+        priceText,
+      }
+    }),
+  }
+  if (bar.boosts.length === 0 && target !== undefined) {
+    bar.boostHint =
+      shinyBoostCapLeft(state, speciesID) <= 0
+        ? D.shinyBoostCappedText(lang, Math.round(100 * EconomyBalance.shinyBoostShare))
+        : D.shinyBoostNoFundsText(lang)
+  }
+
+  return bar
+}
+
+/**
+ * The banner a catch shows on the wild scene: `D.catchNews`' text, plus — for a first catch —
+ * the species and its bar before and after, so the reveal animates numbers it never derives.
+ * `before` is the state read before the turn, the one place the old percentage still exists.
+ */
+export function catchBanner(
+  lang: AppLanguage,
+  before: CompanionState,
+  speciesID: number,
+  outcome: Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>,
+): NonNullable<PanelEncounterResult['catchNews']> {
+  const news: NonNullable<PanelEncounterResult['catchNews']> = D.catchNews(lang, outcome)
+  if (news.isNew && outcome.registeredPercent !== undefined) {
+    const fromPercent = registrationPercent(progressOf(before, speciesID))
+    news.registration = { speciesID, fromPercent, toPercent: outcome.registeredPercent }
+    // What this catch added — the span the bar animates — not where the bar now stands.
+    news.detail = D.catchShareText(lang, Math.max(0, outcome.registeredPercent - fromPercent))
+  }
+  return news
 }

@@ -45,6 +45,14 @@ export interface PanelCompanion {
   rarityText?: string
   natureText?: string
   line: PanelLineItem[]
+  /** 0..100 of this species' registration bar; 100 once registered. Absent for an egg. */
+  registrationPercent?: number
+  /** 0..100 the EXP bar is filled: the stage meter, or the egg toward its hatch. */
+  expPercent: number
+  /** What it has of what the stage costs: "4.2M / 16.7M". Absent before the starter. */
+  expText?: string
+  /** What is left — "12.5M to go" — or the registered word once there is nothing left. */
+  expLeftText?: string
 }
 
 /** An official limit window as the panel draws it: a name, a percentage and a bar. */
@@ -76,10 +84,20 @@ export interface PanelShopAction {
   /** What the host's native confirmation names — `Poké Ball`, or `Poké Ball ×10`. */
   confirmTitle: string
   priceText: string
+  /** The same price in tokens: what a group's "from" summary is the least of. Never shown as is. */
+  price: number
   /** The saving this quantity gives, already formatted (`−10%`). Absent when there is none. */
   saveText?: string
   enabled: boolean
+  /**
+   * On the ten-pack only: every quantity the stepper offers (×10 … ×100), the first being this
+   * action itself. Each is a complete action — the webview swaps one for another, never prices.
+   */
+  packs?: PanelShopPack[]
 }
+
+/** One step of the ten-pack stepper: an action of its own, without further steps. */
+export type PanelShopPack = Omit<PanelShopAction, 'packs'>
 
 export interface PanelShopItem {
   /** Opaque row id; the actions carry the ids that are echoed back. */
@@ -113,6 +131,8 @@ export interface PanelBagItem {
   title: string
   description: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   usable: boolean
   hint?: string
   /** The bag pocket it lives in, as in the games. Decided by the core from the item kind. */
@@ -129,6 +149,259 @@ export interface PanelDexSpecies {
   rarityText: string
   /** Style token (`common`…`legendary`), never shown as text — `rarityText` is the label. */
   rarity: string
+  /** The registry's state, two axes: how far the species is, and its shiny form. */
+  status: 'seen' | 'unlocked' | 'registered'
+  shiny: 'none' | 'unlocked' | 'registered'
+  /** 0..100 of the registration bar. */
+  percent: number
+  /** Localised "45% registered" / "Registered" line. */
+  percentText: string
+  /** The same figure alone, "45%", beside the card's bar (9.11). */
+  percentShortText: string
+  /** A registered species' date, "Oct 21, 2026", beside its card's bar; absent when unknown. */
+  registeredDateText?: string
+  /** The same as a sentence for its tooltip and screen readers: "Registered on Oct 21, 2026". */
+  registeredLabel?: string
+  /** Can be chosen as the companion (unlocked, and not already on stage). */
+  canChoose: boolean
+  /** 0 common … 3 legendary: what the Pokédex's rarity sort orders by. */
+  rarityRank: number
+  isCompanion: boolean
+  /**
+   * The shiny bar, once the species is registered (before that there is none to fill). Absent
+   * for a species not registered.
+   */
+  shinyBar?: PanelShinyBar
+  /** A lure on this species can be bought (seen, not obtained, not legendary). */
+  lure?: PanelLureOffer
+}
+
+/** The Pokédex detail's lure button. Everything decided and formatted in the core. */
+export interface PanelLureOffer {
+  /** Button text: "Lure · 24 h". */
+  text: string
+  priceText: string
+  /** Accessible name: "Lure Charmander for 24 hours, 150M tokens". */
+  label: string
+  /** Native modal title; says so when it replaces the lure running. */
+  confirmTitle: string
+  /** False when the wallet is short; the button shows, greyed, with the price. */
+  enabled: boolean
+}
+
+/** The PC box: what the companion can be switched to, in the order to offer it. */
+export interface PanelPCBox {
+  /** "PC box" — also the open button's accessible name. */
+  title: string
+  items: PanelPCBoxItem[]
+  /** Shown when there is nothing else to switch to. */
+  emptyText: string
+  /** The box's name search: placeholder (the Pokédex's own). */
+  searchPlaceholder: string
+  /** Its sorts, the first the default (the order `items` comes in): progress, number, rarity. */
+  sorts: { id: 'progress' | 'number' | 'rarity'; label: string }[]
+  /**
+   * Status chips (plan 9.8), beside the Pokédex's region chips (`dexSummary.regions`): an item
+   * matches `unregistered` / `registered` by `registered`, and `shiny` by `shinyRegistered`.
+   */
+  filters: {
+    id: 'unregistered' | 'registered' | 'shiny'
+    label: string
+    count: number
+    countText: string
+  }[]
+}
+
+export interface PanelPCBoxItem {
+  id: number
+  name: string
+  isShiny: boolean
+  /** Style token (`common`…`legendary`). */
+  rarity: string
+  percent: number
+  /** "45% registered" / "Registered". */
+  percentText: string
+  registered: boolean
+  /** Its shiny form is registered: what the Shiny chip filters on. */
+  shinyRegistered: boolean
+  /** 0 common … 3 legendary: what the rarity sort orders by. */
+  rarityRank: number
+}
+
+/** The lid: usage folded in, expanded on click to the counter; three lights for the limits. */
+export interface PanelLid {
+  /** "Today 253M · This month 4.8B". */
+  usageText: string
+  /** "Today 253M", for a sidebar of 300 px or less. */
+  usageShortText: string
+  /** One per light, left to right: the first three official limits' severity; `off` without one. */
+  lights: ('off' | 'ok' | 'warn' | 'crit')[]
+  /**
+   * The expanded lid's screen (Diego): today and this month side by side, each with its tokens,
+   * the exact count for the hover, and its cost — the line above, opened, never repeated.
+   */
+  columns: { label: string; tokensText: string; exactText: string; costText: string }[]
+  /** Accessible name of the lid's toggle: "Usage details". */
+  toggleLabel: string
+}
+
+/** One of Home's drawers. Everything formatted in the core; open/closed is view state. */
+export interface PanelDrawer {
+  /** Which detail it opens; also a style token. */
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak'
+  /** "Incubator". */
+  title: string
+  /** The one line shown folded: "Egg at 40% · 2 in stock". */
+  summary: string
+  /** Something waits on the player (an egg to incubate, a challenge done, a trail running out). */
+  attention: boolean
+}
+
+/** The challenges board on Home. Everything formatted in the core. */
+export interface PanelChallenges {
+  /** "Challenges". */
+  heading: string
+  items: PanelChallenge[]
+}
+
+export interface PanelChallenge {
+  id: string
+  /** Style token: `day` or `week`. Never shown as text — `periodText` is the label. */
+  period: string
+  periodText: string
+  /** "Catch a Fire-type Pokémon". */
+  text: string
+  /** "1 / 3". */
+  progressText: string
+  /** 0..100. */
+  percent: number
+  done: boolean
+  /** "+5M". */
+  rewardText: string
+}
+
+/** The medal catalogue, in its order. */
+export interface PanelMedals {
+  earned: number
+  total: number
+  /** Section heading with the count: "Medals (4 / 23)". */
+  headingText: string
+  items: PanelMedal[]
+}
+
+export interface PanelMedal {
+  id: string
+  name: string
+  description: string
+  earned: boolean
+  /** "37 / 50" — or the same at the target once earned. */
+  progressText: string
+  /** 0..100. */
+  percent: number
+}
+
+/** One region of the Pokédex: registered of its size. */
+export interface PanelRegion {
+  /** Style token and filter key (`kanto`…), never shown as text. */
+  id: string
+  name: string
+  registered: number
+  total: number
+  percent: number
+  /** "37 / 151". */
+  progressText: string
+  /** The Shinydex's chips (Diego): the region's shinies registered, its percent and "1 / 151". */
+  shinyRegistered: number
+  shinyPercent: number
+  shinyProgressText: string
+  /** First and last Pokédex number, for the filter. */
+  from: number
+  to: number
+}
+
+/** The lure running, for Home: "Luring Charmander · 5 h left". */
+export interface PanelLure {
+  speciesID: number
+  text: string
+}
+
+/** A registered species' shiny bar: how full, the sentence, and what the wallet can buy. */
+export interface PanelShinyBar {
+  /** 0..100. */
+  percent: number
+  /** "12%", beside a card's gold bar (9.11). */
+  percentShortText: string
+  /** "Shiny 12% · 192M / 1.6B" or "Shiny registered". */
+  text: string
+  /** Boost buttons: a tenth of the bar, and the most that can be bought. Empty = none to sell. */
+  boosts: PanelShinyBoost[]
+  /** Why there is nothing to buy, when `boosts` is empty and the shiny is not registered. */
+  boostHint?: string
+}
+
+/** One boost button. Everything decided and formatted in the core. */
+export interface PanelShinyBoost {
+  /** Tokens it buys, 1:1 into the bar. Echoed back; the host re-checks it against the room. */
+  amount: number
+  /** Visible text: "+160M". */
+  text: string
+  /** Accessible name: "Boost shiny Charizard by 160M tokens". */
+  label: string
+  /** Native modal title and price: "Shiny Charizard — 160M". */
+  confirmTitle: string
+  priceText: string
+}
+
+/** The Pokédex's counts: owned (the collection), registered (the completion) and the total. */
+export interface PanelDexSummary {
+  /**
+   * Every species' name in the game's language, by Pokédex number — what the search matches, so
+   * a name finds a species not met yet (Diego). Never drawn on a card: a silhouette stays one.
+   * Empty until the names have been read.
+   */
+  names: Record<number, string>
+  owned: number
+  registered: number
+  total: number
+  /** 0..100 of the completion bar. */
+  percent: number
+  /** "5 / 649". */
+  progressText: string
+  /** The two segment labels with their counts: "Collection (8)", "Catch log (3)". */
+  speciesSegmentText: string
+  logSegmentText: string
+  /** The five regions' registration, in Pokédex order. */
+  regions: PanelRegion[]
+  /** The grid's sorts, its default first: number, progress, rarity (the PC box's, reordered). */
+  sorts: { id: 'progress' | 'number' | 'rarity'; label: string }[]
+  /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
+  shinyRegistered: number
+  /** 0..100 of the Shinydex, rounded as `percent` is. */
+  shinyPercent: number
+  shinyProgressText: string
+  shinySegmentText: string
+}
+
+/** A starter offered on first run. */
+export interface PanelStarter {
+  id: number
+  name: string
+  /** Style tokens (`fire`, `water`…), never shown as text. */
+  types: string[]
+}
+
+/** The egg stock: one free egg a day, up to three, and the one incubating if any. */
+export interface PanelEggs {
+  count: number
+  max: number
+  /** Localised "2 eggs in stock" line. */
+  stockText: string
+  /** Localised label of the incubate / resume button; absent when nothing can be incubated. */
+  incubateText?: string
+  /** An egg is paused (a companion was chosen while one incubated). */
+  paused: boolean
+  /** With the stock empty: how the next egg arrives. Absent while there are eggs. */
+  emptyText?: string
 }
 
 /** A row in the catch log. */
@@ -140,8 +413,6 @@ export interface PanelDexEntry {
   rarity: string
   rarityText: string
   caughtText?: string
-  /** The Pokémon currently being raised, pinned at the top. */
-  isActive: boolean
   /** Caught from a wild encounter rather than raised to its final form. */
   isWild: boolean
 }
@@ -157,6 +428,8 @@ export interface PanelDexFilter {
   id: string
   label: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
 }
 
 /** One queued wild encounter, ready to draw. */
@@ -198,6 +471,11 @@ export interface PanelWildEncounter {
    * condition: `text` is the chip, `title` the sentence behind it. `key` is a style token.
    */
   statuses: { key: 'primed' | 'stolen'; text: string; title: string }[]
+  /**
+   * Present when the species is already obtained: the plate shows a Poké Ball, as the games
+   * mark what you have caught. The text is its tooltip and accessible name.
+   */
+  ownedText?: string
 }
 
 /** One mood bar. `tone` is a style token, never text — `label` is what is read. */
@@ -215,6 +493,8 @@ export interface PanelBerryOption {
   kind: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   sprite: string
   /** What it does, for the button's tooltip and accessible name. */
   effectText: string
@@ -225,6 +505,8 @@ export interface PanelFind {
   id: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   sprite?: string
   emoji: string
   /** Style token, like the encounters'. */
@@ -256,6 +538,8 @@ export interface PanelBallOption {
   kind: string
   name: string
   count: number
+  /** The count as printed (`×7`, or a chip's bare figure), formatted by the core. */
+  countText: string
   /** PokéAPI item sprite filename (`poke-ball`); the webview builds the URL. */
   sprite: string
   /** Chance this ball catches the encounter on stage, formatted ("27%"). Absent = no stage. */
@@ -297,6 +581,13 @@ export interface PanelWild {
   waitingText: string
   /** How many wait behind the one on stage, short enough for a menu cell: "+2 waiting". */
   moreText?: string
+  /**
+   * Home's Wild drawer (plan 9.4) lists this many of the encounters behind the one on stage
+   * (`encounters[1 … queueShown]`), one per row.
+   */
+  queueShown: number
+  /** The drawer's last row, for those beyond `queueShown`: "+5 waiting". Absent when none are. */
+  queueMoreText?: string
   /** Label on the progress bar toward the next encounter: "1.2M to the next encounter". */
   nextText: string
   /** 0..100 toward the next encounter, the bar that label sits on. */
@@ -332,6 +623,20 @@ export interface PanelEncounterResult {
   animation: 'throw' | 'feed' | 'none'
   /** It struck back this turn — the scene flashes. */
   attacked: boolean
+  /**
+   * A catch's news for the scene's banner, like a level-up: new to the Pokédex with its share,
+   * or a duplicate with its reward. Present only on a catch.
+   */
+  catchNews?: {
+    isNew: boolean
+    headline: string
+    detail: string
+    /**
+     * A first catch's bar, for the banner's reveal: the species (its sprite) and its registration
+     * before and after the catch, 0..100. Absent on a duplicate.
+     */
+    registration?: { speciesID: number; fromPercent: number; toPercent: number }
+  }
 }
 
 /** Tab labels. `dev` is a literal: that surface is developer-only and never localised. */
@@ -342,6 +647,12 @@ export interface PanelTabLabels {
   dex: string
   settings: string
   dev: string
+}
+
+/** An empty view: what it is, and how it fills. */
+export interface PanelEmpty {
+  title: string
+  hint: string
 }
 
 /** UI chrome labels, resolved once on the extension side. */
@@ -356,20 +667,42 @@ export interface PanelStrings {
   owned: string
   use: string
   empty: string
-  bagEmpty: string
-  dexEmpty: string
-  dexEmptyHint: string
   segmentSpecies: string
   segmentLog: string
-  raisingBadge: string
   exportSave: string
   importSave: string
   incubating: string
+  /** The Pokédex detail's button that makes an unlocked species the companion. */
+  chooseCompanion: string
+  /** Badge on the species that is the companion right now. */
+  companionBadge: string
+  /** The first-run starter screen's title and the line under it. */
+  starterTitle: string
+  starterPrompt: string
   language: string
   /** The Run button in the wild scene. */
   run: string
+  /** The battle menu's Pokémon button: opens the companion's Pokédex entry. */
+  pokemonMenu: string
+  /** Empty states, each a title and the line saying how it fills (plan 08 §7). */
+  emptyCollection: PanelEmpty
+  emptyShinydex: PanelEmpty
+  emptyLog: PanelEmpty
+  emptyBag: PanelEmpty & { action: string }
+  /** Each bag pocket empty (plan 9.6: a pocket is never disabled); the way out is `emptyBag.action`. */
+  emptyPocket: Record<'balls' | 'berries' | 'items', PanelEmpty>
+  /** The sort direction toggle beside every sort (plan 9.8), named for the order it shows. */
+  sortAscending: string
+  sortDescending: string
+  /** The chevron folding the Pokédex's filters into its device (plan 9.3), like `lid.toggleLabel`. */
+  dexFiltersToggle: string
+  /** A species card whose entry never came back from the host (code review 9.12 #8). */
+  dexEntryUnavailable: string
   /** The trainer picker's label in Settings. */
   trainer: string
+  /** Settings: the finished-companion toggle's label, and the sentence under it. */
+  keepCompleted: string
+  keepCompletedHint: string
   /** Badge on a wild caught from an encounter, in the catch log. */
   wildBadge: string
   /** CTA under an empty ball rack, jumping to the shop. */
@@ -432,6 +765,11 @@ export interface PanelState {
   totals: PanelTotals
   providers: PanelProvider[]
   companion?: PanelCompanion
+  /** Present on first run only: the game wants a starter before anything else. */
+  starters?: PanelStarter[]
+  eggs: PanelEggs
+  /** The Pokédex's counts, already formatted: the webview paints them and never counts its list. */
+  dexSummary: PanelDexSummary
   spendableText: string
   /**
    * How the spendable balance moved since the previous panel this host built — tokens earned, a
@@ -449,6 +787,32 @@ export interface PanelState {
   dexLogFilters: PanelDexFilter[]
   /** The Wild tab. */
   wild: PanelWild
+  /**
+   * Settings: a companion whose last bar is full stays on stage (`true`) instead of moving on to
+   * an obtained species still unregistered (`false`, the default).
+   */
+  keepCompletedCompanion: boolean
+  /** The lure running, if any. */
+  lure?: PanelLure
+  /** Medals: the catalogue with what is earned, and the count. */
+  medals: PanelMedals
+  /** Today's and this week's challenges, for Home. Absent before the first fold of a day. */
+  challenges?: PanelChallenges
+  /**
+   * Home's drawers, in order: one summary line each, opened in place to the detail the panel
+   * already carries (`eggs`, `challenges`, `wild.trail`, `wild`/`lure`, `wild.streak`, the usage
+   * totals). Plan 08 §8. A drawer with nothing to say is absent, never empty.
+   */
+  drawers: PanelDrawer[]
+  /**
+   * The PC box (Diego): the quick switch from the battle plate — every obtained species but the
+   * one on stage, unfinished first. Picking one posts `setCompanion`.
+   */
+  pcBox: PanelPCBox
+  /** The shop's drawers (Diego): each group with something in it, its title and a summary line. */
+  shopGroups: { id: PanelShopItem['group']; title: string; summary: string }[]
+  /** The lid (Diego): usage folded into it, and its three lights reading the official limits. */
+  lid: PanelLid
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */
@@ -484,9 +848,87 @@ export type PanelMessage =
   | { type: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { type: 'setRefreshInterval'; seconds: number }
   | { type: 'setTrainer'; trainerID: string }
+  | { type: 'setKeepCompleted'; keep: boolean }
+  /** `title`/`priceText`/`confirmLabel` only label the native confirmation modal. */
+  | { type: 'setLure'; speciesID: number; title: string; priceText: string; confirmLabel?: string }
+  | {
+      type: 'boostShiny'
+      speciesID: number
+      amount: number
+      title: string
+      priceText: string
+      confirmLabel?: string
+    }
+  /** Choose an unlocked species (by id) as the companion; the core refuses anything else. */
+  | { type: 'setCompanion'; speciesID: number }
+  | { type: 'chooseStarter'; speciesID: number }
+  /** Incubate an egg from the stock, or resume the paused one. */
+  | { type: 'incubateEgg' }
+  /** Ask for a species' Pokédex entry (plan 9.7); answered `{ type: 'dexEntry', entry }`. */
+  | { type: 'dexEntry'; speciesID: number }
   /**
    * Reveal the full panel. Sent by the compact card, which has no tab strip of its own: it can
    * show that wild Pokémon are waiting but cannot resolve them, so the row that says so has to
    * lead somewhere.
    */
   | { type: 'openPanel' }
+
+/**
+ * A species' Pokédex entry (plan 9.7), asked for when its card opens and sent back as
+ * `{ type: 'dexEntry', entry }` to the surface that asked — never inside `PanelState`. Read from
+ * PokéAPI at runtime (and its cache on disk), every text already formatted and localised.
+ *
+ * As in the games, a species only seen shows its genus and types; the entry text, the size and
+ * the stats wait until it is obtained, and `lockedText` says so.
+ */
+export interface PanelPokedexEntry {
+  speciesID: number
+  /** "Spider Pokémon". Absent when PokéAPI has none in this language. */
+  genusText?: string
+  /** Primary first. `id` is the style token (`bug`), `label` the localised name. */
+  types: { id: string; label: string }[]
+  /** The Pokédex text, the newest the games wrote in this language. Obtained species only. */
+  flavorText?: string
+  /** "0.8 m" / "14.3 kg", with the language's decimal mark. Obtained species only. */
+  heightText?: string
+  weightText?: string
+  heightLabel: string
+  weightLabel: string
+  /** Base stats in the games' order and names; `percent` is of 255. Obtained species only. */
+  stats?: { key: string; label: string; value: number; valueText: string; percent: number }[]
+  /** "Total 498". */
+  statTotalText?: string
+  statsTitle: string
+  /** Shown where the obtained-only data would be, while the species is only seen. */
+  lockedText?: string
+  /**
+   * The evolution line, in stage order (a branch's forms share a stage). A form never seen has no
+   * name to give away: `name` is "???" and `status` `unknown` (draw a silhouette).
+   */
+  line: {
+    id: number
+    name: string
+    stage: number
+    status: 'unknown' | 'seen' | 'unlocked' | 'registered'
+    isThis: boolean
+  }[]
+  lineTitle: string
+  /** No network and nothing cached: the card says so instead of the data. */
+  unavailableText?: string
+}
+
+/**
+ * One piece of the game's news (plan 08 §7): what the store announced, for the panel to show
+ * with the catch's card. Sent as `{ type: 'news', items }` only to surfaces on screen; the host
+ * toasts the same headline when none is.
+ */
+export interface PanelNews {
+  /** Style token: hatched, evolved, graduated, shiny, companion, ditto, candy, wild, legendary, medal, challenge, info. */
+  kind: string
+  speciesID?: number
+  isShiny: boolean
+  /** The toast's own sentence, localised. */
+  headline: string
+  /** A second line: on an evolution, the form it registered on the way. */
+  detail?: string
+}

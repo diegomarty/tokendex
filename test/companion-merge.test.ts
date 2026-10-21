@@ -4,6 +4,7 @@ import { type CompanionState, type DexEntry, freshCompanionState } from '../src/
 import { MilestoneBalance } from '../src/core/companion/encounters.js'
 import { sanitized } from '../src/core/companion/saveTransfer.js'
 import { spendableBalance } from '../src/core/companion/ledger.js'
+import { challengeReward, ensureChallenges } from '../src/core/companion/challenges.js'
 
 const A = 'a'.repeat(32)
 const B = 'b'.repeat(32)
@@ -318,5 +319,220 @@ describe('mergeSaves and owed legendaries', () => {
     const merged = mergeSaves(local, remote)
     expect(merged.narrative).toBe('local')
     expect(merged.state.owedLegendaryEncounters).toBe(1)
+  })
+})
+
+describe('the registry', () => {
+  const progress = (over: Partial<CompanionState['species'][number]> = {}) => ({
+    xp: 0,
+    unlocked: true,
+    seen: false,
+    registered: false,
+    caught: 0,
+    candiesUsed: 0,
+    ...over,
+  })
+
+  // [trigger branch] A species the losing side registered must stay registered: the states are
+  // flags, and "Collections are never lost" is the merge's first promise.
+  it('never un-registers a species the losing side registered', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 5, threshold: 100 }) } },
+      { species: { 4: progress({ xp: 100, threshold: 100, registered: true }) } },
+    )
+    const here = mergeSaves(local, remote)
+    expect(here.narrative).toBeDefined()
+    expect(here.state.species[4]?.registered).toBe(true)
+    expect(mergeSaves(remote, local).state.species[4]?.registered).toBe(true)
+  })
+
+  it('takes the experience from the winner and the counters by maximum', () => {
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      species: { 4: progress({ xp: 5, caught: 1, candiesUsed: 2 }) },
+    })
+    const remote = save({
+      revision: { [A]: 2, [B]: 7 },
+      species: { 4: progress({ xp: 50, caught: 3, candiesUsed: 1 }) },
+    })
+    const result = mergeSaves(local, remote)
+    expect(result.outcome).toBe('keptLocal')
+    expect(result.state.species[4]).toMatchObject({ xp: 5, caught: 3, candiesUsed: 2 })
+  })
+
+  it('unlocks at zero a species only the losing side had, and keeps a threshold either side knew', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 5 }) } },
+      { species: { 4: progress({ threshold: 100 }), 7: progress({ xp: 999, seen: true }) } },
+    )
+    const result = mergeSaves(local, remote)
+    const winner = result.narrative === 'local' ? local : remote
+    expect(result.state.species[4]?.threshold).toBe(100)
+    const seven = result.state.species[7]!
+    expect(seven.unlocked).toBe(true)
+    expect(seven.seen).toBe(true)
+    expect(seven.xp).toBe(winner.species[7]?.xp ?? 0)
+  })
+
+  // A nature only one side recorded survives the merge: it was set by a switch (or a Mint) on
+  // that side, and dropping it would roll a new one next time the species is chosen.
+  // [trigger branch] One side already turned the share into experience (threshold fixed, share
+  // gone); the other still owes it. Carrying the owed share over would apply the catch twice.
+  it('drops a share the side with the threshold already settled', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 50, threshold: 1_000 }) } },
+      { species: { 4: progress({ pendingShare: 0.05 }) } },
+    )
+    expect(mergeSaves(local, remote).state.species[4]?.pendingShare).toBeUndefined()
+    expect(mergeSaves(remote, local).state.species[4]?.pendingShare).toBeUndefined()
+  })
+
+  // [trigger branch] Shiny progress is a counter like the catches: the side that played more of
+  // the bar, or bought more of it, keeps it — the losing side's never wipes it.
+  it('keeps the furthest shiny bar and boost of either side', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ shinyXP: 100, shinyBoosted: 10 }) } },
+      { species: { 4: progress({ shinyXP: 50, shinyBoosted: 40 }) } },
+    )
+    for (const merged of [mergeSaves(local, remote), mergeSaves(remote, local)]) {
+      expect(merged.state.species[4]).toMatchObject({ shinyXP: 100, shinyBoosted: 40 })
+    }
+  })
+
+  it('keeps a recorded nature either side knew', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress() } },
+      { species: { 4: progress({ nature: 'bold' }) } },
+    )
+    expect(mergeSaves(local, remote).state.species[4]?.nature).toBe('bold')
+    expect(mergeSaves(remote, local).state.species[4]?.nature).toBe('bold')
+  })
+
+  // The lure is bought with the winner's wallet, so it travels with the winner's spend.
+  // [trigger branch] The same day on both sides: progress is the furthest of either, but paid is
+  // the winner's — the reward lives in the winner's `earnedTokens`, so a challenge only the loser
+  // completed is paid on the next settle rather than marked done with nothing in the wallet.
+  it('keeps the furthest challenge progress, and the winner’s paid flags', () => {
+    const item = {
+      id: 'day:2026-10-21:catch',
+      period: 'day' as const,
+      kind: 'catch' as const,
+      target: 3,
+      progress: 0,
+      done: false,
+    }
+    const board = (progress: number, done: boolean) => ({
+      day: '2026-10-21',
+      week: '2026-W43',
+      items: [{ ...item, progress, done }],
+    })
+    const local = save({ revision: { [A]: 4, [B]: 7 }, challenges: board(1, false) })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, challenges: board(3, true) })
+    const merged = mergeSaves(local, remote).state.challenges!
+    expect(merged.items[0]).toMatchObject({ progress: 3, done: false })
+  })
+
+  // [trigger branch] Code review 9.12 #7: the paid list was a union, so the loser's own payment
+  // came over as "paid" while its tokens stayed behind — the next settle marked it done and paid
+  // nothing. The winner's list only: the settle after the merge pays it, once.
+  it('pays once, after the merge, a challenge only the losing side was paid for', () => {
+    const item = {
+      id: 'day:2026-10-21:catch',
+      period: 'day' as const,
+      kind: 'catch' as const,
+      target: 3,
+      progress: 3,
+      done: true,
+    }
+    const board = (done: boolean) => ({
+      day: '2026-10-21',
+      week: '2026-W43',
+      items: [{ ...item, progress: done ? 3 : 1, done }],
+    })
+    const winner = save({ revision: { [A]: 4, [B]: 7 }, challenges: board(false), earnedTokens: 0 })
+    const loser = save({
+      revision: { [A]: 2, [B]: 7 },
+      challenges: board(true),
+      challengesPaid: [item.id],
+      earnedTokens: challengeReward(item),
+    })
+    const merged = mergeSaves(winner, loser).state
+    const settled = ensureChallenges(merged, '2026-10-21').state
+    expect(settled.earnedTokens).toBe(challengeReward(item))
+    expect(settled.challengesPaid).toEqual([item.id])
+    expect(ensureChallenges(settled, '2026-10-21').state.earnedTokens).toBe(challengeReward(item))
+  })
+
+  // Medals only grow: a medal celebrated on either side stays celebrated, so it is never
+  // announced twice after a sync.
+  it('keeps every medal either side celebrated', () => {
+    const { local, remote } = fork(
+      { medals: ['registered-1'], medalsSeeded: true },
+      { medals: ['shiny-1'], medalsSeeded: true },
+    )
+    const merged = mergeSaves(local, remote).state
+    expect(new Set(merged.medals)).toEqual(new Set(['registered-1', 'shiny-1']))
+    expect(merged.medalsSeeded).toBe(true)
+  })
+
+  it('keeps the winner’s lure', () => {
+    const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
+    const local = save({ revision: { [A]: 4, [B]: 7 }, lure })
+    const remote = save({ revision: { [A]: 2, [B]: 7 } })
+    expect(mergeSaves(local, remote).state.lure).toEqual(lure)
+    expect(mergeSaves(remote, local).state.lure).toEqual(lure)
+  })
+
+  it('keeps the winner’s payouts, as it keeps its spend', () => {
+    const local = save({ revision: { [A]: 4, [B]: 7 }, earnedTokens: 30 })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, earnedTokens: 999 })
+    expect(mergeSaves(local, remote).state.earnedTokens).toBe(30)
+  })
+})
+
+describe('the registry and the merge credit', () => {
+  // [trigger branch] The credit for unseen tokens moves the companion's bar; building the merged
+  // registry from the pre-credit map threw that away and the meter and the bar diverged.
+  it('keeps the experience the merge just credited', () => {
+    const active = {
+      baseID: 4,
+      pathIDs: [4],
+      plannedPathIDs: [4, 5],
+      stageIndex: 0,
+      usedAtStage: 10,
+      rarity: 'common' as const,
+      totalForms: 2,
+      isShiny: false,
+      dittoRevealed: false,
+    }
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      usedByDevice: { [A]: 100 },
+      active,
+      species: {
+        4: { xp: 10, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+      },
+    })
+    const remote = save({ revision: { [A]: 2, [B]: 7 }, usedByDevice: { [B]: 50 } })
+    const result = mergeSaves(local, remote)
+    expect(result.creditedTokens).toBe(50)
+    expect(result.state.active?.usedAtStage).toBe(60)
+    expect(result.state.species[4]?.xp).toBe(60)
+  })
+})
+
+describe('the egg stock', () => {
+  // [trigger branch] A maximum would resurrect eggs one side already incubated; the winner's
+  // count is fail-closed. The grant day is the most recent, so today's egg is never granted twice.
+  it('takes the winner’s eggs and the latest grant day', () => {
+    const local = save({
+      revision: { [A]: 4, [B]: 7 },
+      eggStock: { count: 1, lastGrantDay: '2026-10-19' },
+    })
+    const remote = save({
+      revision: { [A]: 2, [B]: 7 },
+      eggStock: { count: 3, lastGrantDay: '2026-10-20' },
+    })
+    expect(mergeSaves(local, remote).state.eggStock).toEqual({ count: 1, lastGrantDay: '2026-10-20' })
   })
 })

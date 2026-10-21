@@ -32,6 +32,7 @@ import {
   queuedCount,
 } from './encounters.js'
 import { isDayKey } from './persistence.js'
+import { type SpeciesProgress, freshSpeciesProgress } from './model.js'
 import { mergedGrantTier, perKeyMax, sanitized } from './saveTransfer.js'
 
 /**
@@ -100,6 +101,57 @@ function unseenTokens(base: CompanionState, other: CompanionState): number {
   }, 0)
 }
 
+function mergeRegistries(
+  base: Record<number, SpeciesProgress>,
+  other: Record<number, SpeciesProgress>,
+): Record<number, SpeciesProgress> {
+  const out: Record<number, SpeciesProgress> = {}
+  const ids = new Set([...Object.keys(base), ...Object.keys(other)].map(Number))
+  for (const id of ids) {
+    const a = base[id]
+    const b = other[id]
+    const merged: SpeciesProgress = {
+      ...(a ?? freshSpeciesProgress()),
+      unlocked: (a?.unlocked ?? false) || (b?.unlocked ?? false),
+      seen: (a?.seen ?? false) || (b?.seen ?? false),
+      registered: (a?.registered ?? false) || (b?.registered ?? false),
+      caught: Math.max(a?.caught ?? 0, b?.caught ?? 0),
+      candiesUsed: Math.max(a?.candiesUsed ?? 0, b?.candiesUsed ?? 0),
+    }
+    // Fixed from the line, so either side's reading is the reading.
+    const threshold = a?.threshold ?? b?.threshold
+    if (threshold !== undefined) merged.threshold = threshold
+    const baseID = a?.baseID ?? b?.baseID
+    if (baseID !== undefined) merged.baseID = baseID
+    const stageIndex = a?.stageIndex ?? b?.stageIndex
+    if (stageIndex !== undefined) merged.stageIndex = stageIndex
+    const totalForms = a?.totalForms ?? b?.totalForms
+    if (totalForms !== undefined) merged.totalForms = totalForms
+    const lineRarity = a?.lineRarity ?? b?.lineRarity
+    if (lineRarity !== undefined) merged.lineRarity = lineRarity
+    // A share is owed only until a threshold settles it: once either side knows the threshold,
+    // the side that fixed it has already turned its share into experience, and carrying the
+    // other side's over would apply the same catch twice.
+    const pendingShare = Math.max(a?.pendingShare ?? 0, b?.pendingShare ?? 0)
+    if (pendingShare > 0 && threshold === undefined) merged.pendingShare = pendingShare
+    // Counters like the catches: the furthest of either side, never the losing side's wipe.
+    const shinyXP = Math.max(a?.shinyXP ?? 0, b?.shinyXP ?? 0)
+    if (shinyXP > 0) merged.shinyXP = shinyXP
+    const shinyBoosted = Math.max(a?.shinyBoosted ?? 0, b?.shinyBoosted ?? 0)
+    if (shinyBoosted > 0) merged.shinyBoosted = shinyBoosted
+    if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
+    if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
+    if (a?.companionShiny || b?.companionShiny) merged.companionShiny = true
+    // Registered first on either machine: the earlier moment.
+    const stamps = [a?.registeredAt, b?.registeredAt].filter((t): t is number => t !== undefined)
+    if (stamps.length > 0) merged.registeredAt = Math.min(...stamps)
+    const nature = a?.nature ?? b?.nature
+    if (nature !== undefined) merged.nature = nature
+    out[id] = merged
+  }
+  return out
+}
+
 export function mergeSaves(local: CompanionState, remote: CompanionState): MergeResult {
   const localCovers = covers(local.revision, remote.revision)
   const remoteCovers = covers(remote.revision, local.revision)
@@ -137,6 +189,33 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.language = local.language
   if (local.trainerID !== undefined) state.trainerID = local.trainerID
   else delete state.trainerID
+  // Challenges: the narrative winner's board. On the same day and week, each challenge keeps the
+  // furthest progress of either side but the winner's paid flag — the reward lives in the winner's
+  // `earnedTokens`, so one only the loser completed is paid on the next settle, not lost.
+  const lb = local.challenges
+  const rb = remote.challenges
+  if (lb !== undefined && rb !== undefined && lb.day === rb.day && lb.week === rb.week) {
+    const winner = state.challenges ?? lb
+    const other = winner === lb ? rb : lb
+    state.challenges = {
+      ...winner,
+      items: winner.items.map((c) => {
+        const twin = other.items.find((o) => o.id === c.id)
+        return twin === undefined ? c : { ...c, progress: Math.max(c.progress, twin.progress) }
+      }),
+    }
+  }
+  // Paid challenges are the winner's, with the winner's `earnedTokens` they were paid into. A
+  // union brought over the loser's "paid" while its tokens stayed behind, and the next settle
+  // marked the challenge done with nothing in the wallet (code review 9.12 #7); left out, the
+  // settle pays it — once, into the merged wallet. `state` is the winner's copy, list and all.
+  // Medals only grow: one celebrated on either side stays celebrated, never announced twice.
+  const medals = new Set([...(local.medals ?? []), ...(remote.medals ?? [])])
+  if (medals.size > 0) state.medals = [...medals]
+  if (local.medalsSeeded === true || remote.medalsSeeded === true) state.medalsSeeded = true
+  // A setting, like the language and the trainer: this machine's choice.
+  if (local.keepCompletedCompanion === true) state.keepCompletedCompanion = true
+  else delete state.keepCompletedCompanion
   if (local.lastEncounterToastAt !== undefined) state.lastEncounterToastAt = local.lastEncounterToastAt
   else delete state.lastEncounterToastAt
   // Whether this machine has already announced a full queue is about this machine's
@@ -161,6 +240,20 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.collectedFinals = [...new Set([...state.collectedFinals, ...other.collectedFinals])]
   state.candyGrantTier = mergedGrantTier(base.candyGrantTier, other.candyGrantTier)
   state.candyFeatureSeeded = base.candyFeatureSeeded || other.candyFeatureSeeded
+  // The registry. The Pokédex states are flags and flags only ever turn on, so they are unioned:
+  // a species the losing side registered stays registered. The experience itself is history —
+  // RNG-free, but the tokens behind it are the same tokens the credit above already paid to the
+  // winner's companion, so taking the loser's xp as well would count them twice. It comes from
+  // the winner; what the loser put into a species the winner never had is lost with the rest of
+  // its history, and that species is simply unlocked at zero.
+  state.earnedTokens = base.earnedTokens
+  // Fail-closed: the winner's count (a maximum would resurrect eggs already incubated) and the
+  // most recent grant day, so two machines never both grant today's egg.
+  const grantDays = [base.eggStock.lastGrantDay, other.eggStock.lastGrantDay].filter(isDayKey).sort()
+  const lastGrantDay = grantDays[grantDays.length - 1]
+  state.eggStock = { count: base.eggStock.count, ...(lastGrantDay === undefined ? {} : { lastGrantDay }) }
+  // From `state`, not `base`: the credit above already moved the companion's bar.
+  state.species = mergeRegistries(state.species, other.species)
   state.encountersSeen = Math.max(base.encountersSeen, other.encountersSeen)
   state.accrualDays = [...new Set([...base.accrualDays, ...other.accrualDays])]
     .sort()

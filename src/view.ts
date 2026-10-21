@@ -25,7 +25,10 @@ export class GameViewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view
-    new PanelSurface(view.webview, this.extensionUri, this.onRequest, this.disposables, this.options)
+    new PanelSurface(view.webview, this.extensionUri, this.onRequest, this.disposables, {
+      ...this.options,
+      isVisible: () => view.visible,
+    })
 
     view.onDidDispose(
       () => {

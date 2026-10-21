@@ -43,6 +43,11 @@ export type DevAction =
   | { action: 'devGrantBalls'; count: number }
   | { action: 'devSpawnFind' }
   | { action: 'devLoseLegendary' }
+  | { action: 'devSpeciesXP'; amount: number }
+  | { action: 'devRegisterNow' }
+  | { action: 'devRegisterShiny' }
+  | { action: 'devMarkSeen'; speciesID: number }
+  | { action: 'devGrantEgg' }
 
 export type DevGroup = 'tokens' | 'items' | 'state' | 'edge' | 'reset'
 
@@ -147,6 +152,52 @@ export const DEV_SCENARIOS: DevScenario[] = [
     build: () => ({ action: 'devClearOffsets' }),
   },
 
+  {
+    id: 'species-xp',
+    group: 'tokens',
+    label: 'Give the species on stage experience',
+    detail: 'Credits the companion and its registration bar, as a fold would',
+    input: { kind: 'amount', prompt: 'Experience to add', defaultValue: '10M' },
+    build: (value) => {
+      const parsed = amount(value)
+      return parsed === undefined ? undefined : { action: 'devSpeciesXP', amount: parsed }
+    },
+  },
+  {
+    id: 'register-now',
+    group: 'state',
+    label: 'Register the species on stage now',
+    detail: 'Fills its bar; the next refresh registers it and evolves if it can',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devRegisterNow' }),
+  },
+  {
+    id: 'register-shiny',
+    group: 'state',
+    label: 'Register the shiny of the species on stage',
+    detail: 'As catching or hatching a shiny does: the shiny bar full, the companion wears it',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devRegisterShiny' }),
+  },
+  {
+    id: 'mark-seen',
+    group: 'state',
+    label: 'Mark a species as seen',
+    detail: 'As if it had turned up in the wild',
+    input: { kind: 'amount', prompt: 'Species id', defaultValue: '25' },
+    build: (value) => {
+      const parsed = amount(value)
+      return parsed === undefined ? undefined : { action: 'devMarkSeen', speciesID: parsed }
+    },
+  },
+  {
+    id: 'grant-egg',
+    group: 'items',
+    label: 'Add an egg to the stock',
+    detail: 'One a day in production, up to three; here, directly',
+    input: { kind: 'none' },
+    build: () => ({ action: 'devGrantEgg' }),
+  },
   // ---- wallet and items ----
   {
     id: 'add-balance',

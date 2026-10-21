@@ -29,19 +29,23 @@
 
 You already burn millions of tokens a day in Claude Code, Codex, Gemini and friends.
 **Tokendex reads those local logs — nothing is uploaded, ever — and turns the spend you
-already made into a game**: an egg incubates on real work, hatches into a companion that
-evolves through its actual evolution line, and wild Pokémon walk into your editor as you
-code. Throw a ball. Watch the wobbles. Fill the Pokédex.
+already made into a game**: pick a starter, and every token it sees is experience that
+registers its species and evolves it through its actual evolution line, while wild Pokémon
+walk into your editor as you code. Throw a ball. Watch the wobbles. Fill the Pokédex.
 
 Underneath the game sits a precise, fast usage tracker: today's tokens and cost, this
 month's, official rate-limit windows as live bars, and a per-CLI breakdown with burn rate.
 
 ## The game
 
-- 🥚 **Hatch** — your egg incubates on real token spend (5M to hatch), then evolves through
-  its species' real evolution line, stage by stage, until it graduates into your Pokédex.
-- 🎯 **Catch** — wild Pokémon appear as you work (the first after just 500k tokens), with
-  item finds — balls and berries — turning up between them. Up to 30 wait in a quiet queue: a
+- 📈 **Raise** — choose a starter from generations 1–5, then any species you have obtained
+  or an egg (a free one a day, up to three; 5M tokens to hatch). The tokens your companion
+  sees fill its species' bar: a full bar registers it in the Pokédex and evolves it into the
+  next form, and you can always go back to an earlier one. A full Pokédex is a road of one to
+  two years for an average user, with medals, regions and daily challenges along the way.
+- 🎯 **Catch** — wild Pokémon, evolved forms included, appear as you work (the first after
+  just 500k tokens); a first catch fills 5% of the species' bar, a duplicate pays tokens. With
+  item finds — balls and berries — turning up between them, up to 30 wait in a quiet queue: a
   badge counts them, and only a shiny, a legendary or a full queue ever toasts. Never an
   interruption.
 - 🧠 **Read the Pokémon** — every wild Pokémon has a nature and a temperament drawn from its
@@ -52,22 +56,24 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
   computed with the Gen-IV catch formula on the species' true capture rate, and the scene says
   what a miss risks. A legendary that gets away leaves tracks you can follow for a few days —
   for a price.
-- ✨ **Get lucky** — shinies (1/64, better with the Shiny Charm), natures, a Ditto that
-  reveals itself mid-evolution, and guaranteed-tier eggs.
+- ✨ **Go shiny** — a registered species keeps earning toward its shiny form (tokens can buy
+  up to half the way), a wild or hatched shiny (1/64, better with the Shiny Charm) is one at
+  once, and a Shinydex counts them. A lure brings a species you have seen into the wild for a
+  day.
 - 🛍️ **Spend what you earned** — the tokens you burn are also your wallet: Poké, Great,
-  Ultra and Master Balls and berries (ten-packs at 10% off), Rare Candy, Mints, the Shiny Charm.
-  A single ball or berry is one click; packs, eggs and the Master Ball ask first.
+  Ultra and Master Balls and berries (ten-packs at 10% off), eggs, Rare Candy, Mints, the Shiny
+  Charm. A single ball or berry is one click; packs, eggs and the Master Ball ask first.
 
 <div align="center">
 
-|                                                                                                      Raise                                                                                                      |                                                                                           Shop                                                                                           |                                                                      Your trainer                                                                       |
-| :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------: |
-| <img src="media/readme/home.png" width="260" alt="Home: your trainer and an Eevee companion on the battle field, its evolution progress, the road to the next encounter, usage totals and official limit bars"> | <img src="media/readme/shop.png" width="260" alt="The shop: Poké, Great, Ultra and Master Balls and berries, singly or in ten-packs at 10% off, priced in the tokens you already spent"> | <img src="media/readme/settings.png" width="260" alt="Settings: language, how often usage is re-read, and your trainer picked from 28 classic sprites"> |
+|                                                                                                                                      Raise                                                                                                                                      |                                                                                                                                               Shop                                                                                                                                               |                                                                      Your trainer                                                                       |
+| :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <img src="media/readme/home.png" width="260" alt="Home: the tabs as the device's buttons, the Pokédex lid with today's usage and the balance, your trainer and an Eevee companion with its EXP bar and evolution line, and drawers for the incubator, the wild and the streak"> | <img src="media/readme/shop.png" width="260" alt="The shop in the device's casing, its groups as drawers: Poké, Great, Ultra and Master Balls, singly or in packs of ten stepped up to a hundred at 10% off, priced in the tokens you already spent, with berries, items and eggs folded below"> | <img src="media/readme/settings.png" width="260" alt="Settings: language, how often usage is re-read, and your trainer picked from 28 classic sprites"> |
 
 </div>
 
 <div align="center">
-<img src="media/readme/dex.png" width="820" alt="The Pokédex: 25 of 649 species collected, searchable by name or number, shiny entries framed, the one being raised marked">
+<img src="media/readme/dex.png" width="820" alt="The Pokédex: 24 of 649 registered on the device's screen, the collection as entry cards, search, sort and regions on the filters' screen, and Charizard's entry open: Flame Pokémon, Fire and Flying, its height and weight, its Pokédex text, base stats and evolution line">
 
 <em>The Pokédex tracks every species you raise or catch — 649 to collect.</em>
 

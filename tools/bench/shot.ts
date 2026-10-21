@@ -66,6 +66,9 @@ if (autoThrow !== null) {
             ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
           }
         }
+        const reply = fixture.throwResult
+        if (reply?.spendableText !== undefined) next.spendableText = reply.spendableText
+        if (reply?.walletChange !== undefined) next.walletChange = reply.walletChange
         setTimeout(() => {
           window.postMessage({ type: 'state', state: next }, '*')
           window.postMessage(
@@ -75,14 +78,38 @@ if (autoThrow !== null) {
                 encounterID: m.encounterID,
                 kind: 'caught',
                 shakes: 4,
-                resultText: `Gotcha! ${head?.name ?? ''} was caught!`,
+                resultText: reply?.resultText ?? `Gotcha! ${head?.name ?? ''} was caught!`,
                 animation: 'throw',
                 attacked: false,
+                ...(reply?.catchNews === undefined ? {} : { catchNews: reply.catchNews }),
               },
             },
             '*',
           )
         }, 140)
+      },
+    }
+  }
+}
+
+/**
+ * The species card asks the host for its Pokédex entry (`{ type: 'dexEntry', speciesID }`); this
+ * page answers as the host does, with the fixture's entry, a little later. A species the fixture
+ * has no entry for gets no answer, and its card stays in the loading state, as offline.
+ */
+{
+  const inner = window.acquireVsCodeApi
+  window.acquireVsCodeApi = () => {
+    const api = inner()
+    return {
+      ...api,
+      postMessage: (message: unknown) => {
+        const m = message as { type?: string; speciesID?: number }
+        const entry =
+          m.type === 'dexEntry' ? fixture.dexEntries?.find((e) => e.speciesID === m.speciesID) : undefined
+        if (entry !== undefined)
+          setTimeout(() => window.postMessage({ type: 'dexEntry', entry }, '*'), 60)
+        return api.postMessage(message)
       },
     }
   }

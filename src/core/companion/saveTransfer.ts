@@ -11,7 +11,13 @@
 
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
-import { type CompanionState, captureRateCeiling, freshCompanionState } from './model.js'
+import {
+  type CompanionState,
+  EGG_STOCK_MAX,
+  RareCandy,
+  captureRateCeiling,
+  freshCompanionState,
+} from './model.js'
 import {
   EncounterBalance,
   LegendaryBalance,
@@ -243,14 +249,11 @@ export function sanitized(state: CompanionState): CompanionState {
     )
   }
 
-  // An egg guarantee belongs to the egg currently being incubated, so it cannot coexist with
-  // an active Pokémon. If a hand edit or an odd version combination produces both, the
-  // guarantee would leak onto the *next* egg and become permanently premium. The species
-  // pre-rolled under it goes too: dropping only the guarantee would let the **free** egg
-  // received after graduating hatch that pre-roll, producing a premium result nobody bought.
-  if (next.active !== undefined) {
-    delete next.eggTier
-    delete next.pendingHatchID
+  // An egg and an active Pokémon coexist on purpose: choosing a companion pauses the egg, and
+  // the guarantee paid for it stays with it until it hatches. (It used to be dropped here.)
+  next.eggStock = {
+    count: Math.min(EGG_STOCK_MAX, Math.max(0, Math.floor(state.eggStock?.count ?? 0))),
+    ...(state.eggStock?.lastGrantDay !== undefined ? { lastGrantDay: state.eggStock.lastGrantDay } : {}),
   }
 
   // A legendary egg guarantee is dropped rather than honoured. It was never sold
@@ -343,6 +346,7 @@ export function sanitized(state: CompanionState): CompanionState {
   // An unknown slug would render as a broken image on every repaint. Falling back to absent
   // (the roster default) is invisible and correct.
   if (next.trainerID !== undefined && !isTrainerID(next.trainerID)) delete next.trainerID
+  if (next.keepCompletedCompanion !== true) delete next.keepCompletedCompanion
 
   if (next.active !== undefined) {
     const active = { ...next.active }
@@ -353,6 +357,25 @@ export function sanitized(state: CompanionState): CompanionState {
     active.stageIndex = Math.min(Math.max(0, active.stageIndex), Math.max(0, active.pathIDs.length - 1))
     next.active = active
   }
+
+  // The registry: integers clamped like every other counter, shares kept to 0..1, and the
+  // candy count to its cap — an imported `candiesUsed: -1e9` would otherwise be a candy faucet.
+  next.earnedTokens = clamp(state.earnedTokens ?? 0)
+  next.species = Object.fromEntries(
+    Object.entries(state.species ?? {}).map(([id, p]) => {
+      const clean = { ...p, xp: clamp(p.xp), caught: Math.min(clamp(p.caught), 1_000_000) }
+      clean.candiesUsed = Math.min(Math.max(0, p.candiesUsed), RareCandy.maxPerSpecies)
+      if (p.threshold !== undefined) clean.threshold = Math.max(1, clamp(p.threshold))
+      if (p.baseID !== undefined) clean.baseID = Math.max(1, Math.floor(p.baseID))
+      if (p.stageIndex !== undefined) clean.stageIndex = Math.max(0, Math.floor(p.stageIndex))
+      if (p.totalForms !== undefined)
+        clean.totalForms = Math.min(12, Math.max(1, Math.floor(p.totalForms)))
+      if (p.pendingShare !== undefined) clean.pendingShare = Math.min(1, Math.max(0, p.pendingShare))
+      if (p.shinyXP !== undefined) clean.shinyXP = clamp(p.shinyXP)
+      if (p.shinyBoosted !== undefined) clean.shinyBoosted = clamp(p.shinyBoosted)
+      return [id, clean]
+    }),
+  )
   return next
 }
 

@@ -36,8 +36,8 @@ import { dirname, join } from 'node:path'
 import * as AppPaths from '../appPaths.js'
 import { atomicWriteFile } from '../coordination/atomicWrite.js'
 import { FileLock, lockPathFor, type LockResult } from '../coordination/fileLock.js'
-import type { BaseSpecies, PokeProviding } from '../pokeapi.js'
-import { chooseBaseFromIndex, chooseBaseViaREST } from '../pokeapi.js'
+import type { BaseSpecies, PokeProviding, WildStatus } from '../pokeapi.js'
+import { chooseBaseFromIndex, chooseBaseViaREST, chooseWildFromIndex } from '../pokeapi.js'
 import {
   EncounterBalance,
   addEncounterUsage,
@@ -69,7 +69,15 @@ import {
   rollShiny,
   type BurnTier,
 } from './display.js'
-import { applyUsage, makeEvolutionPlan, normalizedEvolutionState, type RNG } from './growth.js'
+import { reachedForms } from './dexView.js'
+import {
+  applyUsage,
+  companionIsDone,
+  makeEvolutionPlan,
+  normalizedEvolutionState,
+  pathToSpecies,
+  type RNG,
+} from './growth.js'
 import {
   applyLegendaryTriggers,
   applyProviderLedger,
@@ -79,6 +87,7 @@ import {
   type LegendaryAward,
 } from './ledger.js'
 import {
+  ANIMATED_SPECIES_MAX,
   type BallKind,
   type BerryKind,
   type CompanionState,
@@ -87,6 +96,7 @@ import {
   type EvoLine,
   type MonState,
   NATURES,
+  evoNodeWithID,
   type Rarity,
   type WildEncounter,
   type WildFind,
@@ -99,10 +109,36 @@ import {
   localizedName,
   totalForms,
 } from './model.js'
-import { decodeCompanionState, encodeCompanionState } from './persistence.js'
+import { decodeCompanionState, encodeCompanionState, encodeSidecar, withSidecar } from './persistence.js'
 import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
 import { deviceIdentity } from './device.js'
 import { withRevision } from './merge.js'
+import {
+  creditSpeciesXP,
+  markSeen,
+  meterStart,
+  progressOf,
+  registerShiny,
+  rareCandyXP,
+  retireCompanion,
+  stampRegistrations,
+  unlockSpecies,
+  unlockedSpecies,
+} from './registry.js'
+import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
+import { isStarterID } from './starters.js'
+import { awardMedals } from './medals.js'
+import { todayKey } from '../usage/entry.js'
+import { type Challenge, ensureChallenges, progressCatch, progressTokens } from './challenges.js'
+import { boostShiny, canUseRareCandy, consumeRareCandy, setLure } from './shop.js'
+import { EconomyBalance } from './economy.js'
+
+export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
+
+/** A choice never carries the move-on's re-check, so `'moved'` cannot come back from one. */
+function asChoice(outcome: SetCompanionOutcome | 'moved'): SetCompanionOutcome {
+  return outcome === 'moved' ? 'locked' : outcome
+}
 
 /** Window during which a hatch/evolve/graduate celebration keeps the display in `levelUp`. */
 const EVENT_WINDOW_MS = 4_000
@@ -123,8 +159,22 @@ const LOCK_TIMEOUT_MS = 5_000
 
 export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
-  | { kind: 'evolved'; speciesID: number; name: string }
-  | { kind: 'graduated'; name: string }
+  /** `registered`: the form left behind, registered on the way (a non-final form registers as it evolves). */
+  | { kind: 'evolved'; speciesID: number; name: string; registered?: string }
+  | { kind: 'graduated'; name: string; speciesID?: number }
+  /** The player put a species on stage by hand: news for the panel, never a toast. */
+  | { kind: 'companionChosen'; speciesID: number; name: string }
+  /** A challenge completed and paid (`challenges.ts`). */
+  | { kind: 'challengeDone'; challenge: Challenge }
+  /** A medal newly met (`medals.ts`); its name is the dispatcher's, from the id. */
+  | { kind: 'medalEarned'; medalID: string }
+  /** The companion filled its shiny bar: its shiny form is registered, and it wears it now. */
+  | { kind: 'shinyRegistered'; speciesID: number; name: string }
+  /**
+   * A finished companion stepped aside on its own (`moveOnIfDone`): `to` names the species now on
+   * stage, or is absent when an egg from the stock took its place.
+   */
+  | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   /**
@@ -326,7 +376,8 @@ export class CompanionStore {
       return // no save yet
     }
     try {
-      this.state = sanitized(decodeCompanionState(JSON.parse(raw), this.options.hostLanguage))
+      const save = withSidecar(JSON.parse(raw), await this.readSidecar())
+      this.state = sanitized(decodeCompanionState(save, this.options.hostLanguage))
     } catch {
       await this.backupCorruptFile(raw)
       this.state = freshCompanionState(this.options.hostLanguage)
@@ -367,7 +418,8 @@ export class CompanionStore {
       return // no save on disk yet: what we hold *is* the state
     }
     try {
-      this.adopt(decodeCompanionState(JSON.parse(raw), this.options.hostLanguage))
+      const save = withSidecar(JSON.parse(raw), await this.readSidecar())
+      this.adopt(decodeCompanionState(save, this.options.hostLanguage))
     } catch {
       // Unreadable right now. Keep this window's state; the write below republishes it.
     }
@@ -377,9 +429,27 @@ export class CompanionStore {
     try {
       // A private temp file, then a rename: an interrupted write must never truncate a save,
       // and every other VS Code window writes this same path with its own worker.
-      await atomicWriteFile(this.filePath, encodeCompanionState(this.state), 'utf8')
+      // The save, then its sidecar: still one writer, inside the hold, for both files.
+      const files: [string, string][] = [
+        [this.filePath, encodeCompanionState(this.state)],
+        [this.sidecarPath, encodeSidecar(this.state)],
+      ]
+      for (const [path, text] of files) await atomicWriteFile(path, text, 'utf8')
     } catch {
       // Never let a save failure break a refresh; the next tick retries.
+    }
+  }
+
+  /** Beside the save: the registry and the rest an older build would drop (`SIDECAR_KEYS`). */
+  private get sidecarPath(): string {
+    return this.filePath.replace(/\.json$/, '') + '.registry.json'
+  }
+
+  private async readSidecar(): Promise<unknown> {
+    try {
+      return JSON.parse(await fs.readFile(this.sidecarPath, 'utf8'))
+    } catch {
+      return undefined
     }
   }
 
@@ -422,6 +492,24 @@ export class CompanionStore {
    * `{ committed: false }` means the lock was busy. For a user action that must be surfaced,
    * never swallowed.
    */
+  /**
+   * Spends one Rare Candy on the companion and grows it — in one hold, and only when it can grow:
+   * the line is loaded *after* the re-read, which drops it when another window switched the
+   * companion (code review 9.12 #14). `false` spent nothing. Throws when the save is busy.
+   */
+  async useRareCandy(): Promise<boolean> {
+    const result = await this.mutate((tx) => {
+      if (!canUseRareCandy(tx.state, this.line !== undefined)) return false
+      const next = consumeRareCandy(tx.state)
+      if (next === undefined) return false
+      tx.commit(next)
+      tx.applyCandy()
+      return true
+    })
+    if (!result.committed) throw new SaveBusyError()
+    return result.value
+  }
+
   async mutate<T>(fn: (tx: Mutation) => T | Promise<T>): Promise<CommitResult<T>> {
     await this.load()
     const result = await this.transact(() => fn(this.mutation()))
@@ -525,7 +613,7 @@ export class CompanionStore {
   /** Injects one Rare Candy's XP through the ordinary growth path (carry, evolve, graduate). */
   private applyCandy(): void {
     if (this.state.active === undefined || this.line === undefined) return
-    this.grow(RareCandy.xp)
+    this.grow(rareCandyXP(this.state.active))
   }
 
   // MARK: - Update
@@ -561,8 +649,79 @@ export class CompanionStore {
     if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
       await this.loadCurrentLine()
     }
+    if (networkAllowed && !this.hatching) await this.moveOnIfDone()
     if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
     if (networkAllowed && !this.prefetching) await this.prefetchHatchIfNeeded()
+  }
+
+  /**
+   * A companion with nothing left to fill steps aside, so the tokens keep registering something:
+   * a random obtained species still unregistered takes the stage, or failing that an egg from
+   * the stock; with neither, it stays. Off when the player keeps finished companions
+   * (`keepCompletedCompanion`). The switch is `putOnStage`'s, line fetch and all — the same path
+   * as choosing one in the Pokédex.
+   */
+  private async moveOnIfDone(): Promise<void> {
+    // A background step like the fold: a save another window holds is a skip, never a throw at
+    // the scan. The next refresh finds the companion still finished and tries again.
+    try {
+      await this.moveOn()
+    } catch (error) {
+      if (!(error instanceof SaveBusyError)) throw error
+    }
+  }
+
+  private async moveOn(): Promise<void> {
+    const active = this.state.active
+    const line = this.line
+    if (active === undefined || line === undefined || this.state.keepCompletedCompanion === true) return
+    if (active.chosenWhenRegistered === true) return
+    // Not over a celebration: the graduation toast goes first, the switch on a later refresh.
+    if (this.now < this.eventUntil) return
+    if (!companionIsDone(active, line, this.state.species)) return
+    const from = localizedName(line, currentSpeciesID(active), this.state.language)
+
+    // Every candidate, in a random order: one whose line does not hold it ('unknown') is skipped
+    // for the next rather than re-drawn on every refresh. Offline stops here — nothing is wrong
+    // with the candidates, the network is.
+    const here = currentSpeciesID(active)
+    const pool = Object.entries(this.state.species)
+      .filter(([id, p]) => p.unlocked && !p.registered && Number(id) !== here)
+      .map(([id]) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0 && id <= ANIMATED_SPECIES_MAX)
+      .sort((a, b) => a - b)
+    while (pool.length > 0) {
+      const next = pool.splice(this.rng() % pool.length, 1)[0]!
+      const outcome = await this.putOnStage(
+        next,
+        this.state.species[next]?.baseID,
+        'auto',
+        (state) =>
+          state.active !== undefined &&
+          currentSpeciesID(state.active) === here &&
+          state.keepCompletedCompanion !== true &&
+          state.active.chosenWhenRegistered !== true &&
+          companionIsDone(state.active, line, state.species),
+      )
+      if (outcome === 'offline' || outcome === 'moved') return
+      if (outcome === 'set') {
+        const to = this.line === undefined ? '' : localizedName(this.line, next, this.state.language)
+        this.pendingEvents.push({ kind: 'companionSwitched', from, to })
+        return
+      }
+    }
+
+    // No species to move to: the egg set aside, or one from the stock.
+    const result = await this.transact(() => {
+      const still = this.state.active
+      if (still === undefined || !companionIsDone(still, line, this.state.species)) return false
+      const { state, outcome } = incubateEgg(this.state)
+      if (outcome !== 'started' && outcome !== 'resumed') return false
+      this.state = state
+      this.line = undefined
+      return true
+    })
+    if (result.acquired && result.value) this.pendingEvents.push({ kind: 'companionSwitched', from })
   }
 
   /**
@@ -588,11 +747,28 @@ export class CompanionStore {
     // that has wandered off has to free its slot *this* pass — otherwise the tokens earned in
     // the same refresh are held back against room that is no longer occupied.
     this.state = expireQueue(this.state, this.now)
+    // A lure whose day is over, or whose species was obtained by any path (a catch, a hatch, an
+    // evolution, a starter), leaves the save, so nothing reads it as running. One that ends
+    // further than a day away — an edited save, a clock that jumped back — is capped to a day.
+    const lure = this.state.lure
+    if (lure !== undefined) {
+      if (lure.until <= this.now || progressOf(this.state, lure.speciesID).unlocked) {
+        this.state = { ...this.state }
+        delete this.state.lure
+      } else if (lure.until > this.now + EconomyBalance.lure.durationMs) {
+        this.state = {
+          ...this.state,
+          lure: { ...lure, until: this.now + EconomyBalance.lure.durationMs },
+        }
+      }
+    }
 
     if (delta > 0) {
       // Before crediting, so the day is recorded from the same fact the growth meter moves on:
       // real accrual. A refresh that contributes nothing is not a day of work.
       this.state = noteAccrualDay(this.state, observation.todayDate)
+      // Same fact, same place: a day of real work is a day with a free egg.
+      this.state = grantDailyEgg(this.state, observation.todayDate)
       this.state = creditDelta(this.state, delta)
       // Attributed here and not inside `creditDelta`, because a merge credits through that same
       // function tokens that another device accrued.
@@ -627,6 +803,27 @@ export class CompanionStore {
 
     // Re-arms the "full" notice once expiry or the player has made room.
     this.noteQueueEdge()
+    // Today's challenges, then the tokens this fold used toward them.
+    this.announceChallenges(ensureChallenges(this.state, observation.todayDate))
+    this.announceChallenges(progressTokens(this.state, delta))
+    this.awardMedalsNow()
+  }
+
+  /** Takes a challenge step's state and announces each challenge it completed (and paid). */
+  private announceChallenges(step: { state: CompanionState; done: Challenge[] }): void {
+    this.state = step.state
+    for (const challenge of step.done) this.pendingEvents.push({ kind: 'challengeDone', challenge })
+  }
+
+  /**
+   * Records the medals the save newly meets and announces each (`awardMedals`). Called at the end
+   * of every hold that can move a medal: the fold (registration, graduation), a turn (a catch), a
+   * boost (a shiny).
+   */
+  private awardMedalsNow(): void {
+    const { state, newly } = awardMedals(this.state)
+    this.state = state
+    for (const id of newly) this.pendingEvents.push({ kind: 'medalEarned', medalID: id })
   }
 
   /**
@@ -737,6 +934,7 @@ export class CompanionStore {
         owedLegendaryEncounters: this.state.owedLegendaryEncounters - 1,
         wild: enqueueEncounter(this.state.wild, reward),
       }
+      this.state = markSeen(this.state, reward.speciesID, reward.line)
       this.noteEncounterAppeared(reward)
       room -= 1
     }
@@ -751,6 +949,7 @@ export class CompanionStore {
         this.state = { ...this.state, ...paid, finds: [...this.state.finds, spawn.find] }
       } else {
         this.state = { ...this.state, ...paid, wild: enqueueEncounter(this.state.wild, spawn.encounter) }
+        this.state = markSeen(this.state, spawn.encounter.speciesID, spawn.encounter.line)
         this.noteEncounterAppeared(spawn.encounter)
       }
       room -= 1
@@ -783,30 +982,27 @@ export class CompanionStore {
   }
 
   /**
-   * One wild Pokémon.
-   *
-   * The species pick reuses the hatch selector verbatim: its capture-rate weighting already
-   * makes common species common, and halving an already-collected line is exactly the bias a
-   * Pokédex wants. No tier is passed — a wild encounter carries no guarantee.
+   * One wild Pokémon: any form of any line (`chooseWildFromIndex`), weighted toward what the
+   * player is missing. No tier is passed for an ordinary encounter — it carries no guarantee.
    */
   private async rollEncounter(index: BaseSpecies[], tier?: Rarity): Promise<WildEncounter | undefined> {
-    // Wild catches never enter `collectedFinals` (that set steers evolution-branch diversity),
-    // so without help the same Caterpie reappears at full weight for ever. The selector's
-    // halve-if-seen bias is fed a *local* set instead: the real collection, plus every species
-    // already caught wild, plus everything already waiting in the queue — computed per roll and
-    // never persisted, so the evolution rules cannot see it.
-    const seen = new Set(this.state.collectedFinals)
-    for (const entry of this.state.dex) {
-      if (entry.source === 'wild') seen.add(`${entry.finalID}:${entry.finalID}`)
+    // What the player has, as the draw weighs it — with everything already waiting in the queue
+    // counted as owned, so the same Caterpie is not queued twice at full weight. Computed per roll
+    // and never persisted.
+    const queued = new Set(this.state.wild.map((e) => e.speciesID))
+    const status = (id: number): WildStatus => {
+      const p = this.state.species[id]
+      if (p?.registered === true) return 'registered'
+      return p?.unlocked === true || queued.has(id) ? 'owned' : 'missing'
     }
-    for (const queued of this.state.wild) seen.add(`${queued.speciesID}:${queued.speciesID}`)
 
-    // `tier` is a floor, and the granted-legendary reward is the only caller that passes one.
-    // Reusing the ordinary roll rather than a parallel path is what keeps the reward an
-    // ordinary wild Pokémon: same weighting inside the pool, same shiny roll, same flee rules,
-    // same 24h window, same toast. A guaranteed prize would have been a different feature.
-    const speciesID = chooseBaseFromIndex(index, tier, seen, this.rng)
-    if (speciesID === undefined) return undefined
+    // `tier` is a floor, and the granted-legendary reward is the only caller that passes one: the
+    // same draw narrowed to the pool, with the same shiny roll, flee rules, 24h window and toast.
+    const lure =
+      this.state.lure !== undefined && this.state.lure.until > this.now ? this.state.lure : undefined
+    const pick = chooseWildFromIndex(index, status, this.rng, tier, tier === undefined ? lure : undefined)
+    if (pick === undefined) return undefined
+    const speciesID = pick.speciesID
 
     try {
       const species = await this.options.provider.wildSpecies(speciesID)
@@ -821,6 +1017,7 @@ export class CompanionStore {
         speciesID,
         captureRate: species.captureRate,
         rarity: species.rarity,
+        ...(pick.line === undefined ? {} : { line: pick.line }),
         isShiny,
         appearedAt: this.now,
         throws: 0,
@@ -853,19 +1050,164 @@ export class CompanionStore {
     return this.turn(encounterID, { kind: 'feed', berry })
   }
 
+  /**
+   * Puts an unlocked species on the stage as the companion, rebuilt from its line: the path
+   * down to it, a plan for the branches below, its registration so far as stage progress.
+   * Free and unlimited — the experience only ever goes to one, which is cost enough.
+   *
+   * The line is network and is fetched *before* the lock, like a hatch; the lock then checks
+   * that the species is still unlocked in the file as it is now.
+   *
+   * Who steps off is kept: the outgoing companion's nature and shininess go to its registry
+   * entry and come back with it, and an egg on stage is set aside (`setEggAside`).
+   */
+  async setCompanion(speciesID: number): Promise<SetCompanionOutcome> {
+    await this.load()
+    const progress = this.state.species[speciesID]
+    if (progress?.unlocked !== true) return 'locked'
+    return asChoice(await this.putOnStage(speciesID, progress.baseID, 'player'))
+  }
+
+  /**
+   * The shared half of `setCompanion`, `chooseStarter` and `moveOnIfDone`. For a `starter`, the
+   * unlock happens in the same lock hold as the companion, and only on a game still fresh — so a
+   * failure (offline, a tree without the species) leaves the new game exactly as it was, starter
+   * screen and all. A `player` choice of a species already registered is marked
+   * (`chosenWhenRegistered`), so the move-on rule does not undo it on the next refresh.
+   */
+  private async putOnStage(
+    speciesID: number,
+    knownBaseID: number | undefined,
+    by: 'player' | 'starter' | 'auto',
+    /**
+     * The move-on's own check, run again inside the hold (code review 9.12 #5): the line was
+     * fetched outside it, and another window may have put a choice on stage meanwhile. False
+     * leaves the stage alone and answers `'moved'`.
+     */
+    stillDone?: (state: CompanionState) => boolean,
+  ): Promise<SetCompanionOutcome | 'moved'> {
+    const starter = by === 'starter'
+    const baseID = knownBaseID ?? this.baseFromHistory(speciesID) ?? speciesID
+    let line: EvoLine
+    try {
+      line = await this.options.provider.line(baseID)
+    } catch {
+      this.noteNetworkFailure()
+      return 'offline'
+    }
+    this.noteNetworkSuccess()
+
+    const result = await this.transact((): SetCompanionOutcome | 'moved' => {
+      if (stillDone !== undefined && !stillDone(this.state)) return 'moved'
+      if (starter && !isFreshGame(this.state)) return 'locked'
+      const path = pathToSpecies(line.tree, speciesID)
+      const node = evoNodeWithID(line.tree, speciesID)
+      if (path === undefined || node === undefined) return 'unknown'
+      const active = this.state.active
+      if (active !== undefined && currentSpeciesID(active) === speciesID) return 'set'
+
+      const base = starter ? unlockSpecies(this.state, speciesID) : this.state
+      const current = base.species[speciesID]
+      if (current?.unlocked !== true) return 'locked'
+      const stepping = setEggAside(retireCompanion(base))
+
+      const plan = [...path, ...makeEvolutionPlan(node, unlockedSpecies(stepping), this.rng).slice(1)]
+      const stageIndex = path.length - 1
+      const totalForms = plan.length
+      const threshold = PokemonBalance.phaseThreshold(line.rarity, totalForms, stageIndex)
+      const mon: MonState = {
+        // The line's own base: asked by an evolved form, `line` comes back rooted at the real one.
+        baseID: line.baseID,
+        pathIDs: path,
+        plannedPathIDs: plan,
+        stageIndex,
+        usedAtStage: meterStart(current, threshold),
+        rarity: line.rarity,
+        totalForms,
+        isShiny: current.companionShiny === true || current.shinyRegistered === true,
+        nature: current.nature ?? NATURES[this.rng() % NATURES.length]!,
+        dittoRevealed: false,
+      }
+      if (by === 'player' && current.registered) mon.chosenWhenRegistered = true
+      this.state = { ...stepping, active: mon }
+      this.line = line
+      // Chosen by hand: news for the panel the player is looking at (never a toast — they just
+      // clicked). An automatic switch announces itself as `companionSwitched` instead.
+      if (by === 'player') {
+        this.pendingEvents.push({
+          kind: 'companionChosen',
+          speciesID,
+          name: localizedName(line, speciesID, this.state.language),
+        })
+      }
+      this.eventUntil = 0
+      return 'set'
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /** A species' name for a toast: from the line on stage when it holds it, else its number. */
+  private speciesName(speciesID: number): string {
+    return this.line?.names[speciesID] === undefined
+      ? `#${speciesID}`
+      : localizedName(this.line, speciesID, this.state.language)
+  }
+
+  /** The base of a species the registry has no position for yet: its Pokédex entry, if any. */
+  private baseFromHistory(speciesID: number): number | undefined {
+    return this.state.dex.find((e) => e.chainOrder.includes(speciesID))?.baseID
+  }
+
+  /**
+   * The first choice of a new game. Only while nothing has been obtained: once the registry has
+   * anything, or an egg is in progress, the starter screen is over.
+   */
+  async chooseStarter(speciesID: number): Promise<SetCompanionOutcome> {
+    await this.load()
+    if (!isStarterID(speciesID) || !isFreshGame(this.state)) return 'locked'
+    return asChoice(await this.putOnStage(speciesID, speciesID, 'starter'))
+  }
+
+  /** Puts an egg on the stage: the paused one, or one from the stock. */
+  async incubateEgg(): Promise<IncubateOutcome> {
+    await this.load()
+    const result = await this.transact(() => {
+      const { state, outcome } = incubateEgg(this.state)
+      this.state = state
+      if (outcome === 'started' || outcome === 'resumed') this.line = undefined
+      return outcome
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
   private async turn(encounterID: string, action: EncounterAction): Promise<TurnOutcome> {
     await this.load()
     // Under the lock and against the re-read queue: a Pokémon another window already caught
     // is simply not there, so the turn answers `unknownEncounter` instead of resurrecting it.
     const result = await this.transact(() => {
+      const target = this.state.wild.find((e) => e.id === encounterID)
       const taken = takeTurn(this.state, encounterID, action, this.rng, this.now)
       this.state = taken.state
+      // A catch counts toward the challenges: its types, and whether it was new to the Pokédex.
+      if (taken.outcome.kind === 'caught') {
+        // Today's board first: a catch after midnight, before the day's first fold, is today's.
+        this.announceChallenges(ensureChallenges(this.state, todayKey(this.now)))
+        this.announceChallenges(
+          progressCatch(this.state, {
+            types: target?.types,
+            isNew: taken.outcome.registeredPercent !== undefined,
+          }),
+        )
+      }
 
       // No pendingEvent on a catch: the player is looking at the panel — they just clicked —
       // so a native toast would only repeat what the animation is showing. The event window
       // still runs so the status bar celebrates alongside.
       if (taken.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
       this.noteQueueEdge()
+      this.awardMedalsNow()
       return taken.outcome
     })
     if (!result.acquired) throw new SaveBusyError()
@@ -918,6 +1260,61 @@ export class CompanionStore {
     if (!result.acquired) throw new SaveBusyError()
   }
 
+  /**
+   * Buys `amount` of a species' shiny bar (`boostShiny` in `shop.ts`), in one hold against the
+   * save as it is now. `false` when it no longer fits — the wallet moved, another window bought
+   * first — and nothing is charged. Filling the bar announces the shiny like earning it does.
+   */
+  async boostShiny(speciesID: number, amount: number): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = boostShiny(this.state, speciesID, amount)
+      if (next === undefined) return false
+      const filled =
+        next.species[speciesID]?.shinyRegistered === true &&
+        this.state.species[speciesID]?.shinyRegistered !== true
+      this.state = next
+      if (filled) {
+        this.pendingEvents.push({ kind: 'shinyRegistered', speciesID, name: this.speciesName(speciesID) })
+        this.eventUntil = this.now + EVENT_WINDOW_MS
+      }
+      this.awardMedalsNow()
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /**
+   * Buys a day aimed at a seen species (`setLure` in `shop.ts`), in one hold against the save as
+   * it is now. `false` when it cannot be lured or the wallet is short; nothing is charged.
+   */
+  async setLure(speciesID: number): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = setLure(this.state, speciesID, this.now)
+      if (next === undefined) return false
+      this.state = next
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
+  /** The finished-companion setting. `true` once written; a busy lock throws like any user action. */
+  async setKeepCompletedCompanion(keep: boolean): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = { ...this.state }
+      if (keep) next.keepCompletedCompanion = true
+      else delete next.keepCompletedCompanion
+      this.state = next
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
+  }
+
   async setTrainer(trainerID: string): Promise<void> {
     await this.load()
     const result = await this.transact(() => {
@@ -931,14 +1328,40 @@ export class CompanionStore {
     const active = this.state.active
     if (active === undefined) return
 
-    const result = applyUsage(active, delta, this.line, new Set(this.state.collectedFinals), this.rng)
-    this.state = { ...this.state, active: result.mon }
+    const result = applyUsage(
+      active,
+      delta,
+      this.line,
+      unlockedSpecies(this.state),
+      this.rng,
+      this.state.species,
+    )
+    const species = stampRegistrations(this.state.species, result.species, this.now)
+    this.state = { ...this.state, active: result.mon, species }
 
+    // The form each evolution leaves behind — registered on the way — for the news to name.
+    let leaving = currentSpeciesID(active)
     for (const event of result.events) {
       if (event.kind === 'evolved') {
         const name =
           this.line === undefined ? '' : localizedName(this.line, event.toSpeciesID, this.state.language)
-        this.pendingEvents.push({ kind: 'evolved', speciesID: event.toSpeciesID, name })
+        const registered =
+          this.line === undefined ? undefined : localizedName(this.line, leaving, this.state.language)
+        this.pendingEvents.push({
+          kind: 'evolved',
+          speciesID: event.toSpeciesID,
+          name,
+          ...(registered === undefined || registered === '' ? {} : { registered }),
+        })
+        leaving = event.toSpeciesID
+        this.eventUntil = this.now + EVENT_WINDOW_MS
+      }
+      if (event.kind === 'shinyRegistered') {
+        this.pendingEvents.push({
+          kind: 'shinyRegistered',
+          speciesID: event.speciesID,
+          name: this.speciesName(event.speciesID),
+        })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
       if (event.kind === 'dittoRevealed') {
@@ -960,14 +1383,15 @@ export class CompanionStore {
       }
     }
     if (result.graduated) this.graduate(result.mon)
+    // Registration and graduation happen here — in a fold or a candy — so medals are read here.
+    this.awardMedalsNow()
   }
 
   /**
-   * Records the line in the Pokédex and hands over a fresh egg.
+   * Records the line in the Pokédex. The companion stays on stage.
    *
-   * `eggTier` is deliberately untouched: reaching here means a Pokémon was active, so the
-   * guarantee is already absent (consumed at hatch, normalised on load). Keeping one
-   * consumption point avoids two places drifting apart.
+   * `eggTier` is deliberately untouched: a guarantee alongside a companion belongs to a paused
+   * egg (`eggIsPaused`), paid for and waiting to be resumed — never something to clean up here.
    */
   private graduate(mon: MonState): void {
     const finalID = currentSpeciesID(mon)
@@ -977,7 +1401,8 @@ export class CompanionStore {
       id: `${mon.baseID}-${finalID}-${this.now}`,
       baseID: mon.baseID,
       finalID,
-      chainOrder: mon.pathIDs,
+      // The forms it held, not every form before it (code review 9.12 #1).
+      chainOrder: reachedForms(this.state, mon),
       rarity: mon.rarity,
       caughtAt: this.now,
       isShiny: mon.isShiny,
@@ -997,16 +1422,14 @@ export class CompanionStore {
     const collected = new Set(this.state.collectedFinals)
     collected.add(`${mon.baseID}:${finalID}`)
 
-    const next: CompanionState = {
+    // The companion stays: a registered final form is a choice the player made, not a cycle
+    // that ends in an egg. What comes next — another species, an egg from the stock — is theirs.
+    this.state = {
       ...this.state,
       dex: [...this.state.dex, entry],
       collectedFinals: [...collected],
-      eggUsage: 0, // the new egg incubates from scratch
     }
-    delete next.active
-    this.state = next
-    this.line = undefined
-    this.pendingEvents.push({ kind: 'graduated', name })
+    this.pendingEvents.push({ kind: 'graduated', name, speciesID: finalID })
     this.eventUntil = this.now + GRADUATE_EVENT_WINDOW_MS
   }
 
@@ -1088,12 +1511,7 @@ export class CompanionStore {
       // the plan is still complete — otherwise a restart would silently reroll the branch.
       this.state = {
         ...this.state,
-        active: normalizedEvolutionState(
-          current,
-          line.tree,
-          new Set(this.state.collectedFinals),
-          this.rng,
-        ),
+        active: normalizedEvolutionState(current, line.tree, unlockedSpecies(this.state), this.rng),
       }
       // A threshold may already have been passed while the line was unavailable.
       this.grow(0)
@@ -1164,7 +1582,7 @@ export class CompanionStore {
     if (this.state.active !== undefined || !eggReadyToHatch(this.state)) return
 
     const forms = totalForms(line)
-    const plan = makeEvolutionPlan(line.tree, baseID, new Set(this.state.collectedFinals), this.rng)
+    const plan = makeEvolutionPlan(line.tree, unlockedSpecies(this.state), this.rng)
 
     const isShiny = rollShiny(this.state, this.rng)
     // Fixed at hatch, like shininess. The Mint exists precisely to reroll it later, so
@@ -1188,9 +1606,19 @@ export class CompanionStore {
       nature,
       dittoRevealed: false,
     }
-    if (disguised) mon.dittoDisguise = PokemonOdds.dittoSpeciesID
+    if (disguised) {
+      mon.dittoDisguise = PokemonOdds.dittoSpeciesID
+      // Whether the reveal may take the shown species back: only if this hatch unlocks it.
+      if (this.state.species[baseID]?.unlocked !== true) mon.disguiseUnlocked = true
+    }
 
-    const next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
+    let next: CompanionState = { ...this.state, active: mon, eggUsage: 0 }
+    // The hatchling is obtained, and whatever the egg carried over is its experience already.
+    next = creditSpeciesXP(unlockSpecies(next, baseID), baseID, mon.usedAtStage)
+    // A shiny hatched completes its species' shiny bar, as a shiny caught does (C5) — unless it
+    // is a Ditto in disguise: the species it shows is not its own, and the reveal registers
+    // Ditto's shiny instead (`applyUsage`).
+    if (mon.isShiny && mon.dittoDisguise === undefined) next = registerShiny(next, baseID)
     // The guarantee is consumed here — the single consumption point.
     delete next.eggTier
     delete next.pendingHatchID
@@ -1225,7 +1653,7 @@ export class CompanionStore {
    * for, which is why this is kept distinct from the REST fallback below.
    */
   private pickFromIndex(index: BaseSpecies[]): number | undefined {
-    return chooseBaseFromIndex(index, this.state.eggTier, new Set(this.state.collectedFinals), this.rng)
+    return chooseBaseFromIndex(index, this.state.eggTier, unlockedSpecies(this.state), this.rng)
   }
 
   /** Weighted pick, falling back to REST rejection sampling when the index is unavailable. */

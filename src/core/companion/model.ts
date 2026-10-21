@@ -6,6 +6,8 @@
  * it is are the valuable part — several encode balance traps that were found the hard way.
  */
 
+import type { ChallengeBoard } from './challenges.js'
+
 // MARK: - Display state
 
 /** Decided by usage and burn rate; drives sprite motion and the status phrase. */
@@ -152,16 +154,23 @@ export const PokemonBalance = {
   /** Tokens that must be spent before an egg hatches — anticipation rather than instant. */
   eggHatchThreshold: 5_000_000,
 
+  /**
+   * Tokens a whole line costs, which is also the sum of its stage thresholds. One fifteenth of
+   * what it was (750M / 1.875B / 3B / 6B): with registration per species, the Pokédex is 328
+   * lines, and at the old scale completing it cost 697B — nineteen years for someone using
+   * 100M tokens a day. At this scale it is 46.5B, one to two years, and the ratios between
+   * rarities (1 : 2.5 : 4 : 8) are unchanged, so everything derived from them is too.
+   */
   graduationTotal(rarity: Rarity): number {
     switch (rarity) {
       case 'common':
-        return 750_000_000
+        return 50_000_000
       case 'uncommon':
-        return 1_875_000_000
+        return 125_000_000
       case 'rare':
-        return 3_000_000_000
+        return 200_000_000
       case 'legendary':
-        return 6_000_000_000
+        return 400_000_000
     }
   },
 
@@ -242,19 +251,27 @@ export function itemIsBundled(kind: ItemKind): boolean {
 /** Rare Candy balance. */
 export const RareCandy = {
   /**
-   * XP injected into the current Pokémon. Below the smallest evolution threshold (common,
-   * single form, 125M) so one candy can never advance more than a single stage.
+   * What one candy is worth: this share of the *current stage's* threshold, never a fixed
+   * figure. A fixed 100M was two whole common lines at the registration scale and nothing at
+   * all against a legendary; a share is worth the same at any scale and can never register a
+   * species on its own. See `rareCandyXP` in `registry.ts`.
    */
-  xp: 100_000_000,
+  stageShare: 0.25,
+  /**
+   * How many candies one species will take, ever. Two cover half a stage at most, so the
+   * weekly grant of five cannot turn registration into a purchase.
+   */
+  maxPerSpecies: 2,
   /** Granted when a weekly limit window hits 100% (session windows grant 1). */
   weeklyGrant: 5,
   /**
-   * Shop price, 5x the XP it is worth. Tokens double as growth meter and shop wallet, so
-   * pricing a candy at its XP value would make buying it free extra growth (spend 150M, grow
-   * 250M). At 500M, earning that much passively already grows you 500M, so the candy is a
-   * net +20% — and the free grant at 100% usage always stays the better deal.
+   * Shop price. Tokens double as growth meter and shop wallet, so a candy priced at its XP
+   * value would be free extra growth; the price stays above the most a candy is worth at any
+   * stage (25% of a one-form legendary's 400M = 100M), and the free grant at 100% usage always
+   * stays the better deal. Phase 4 brought it from 500M to 1.5× that ceiling, so buying one is
+   * a sink a heavy user can use, not a price nobody pays. `test/economy.test.ts` holds it.
    */
-  price: 500_000_000,
+  price: 150_000_000,
 } as const
 
 /** Mint balance. */
@@ -264,7 +281,7 @@ export const Mint = {
    * price. One fifth of a candy, cheap enough to reroll a nature until you like it. Grants
    * no growth, so no double-counting.
    */
-  price: 100_000_000,
+  price: 30_000_000,
 } as const
 
 /** Shiny Charm balance — passive, bought once, never consumed. */
@@ -316,6 +333,11 @@ export const Pokeball = {
    */
   bundleSize: 10,
   bundleMultiplier: 9,
+  /**
+   * How many ten-packs one purchase may step up to (plan 9.1): ×10 … ×100, so a big restock is one
+   * confirmation instead of ten, at the same per-ball discount.
+   */
+  bundleMaxPacks: 10,
 
   /**
    * Poké Balls a fresh save starts with. The first encounter arrives at 500k tokens but a ball
@@ -329,20 +351,21 @@ export const Pokeball = {
 /** Fresh egg (reroll) balance — discards the current Pokémon and starts a new egg. */
 export const FreshEgg = {
   /**
-   * Premium reroll for a hatch you dislike. The discarded Pokémon does not graduate, it
-   * simply disappears, so it never touches the Pokédex or the branch-diversity odds — as if
-   * never drawn. The new egg must incubate from scratch (5M) and stage growth is lost, which
-   * naturally suppresses spam farming.
+   * The base the guarantee prices scale from (`price_`). Eggs themselves arrive free, one a day;
+   * the shop sells only the guarantee on the one incubating. Phase 4 put it at 20M, so the rare
+   * guarantee (80M) sits just under the cheapest rare catch (~102M): a shortcut, rationed by
+   * the one egg a day, never a reason to stop catching. `test/economy.test.ts` holds it there.
    */
-  price: 1_000_000_000,
+  price: 20_000_000,
 
   /**
-   * Eggs sold in the shop: no guarantee, uncommon-or-better, rare-or-better. **No
-   * legendary-only egg is sold** — the floor cannot be expressed via capture_rate, and the
-   * top tier should not be a guaranteed purchase. Legendaries still appear inside the
-   * uncommon/rare eggs at their natural weight (~10% for a rare egg).
+   * Guarantees sold in the shop: uncommon-or-better, rare-or-better. Not "no guarantee" — with
+   * eggs free it bought nothing but a reroll. **No legendary-only egg is sold** — the floor
+   * cannot be expressed via capture_rate, and the top tier should not be a guaranteed purchase.
+   * Legendaries still appear inside the uncommon/rare eggs at their natural weight (~10% for a
+   * rare egg).
    */
-  shopTiers: [undefined, 'uncommon', 'rare'] as (Rarity | undefined)[],
+  shopTiers: ['uncommon', 'rare'] as (Rarity | undefined)[],
 
   /**
    * Guaranteed-tier price. The multiplier reuses the **existing graduation table** rather
@@ -456,6 +479,20 @@ export function shopEntryPrice(entry: ShopEntry): number {
   // Per-unit discount rather than a flat bundle price, so the two constants stay independent:
   // changing `bundleSize` alone must not silently change what a bundle costs per ball.
   return Math.round((unit * quantity * Pokeball.bundleMultiplier) / Pokeball.bundleSize)
+}
+
+/** The quantities a pack is sold in: `bundleSize` × 1 … `bundleMaxPacks`. The one list of them. */
+export function packQuantities(): number[] {
+  return Array.from({ length: Pokeball.bundleMaxPacks }, (_, i) => Pokeball.bundleSize * (i + 1))
+}
+
+/**
+ * The pack quantity an opaque id names, or `undefined` for anything the shop does not sell. Exact
+ * text only (`30`, never `030` or `3e1`): the id is echoed back from a separate bundle and a
+ * number it was never given fails closed, so the discount is never claimed for an arbitrary count.
+ */
+export function parsePackQuantity(raw: string): number | undefined {
+  return packQuantities().find((quantity) => String(quantity) === raw)
 }
 
 // MARK: - Candy grants
@@ -738,7 +775,89 @@ export interface MonState {
   nature?: PokemonNature
   /** undefined = ordinary. Set = really a Ditto, disguised as this species. */
   dittoDisguise?: number
+  /**
+   * The disguise's hatch is what unlocked the species it shows (it was not owned before). Only
+   * then may the reveal take that unlock back; absent = it was owned, or a save from before.
+   */
+  disguiseUnlocked?: boolean
   dittoRevealed: boolean
+  /**
+   * The player put this one on stage by hand while its form was already registered — to raise
+   * its shiny bar, say. The move-on rule leaves it alone; evolving into a new form clears it.
+   */
+  chosenWhenRegistered?: boolean
+}
+
+/**
+ * One species' place in the player's Pokédex: how far it is registered, and what it has been
+ * through. Keyed by species id in `CompanionState.species`.
+ *
+ * `xp` is the experience the companion earned *as* this species; it fills up to `threshold`,
+ * the stage threshold of this species inside its line (`phaseThreshold`). The threshold needs
+ * the evolution line, which is network, so it is fixed the first time the species gains xp with
+ * its line loaded and left undefined before that: until then xp accrues raw, the percentage is
+ * clamped and nothing is ever marked registered. The Pokédex states are the **flags**, never
+ * derived from xp, so a merge or a migration can only add to them.
+ */
+export interface SpeciesProgress {
+  /** Experience earned as this species. Integer; raw until `threshold` is known. */
+  xp: number
+  /** Ever obtained: hatched, caught, evolved into, or chosen as a starter. */
+  unlocked: boolean
+  /** Ever met in the wild. */
+  seen: boolean
+  /** The bar was filled once. Only ever set, never cleared. */
+  registered: boolean
+  /** When it was registered (epoch ms) — absent before this was kept, and for a save from then. */
+  registeredAt?: number
+  /** Wild catches of this species. */
+  caught: number
+  /** Rare Candies fed to this species, against `RareCandy.maxPerSpecies`. */
+  candiesUsed: number
+  /** `registerXP` of this species, fixed once its line was seen. */
+  threshold?: number
+  /**
+   * Where the species sits in its line, fixed with `threshold`: the base to ask the line for and
+   * the stage that prices it. What lets the species be chosen as the companion without guessing.
+   */
+  baseID?: number
+  stageIndex?: number
+  totalForms?: number
+  /** Rarity of the *line*, which prices registration; the encounter's own rarity is separate. */
+  lineRarity?: Rarity
+  /** A share of registration owed (a catch before the line loaded), applied with `threshold`. */
+  pendingShare?: number
+  /** Experience toward the shiny form, fed only once registered. */
+  shinyXP?: number
+  /** Of `shinyXP`, how much was bought with the wallet — capped at `shinyBoostShare` of the bar. */
+  shinyBoosted?: number
+  /** The shiny form was obtained — caught, hatched or raised — even before its bar fills. */
+  shinyUnlocked?: boolean
+  shinyRegistered?: boolean
+  /**
+   * The nature it had when it last left the stage, so choosing it again brings back the same
+   * Pokémon — a Mint bought for it is not rolled away by a switch.
+   */
+  nature?: PokemonNature
+  /**
+   * The companion raised as this species was shiny when it left the stage. Separate from
+   * `shinyUnlocked`: catching a shiny obtains the shiny form for the collection, it does not
+   * turn the Pokémon you raised shiny.
+   */
+  companionShiny?: boolean
+}
+
+export interface EggStock {
+  count: number
+  /** `yyyy-MM-dd` of the last grant; absent before the first. */
+  lastGrantDay?: string
+}
+
+/** Eggs the stock holds at most. */
+export const EGG_STOCK_MAX = 3
+
+export function freshSpeciesProgress(): SpeciesProgress {
+  return { xp: 0, unlocked: false, seen: false, registered: false, caught: 0, candiesUsed: 0 }
 }
 
 /** Falls back to `baseID` when `pathIDs` is empty (corrupt save) — this is read every render. */
@@ -773,6 +892,25 @@ export interface DexEntry {
 }
 
 /**
+ * A lure: the species aimed at, where it sits in its line (what the wild draw weighs), and when
+ * it stops (epoch ms). It also stops when its species is caught.
+ */
+export interface Lure {
+  speciesID: number
+  baseID: number
+  stageIndex: number
+  until: number
+}
+
+/** A wild form's place in its line: see `WildEncounter.line`. */
+export interface WildLine {
+  baseID: number
+  stageIndex: number
+  totalForms: number
+  rarity: Rarity
+}
+
+/**
  * A wild Pokémon that has appeared and not yet been resolved.
  *
  * Persisted, so the queue survives a restart — including `throws`, or closing the window would
@@ -791,6 +929,13 @@ export interface WildEncounter {
    */
   captureRate: number
   rarity: Rarity
+  /**
+   * Where the species sits in its line, and the *line's* rarity — what prices registering it and
+   * what a duplicate pays. `rarity` above is the form's own, for catching, fleeing and stealing.
+   * Absent on encounters from before forms could be met in the wild: they were bases, so the
+   * catch reads `rarity` and owes its share until the line is loaded.
+   */
+  line?: WildLine
   isShiny: boolean
   /** Epoch milliseconds. */
   appearedAt: number
@@ -902,11 +1047,18 @@ export interface CompanionState {
   installBaselineSet: boolean
   usedSinceInstall: number
   /**
-   * Ledger of tokens spent in the shop. Spendable balance = usedSinceInstall - spentTokens.
+   * Ledger of tokens spent in the shop. Spendable balance = usedSinceInstall + earnedTokens −
+   * spentTokens (`spendableBalance`, the one definition).
    * The growth meter (usedSinceInstall) is immutable; a purchase only raises this, so buying
    * never rewinds growth.
    */
   spentTokens: number
+  /**
+   * Tokens the game paid out — a duplicate catch, for instance. Grow-only, like `spentTokens`:
+   * the wallet is `usedSinceInstall + earnedTokens − spentTokens`, and a payout is never a
+   * negative spend, because `spentTokens` is clamped at zero and would swallow it.
+   */
+  earnedTokens: number
   /** Tokens spent since the current egg appeared (incubation). Reset per egg. */
   eggUsage: number
   /**
@@ -960,6 +1112,22 @@ export interface CompanionState {
   encountersSeen: number
   /** Pokémon Showdown trainer slug. Absent = the roster default. */
   trainerID?: string
+  /**
+   * A setting: a companion whose last bar is full stays on stage (its tokens wait for the shiny
+   * bar) instead of moving on to an obtained species still unregistered. Absent = move on, the
+   * default Diego chose.
+   */
+  keepCompletedCompanion?: boolean
+  /** The lure running, if any (`setLure` in `shop.ts`): one at a time, for a day. */
+  lure?: Lure
+  /** Medals already celebrated (`medals.ts`): each is announced once. Only ever grows. */
+  medals?: string[]
+  /** Medals were seeded for this save: what it met before medals existed was given silently. */
+  medalsSeeded?: boolean
+  /** Today's challenges and this week's (`challenges.ts`). Regenerated as the date moves. */
+  challenges?: ChallengeBoard
+  /** Ids of the challenges already paid, newest last, so none is paid twice (`challenges.ts`). */
+  challengesPaid?: string[]
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**
@@ -1023,6 +1191,16 @@ export interface CompanionState {
    * once, not on every refresh. This machine's own, like `lastEncounterToastAt`.
    */
   queueFullArmed: boolean
+  /**
+   * Free eggs: one a day, up to `EGG_STOCK_MAX`. Granted on a day with real usage, beside the
+   * accrual day; `lastGrantDay` is that day, so a second refresh the same day grants nothing.
+   */
+  eggStock: EggStock
+  /**
+   * Registration per species, keyed by species id. Absent on a save from before it existed:
+   * decoding seeds every species the save already had as unlocked at 0% (`seedRegistry`).
+   */
+  species: Record<number, SpeciesProgress>
 }
 
 export function freshCompanionState(hostLanguage?: string): CompanionState {
@@ -1031,6 +1209,7 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     installBaselineSet: false,
     usedSinceInstall: 0,
     spentTokens: 0,
+    earnedTokens: 0,
     eggUsage: 0,
     lastDate: '',
     dex: [],
@@ -1052,5 +1231,7 @@ export function freshCompanionState(hostLanguage?: string): CompanionState {
     finds: [],
     legendaryTrail: [],
     queueFullArmed: true,
+    eggStock: { count: 0 },
+    species: {},
   }
 }

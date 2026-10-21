@@ -12,7 +12,13 @@
  */
 
 import * as vscode from 'vscode'
-import type { PanelMessage, PanelState, PanelEncounterResult } from './webview/protocol.js'
+import type {
+  PanelMessage,
+  PanelNews,
+  PanelPokedexEntry,
+  PanelState,
+  PanelEncounterResult,
+} from './webview/protocol.js'
 import { PANEL_BODY_HTML } from './webview/shell.js'
 
 export type PanelRequestKind =
@@ -30,7 +36,22 @@ export type PanelRequestKind =
   | { kind: 'track'; trailID: string; title: string; priceText: string; confirmLabel?: string }
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
+  | { kind: 'setKeepCompleted'; keep: boolean }
+  /** Answered to the asking surface only, through `reply`: the entry is that card's, nobody else's. */
+  | { kind: 'dexEntry'; speciesID: number; reply: (entry: PanelPokedexEntry) => void }
+  | { kind: 'setLure'; speciesID: number; title: string; priceText: string; confirmLabel?: string }
+  | {
+      kind: 'boostShiny'
+      speciesID: number
+      amount: number
+      title: string
+      priceText: string
+      confirmLabel?: string
+    }
   | { kind: 'setRefreshInterval'; seconds: number }
+  | { kind: 'setCompanion'; speciesID: number }
+  | { kind: 'chooseStarter'; speciesID: number }
+  | { kind: 'incubateEgg' }
   | { kind: 'openPanel' }
 
 /** Every live surface, so a refresh reaches the sidebar and the editor tab in one call. */
@@ -42,6 +63,8 @@ let lastState: PanelState | undefined
 export interface SurfaceOptions {
   /** A glanceable mini card (the Explorer view): Home only, no tabs, half-scale sprite. */
   compact?: boolean
+  /** Whether the surface is on screen now: news go to it instead of a toast (plan 08 §7). */
+  isVisible?: () => boolean
 }
 
 export class PanelSurface {
@@ -78,6 +101,13 @@ export class PanelSurface {
   postThrow(result: PanelEncounterResult): void {
     if (this.disposed) return
     void this.webview.postMessage({ type: 'throw', result })
+  }
+
+  /** Shows the game's news, when on screen. `true` when it did — the host then skips the toasts. */
+  postNews(items: PanelNews[]): boolean {
+    if (this.disposed || this.options.isVisible?.() !== true) return false
+    void this.webview.postMessage({ type: 'news', items })
+    return true
   }
 
   /** Rebuilds the page, picking up a freshly built bundle without restarting the host. */
@@ -140,6 +170,15 @@ export class PanelSurface {
       case 'collectAll':
         this.onRequest({ kind: 'collectAll' })
         break
+      case 'dexEntry':
+        this.onRequest({
+          kind: 'dexEntry',
+          speciesID: message.speciesID,
+          reply: (entry) => {
+            if (!this.disposed) void this.webview.postMessage({ type: 'dexEntry', entry })
+          },
+        })
+        break
       case 'track': {
         const request: PanelRequestKind = {
           kind: 'track',
@@ -161,8 +200,46 @@ export class PanelSurface {
       case 'setTrainer':
         this.onRequest({ kind: 'setTrainer', trainerID: message.trainerID })
         break
+      case 'setKeepCompleted':
+        this.onRequest({ kind: 'setKeepCompleted', keep: message.keep === true })
+        break
+      case 'setLure': {
+        const request: PanelRequestKind = {
+          kind: 'setLure',
+          speciesID: message.speciesID,
+          title: message.title,
+          priceText: message.priceText,
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
+      // Forwarded as sent; the host guards the numbers and the worker re-checks the room.
+      case 'boostShiny': {
+        const request: PanelRequestKind = {
+          kind: 'boostShiny',
+          speciesID: message.speciesID,
+          amount: message.amount,
+          title: message.title,
+          priceText: message.priceText,
+        }
+        if (message.confirmLabel !== undefined) request.confirmLabel = message.confirmLabel
+        this.onRequest(request)
+        break
+      }
       case 'setRefreshInterval':
         this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })
+        break
+      // The species id is forwarded as sent; the host guards it (an integer in range) and the
+      // core refuses anything not unlocked, so a stale or hostile webview cannot pick a companion.
+      case 'setCompanion':
+        this.onRequest({ kind: 'setCompanion', speciesID: message.speciesID })
+        break
+      case 'chooseStarter':
+        this.onRequest({ kind: 'chooseStarter', speciesID: message.speciesID })
+        break
+      case 'incubateEgg':
+        this.onRequest({ kind: 'incubateEgg' })
         break
       case 'openPanel':
         this.onRequest({ kind: 'openPanel' })
@@ -230,6 +307,17 @@ export function updateSurfaces(state: PanelState): void {
  */
 export function broadcastThrow(result: PanelEncounterResult): void {
   for (const surface of surfaces) surface.postThrow(result)
+}
+
+/**
+ * Delivers the game's news to every surface on screen. `true` when one showed them: the moment
+ * was seen where it happened, and a toast on top would say it twice. Never remembered, like a
+ * throw — a surface opened later does not replay news from minutes ago.
+ */
+export function deliverNews(items: PanelNews[]): boolean {
+  let shown = false
+  for (const surface of surfaces) shown = surface.postNews(items) || shown
+  return shown
 }
 
 /** True when at least one surface exists, so a scan can skip building the panel state. */

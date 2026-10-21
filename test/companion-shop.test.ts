@@ -15,7 +15,14 @@ import {
   purchaseNeedsConfirmation,
   shopEntries,
   useMint,
+  boostShiny,
+  lurePrice,
+  setLure,
+  shinyBoostOffers,
+  shinyBoostRoom,
 } from '../src/core/companion/shop.js'
+import { progressOf } from '../src/core/companion/registry.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
 import {
   burnTierFor,
   computeDisplayState,
@@ -27,6 +34,7 @@ import {
 import {
   type CandyWindow,
   type CompanionState,
+  EGG_STOCK_MAX,
   FreshEgg,
   ITEM_KINDS,
   Mint,
@@ -35,10 +43,13 @@ import {
   RareCandy,
   ShinyCharm,
   freshCompanionState,
+  freshSpeciesProgress,
+  type SpeciesProgress,
   isBerryKind,
   itemShopPrice,
   shopEntryPrice,
   type MonState,
+  parsePackQuantity,
 } from '../src/core/companion/model.js'
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
@@ -61,9 +72,23 @@ function state(over: Partial<CompanionState> = {}): CompanionState {
 const rich = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, active: mon() })
 
 describe('shop listing', () => {
-  it('offers eggs only while there is a Pokémon to discard', () => {
-    expect(shopEntries(state()).some((e) => e.kind === 'egg')).toBe(false)
-    expect(shopEntries(state({ active: mon() })).some((e) => e.kind === 'egg')).toBe(true)
+  // Eggs arrive one a day for free; the shop sells the guarantee on the one incubating.
+  // The eggs are listed once the game has begun, with a companion on stage too (Diego); which can
+  // be bought is `canBuyEgg`'s — a guarantee only for an egg incubating.
+  it('lists the egg and its guarantees once the game has begun', () => {
+    const begun = state({ species: { 1: { ...freshSpeciesProgress(), unlocked: true } } })
+    expect(shopEntries(begun).filter((e) => e.kind === 'egg')).toHaveLength(FreshEgg.shopTiers.length + 1)
+    const withCompanion = state({ active: mon(), usedSinceInstall: 10_000_000_000 })
+    expect(shopEntries(withCompanion).some((e) => e.kind === 'egg')).toBe(true)
+    expect(canBuyEgg(withCompanion, 'rare')).toBe(false)
+  })
+
+  // [trigger branch] No companion, but no egg either: a new game before its starter. A
+  // guarantee bought here would sit on an egg that never existed.
+  it('sells no egg guarantee before the starter', () => {
+    const fresh = state({ usedSinceInstall: 10_000_000_000 })
+    expect(shopEntries(fresh).some((e) => e.kind === 'egg')).toBe(false)
+    expect(canBuyEgg(fresh, 'rare')).toBe(false)
   })
 
   it('sorts by price', () => {
@@ -129,7 +154,7 @@ describe('purchaseNeedsConfirmation', () => {
     expect(purchaseNeedsConfirmation({ kind: 'item', item: 'shinyCharm' })).toBe(true)
   })
 
-  it('always confirms an egg, which sends the current Pokémon off', () => {
+  it('always confirms an egg guarantee, the dearest thing in the shop', () => {
     expect(purchaseNeedsConfirmation({ kind: 'egg', tier: undefined })).toBe(true)
     expect(purchaseNeedsConfirmation({ kind: 'egg', tier: 'rare' })).toBe(true)
   })
@@ -164,6 +189,18 @@ describe('buying items', () => {
     expect(itemCount(after, 'pokeBall')).toBe(itemCount(before, 'pokeBall') + Pokeball.bundleSize)
     // Cheaper per ball than buying them one at a time, which is the whole point of the row.
     expect(after.spentTokens).toBeLessThan(unit * Pokeball.bundleSize)
+  })
+
+  // Plan 9.1: the host reads a pack's quantity out of an opaque id, and only the steps the shop
+  // sells pass — anything else is stale or hand-crafted and fails closed, so the bundle discount
+  // can never be claimed for an arbitrary count.
+  it('reads only the pack quantities the shop sells out of an id', () => {
+    expect(parsePackQuantity('10')).toBe(10)
+    expect(parsePackQuantity('30')).toBe(30)
+    expect(parsePackQuantity('100')).toBe(100)
+    for (const raw of ['25', '110', '0', '-10', '010', '1e1', '30.0', ' 30', '']) {
+      expect(parsePackQuantity(raw), raw).toBeUndefined()
+    }
   })
 
   it('checks the balance against the bundle price, not the unit price', () => {
@@ -204,36 +241,67 @@ describe('buying items', () => {
   })
 })
 
+const incubating = (extra = 0) => state({ usedSinceInstall: 10_000_000_000 + extra, eggUsage: 1_000_000 })
+
 describe('buying eggs', () => {
-  it('requires a Pokémon to discard', () => {
-    expect(canBuyEgg(state({ usedSinceInstall: 10_000_000_000 }), undefined)).toBe(false)
-    expect(canBuyEgg(rich(), undefined)).toBe(true)
+  // [trigger branch] Code review 9.12 #6: the guarantee on the egg was never checked, so the
+  // same one could be paid twice, or a weaker one bought over a stronger one — paying again to
+  // be downgraded. Only a stronger guarantee is ever on sale over the one the egg carries.
+  it('sells over a guarantee only a stronger one', () => {
+    const rare = buyEgg(incubating(), 'rare')!
+    expect(rare.eggTier).toBe('rare')
+    expect(canBuyEgg(rare, 'rare')).toBe(false)
+    expect(canBuyEgg(rare, 'uncommon')).toBe(false)
+    expect(buyEgg(rare, 'uncommon')).toBeUndefined()
+    const uncommon = buyEgg(incubating(), 'uncommon')!
+    expect(canBuyEgg(uncommon, 'uncommon')).toBe(false)
+    expect(canBuyEgg(uncommon, 'rare')).toBe(true)
+  })
+
+  it('requires an egg on the stage, not a Pokémon', () => {
+    expect(canBuyEgg(incubating(), 'uncommon')).toBe(true)
+    expect(canBuyEgg(rich(), 'uncommon')).toBe(false)
+    expect(canBuyEgg(state({ usedSinceInstall: 10, eggUsage: 1 }), 'uncommon')).toBe(false)
+  })
+
+  // [trigger branch] With eggs free, "no guarantee" bought nothing but a reroll: not sold.
+  // [trigger branch] No tier is the egg itself (Diego): it goes to the stock — with a companion
+  // on stage or an egg incubating — and is refused once the stock is full or before the starter.
+  it('sells an egg to the stock, up to its capacity', () => {
+    const begun = state({
+      usedSinceInstall: 10_000_000_000,
+      active: mon(),
+      species: { 1: { ...freshSpeciesProgress(), unlocked: true } },
+    })
+    expect(canBuyEgg(begun, undefined)).toBe(true)
+    const after = buyEgg(begun, undefined)!
+    expect(after.eggStock.count).toBe(1)
+    expect(after.spentTokens).toBe(FreshEgg.price)
+    expect(after.eggTier).toBeUndefined()
+    const full = state({ ...begun, eggStock: { count: EGG_STOCK_MAX } })
+    expect(canBuyEgg(full, undefined)).toBe(false)
+    expect(canBuyEgg(state({ usedSinceInstall: 10_000_000_000 }), undefined)).toBe(false) // before the starter
+    expect(canBuyEgg(state({ ...begun, usedSinceInstall: 1 }), undefined)).toBe(false) // short
   })
 
   // Buying an unsatisfiable guarantee would leave both roll paths with zero candidates: the
   // egg never hatches, the guarantee is never consumed, and another egg cannot be bought.
   // The tokens would simply be gone.
   it('refuses a tier that is not sold, so tokens cannot vanish', () => {
-    expect(canBuyEgg(rich(), 'legendary')).toBe(false)
-    expect(buyEgg(rich(), 'legendary')).toBeUndefined()
+    expect(canBuyEgg(incubating(), 'legendary')).toBe(false)
+    expect(buyEgg(incubating(), 'legendary')).toBeUndefined()
   })
 
-  it('discards the Pokémon without touching the dex or the odds', () => {
-    const before = rich()
-    before.dex = [
-      { id: 'x', baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: 'rare', isShiny: false },
-    ]
-    before.collectedFinals = ['1:3']
-    const after = buyEgg(before, undefined)!
-    expect(after.active).toBeUndefined()
-    expect(after.eggUsage).toBe(0) // incubates from scratch
-    expect(after.dex).toHaveLength(1) // as if never drawn
-    expect(after.collectedFinals).toEqual(['1:3'])
-    expect(after.spentTokens).toBe(FreshEgg.price)
+  // [trigger branch] Buying used to discard the companion and restart the egg; now it only
+  // writes the guarantee, so the incubation keeps what it has.
+  it('keeps the incubation’s progress and discards nothing', () => {
+    const after = buyEgg(incubating(), 'uncommon')!
+    expect(after.eggUsage).toBe(1_000_000)
+    expect(after.spentTokens).toBe(FreshEgg.price_('uncommon'))
   })
 
   it('records the guarantee so an offline roll can honour it later', () => {
-    const after = buyEgg(rich(), 'rare')!
+    const after = buyEgg({ ...incubating(), pendingHatchID: 7 }, 'rare')!
     expect(after.eggTier).toBe('rare')
     expect(after.pendingHatchID).toBeUndefined() // rerolled under the new guarantee
     expect(after.spentTokens).toBe(FreshEgg.price_('rare'))
@@ -252,6 +320,40 @@ describe('using items', () => {
   it('consumes exactly one candy', () => {
     const after = consumeRareCandy(state({ active: mon(), inventory: { rareCandy: 2 } }))!
     expect(itemCount(after, 'rareCandy')).toBe(1)
+  })
+
+  // The cap is per species and counted where the species lives: the form on stage, not the line.
+  it('counts each candy against the species on stage', () => {
+    const active = mon({ baseID: 1, pathIDs: [1, 2, 3], stageIndex: 1, totalForms: 3 })
+    const once = consumeRareCandy(state({ active, inventory: { rareCandy: 3 } }))!
+    expect(once.species[2]?.candiesUsed).toBe(1)
+    expect(once.species[1]?.candiesUsed ?? 0).toBe(0)
+    const twice = consumeRareCandy(once)!
+    expect(twice.species[2]?.candiesUsed).toBe(2)
+  })
+
+  // [trigger branch] One below the cap still takes a candy; at the cap, none — `<`, not `<=`.
+  it('stops at RareCandy.maxPerSpecies for that species', () => {
+    const active = mon({ baseID: 1, pathIDs: [1], stageIndex: 0 })
+    const fed = (candiesUsed: number) =>
+      state({
+        active,
+        inventory: { rareCandy: 5 },
+        species: { 1: { ...progressOf(state(), 1), unlocked: true, candiesUsed } },
+      })
+    expect(canUseRareCandy(fed(RareCandy.maxPerSpecies - 1), true)).toBe(true)
+    expect(canUseRareCandy(fed(RareCandy.maxPerSpecies), true)).toBe(false)
+    expect(consumeRareCandy(fed(RareCandy.maxPerSpecies))).toBeUndefined()
+  })
+
+  // The next form is a new species with its own two: evolving renews the allowance.
+  it('renews the allowance for the next form', () => {
+    const atCap = state({
+      active: mon({ baseID: 1, pathIDs: [1, 2], stageIndex: 1, totalForms: 2 }),
+      inventory: { rareCandy: 1 },
+      species: { 1: { ...progressOf(state(), 1), unlocked: true, candiesUsed: RareCandy.maxPerSpecies } },
+    })
+    expect(canUseRareCandy(atCap, true)).toBe(true)
   })
 
   // Mint touches only the nature, so unlike the candy it works offline and after a restart.
@@ -427,5 +529,119 @@ describe('burnTierFor', () => {
   // window. Without the floor that reads as work, and the companion never sleeps.
   it('treats a trailing trickle as idle', () => {
     expect(burnTierFor(600)).toBe('idle')
+  })
+})
+
+describe('the shiny boost', () => {
+  const target = 8 * PokemonBalance.graduationTotal('common')
+  const cap = EconomyBalance.shinyBoostShare * target
+  const registered = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    unlocked: true,
+    registered: true,
+    threshold: 1_000,
+    xp: 1_000,
+    lineRarity: 'common',
+    ...over,
+  })
+  const wallet = (species: SpeciesProgress, tokens = 10_000_000_000) =>
+    state({ usedSinceInstall: tokens, species: { 7: species } })
+
+  // [trigger branch] Up to half the bar is for sale, never more: the rest is played (C5).
+  it('sells at most half the bar, one token for one point', () => {
+    expect(shinyBoostRoom(wallet(registered()), 7)).toBe(cap)
+    const after = boostShiny(wallet(registered()), 7, cap)!
+    expect(after.species[7]).toMatchObject({ shinyXP: cap, shinyBoosted: cap })
+    expect(after.spentTokens).toBe(cap)
+    expect(shinyBoostRoom(after, 7)).toBe(0)
+    expect(boostShiny(after, 7, 1)).toBeUndefined()
+  })
+
+  it('sells no more than what is left of the bar, nor than the wallet holds', () => {
+    expect(shinyBoostRoom(wallet(registered({ shinyXP: target - 10 })), 7)).toBe(10)
+    expect(shinyBoostRoom(wallet(registered(), 1_234), 7)).toBe(1_234)
+  })
+
+  // [trigger branch] Bought past what was played: a boost that fills the bar registers the shiny.
+  it('registers the shiny when the boost fills the bar', () => {
+    const after = boostShiny(wallet(registered({ shinyXP: target - 100 })), 7, 100)!
+    expect(after.species[7]).toMatchObject({ shinyRegistered: true, shinyUnlocked: true })
+  })
+
+  it('refuses a species not registered, without its rarity, or already shiny', () => {
+    expect(shinyBoostRoom(wallet(registered({ registered: false })), 7)).toBe(0)
+    const noRarity = registered()
+    delete noRarity.lineRarity
+    expect(shinyBoostRoom(wallet(noRarity), 7)).toBe(0)
+    expect(shinyBoostRoom(wallet(registered({ shinyRegistered: true })), 7)).toBe(0)
+    expect(boostShiny(wallet(registered()), 7, 0)).toBeUndefined()
+    expect(boostShiny(wallet(registered()), 7, -5)).toBeUndefined()
+  })
+
+  // Two buttons: a tenth of the bar, and all that can be bought — one when they coincide.
+  it('offers a tenth of the bar and the most it can buy', () => {
+    expect(shinyBoostOffers(wallet(registered()), 7)).toEqual([target / 10, cap])
+    expect(shinyBoostOffers(wallet(registered(), target / 20), 7)).toEqual([target / 20])
+    expect(shinyBoostOffers(wallet(registered({ registered: false })), 7)).toEqual([])
+  })
+})
+
+describe('the lure', () => {
+  const seen = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    seen: true,
+    baseID: 4,
+    stageIndex: 1,
+    totalForms: 3,
+    lineRarity: 'rare',
+    ...over,
+  })
+  const wallet = (species: SpeciesProgress, tokens = 10_000_000_000) =>
+    state({ usedSinceInstall: tokens, species: { 5: species } })
+  const NOW = 1_700_000_000_000
+
+  it('prices a seen species by its line’s rarity', () => {
+    expect(lurePrice(wallet(seen()), 5)).toBe(EconomyBalance.lure.price.rare)
+    expect(lurePrice(wallet(seen({ lineRarity: 'common' })), 5)).toBe(EconomyBalance.lure.price.common)
+  })
+
+  // [trigger branch] Each condition alone refuses: never seen (no line to price), already
+  // obtained, a legendary line, a line not known.
+  it('offers no lure for what cannot be lured', () => {
+    expect(lurePrice(wallet(seen({ seen: false })), 5)).toBeUndefined()
+    expect(lurePrice(wallet(seen({ unlocked: true })), 5)).toBeUndefined()
+    expect(lurePrice(wallet(seen({ lineRarity: 'legendary' })), 5)).toBeUndefined()
+    const unknown = seen()
+    delete unknown.lineRarity
+    expect(lurePrice(wallet(unknown), 5)).toBeUndefined()
+  })
+
+  // [trigger branch] Buying the lure that is already running would only restart its clock and
+  // charge the full price again: it is not offered.
+  it('offers no second lure on the species already lured', () => {
+    const first = setLure(wallet(seen()), 5, NOW)!
+    expect(lurePrice(first, 5)).toBeUndefined()
+    expect(setLure(first, 5, NOW + 1)).toBeUndefined()
+  })
+
+  it('charges the price and sets a lure for a day', () => {
+    const next = setLure(wallet(seen()), 5, NOW)!
+    expect(next.spentTokens).toBe(EconomyBalance.lure.price.rare)
+    expect(next.lure).toEqual({
+      speciesID: 5,
+      baseID: 4,
+      stageIndex: 1,
+      until: NOW + EconomyBalance.lure.durationMs,
+    })
+  })
+
+  it('refuses without the tokens, and replaces a lure that is active', () => {
+    expect(setLure(wallet(seen(), 1), 5, NOW)).toBeUndefined()
+    const first = setLure(wallet(seen()), 5, NOW)!
+    const other = {
+      ...first,
+      species: { ...first.species, 7: seen({ baseID: 7, stageIndex: 0, lineRarity: 'common' }) },
+    }
+    expect(setLure(other, 7, NOW)!.lure?.speciesID).toBe(7)
   })
 })

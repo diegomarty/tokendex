@@ -123,6 +123,18 @@ describe('buildSnapshot', () => {
     wildTooltip: '',
   }
 
+  it('carries the species’ registration into the tooltip, already worded', () => {
+    const raised = {
+      ...egg,
+      state: 'working' as const,
+      speciesID: 25,
+      name: 'Pikachu',
+      registrationText: '45% registered',
+    }
+    const snapshot = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion: raised })
+    expect(snapshot.tooltipMarkdown).toContain('45% registered')
+  })
+
   it('names the egg in the status bar instead of a placeholder', () => {
     const withEgg = buildSnapshot([claude([entry(NOW, 10)])], { now: NOW, companion: egg })
     // The bar's percentage means "limit used", so incubation progress cannot share that slot:

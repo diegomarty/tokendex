@@ -178,7 +178,7 @@ Un token de lectura de caché cuesta $0,5/M en Opus, $0,1 en Haiku y $0,075 en G
 
 Diego gasta el 17 % de lo que gana. Con el plan, el gasto natural sube: el impulso shiny y el señuelo son los primeros sumideros grandes que un usuario intenso usará a diario.
 
-**Reglas anti-abuso para las cifras de la fase 3** (duplicados), derivadas del coste esperado de capturar con la ball adecuada: común ~6M (Poké Ball al 85 %), rara ~70M (Ultra al 58 %), legendaria ~175M (Ultra al 23 %). La recompensa por duplicado debe quedar **por debajo de la mitad** de ese coste para que capturar duplicados no sea una granja: propuesta inicial **2M** / 10M / 30M / 80M por rareza (3M era justo la mitad de 5,9M), a validar en el simulador. **Cómo se ingresa:** el monedero es `usedSinceInstall − spentTokens` y `sanitized` acota `spentTokens` a ≥ 0 (por eso el reembolso de robos se limita a `min(stolen, spentTokens)`); restar la recompensa de `spentTokens` se perdería en silencio para quien gasta poco. Se añade `earnedTokens` (solo crece) y `spendableBalance = used + earned − spent`, con su regla en `sanitized` (acotar) y en `mergeSaves` (del ganador, como `spentTokens`).
+**Reglas anti-abuso para las cifras de la fase 3** (duplicados). La recompensa por duplicado queda **estrictamente por debajo de la mitad del coste esperado de la captura más barata de su banda** (el `captureRate` techo de la banda, con la ball adecuada y el ánimo inicial de un carácter neutro), porque esa es la que se podría granjear. Calculado con el motor real (`catchChance`): común (Poké Ball, cr 255) P 0,89 → 5,6M; poco común (Poké Ball, cr 120) P 0,50 → 9,9M; rara (Ultra, cr 45) P 0,41 → 98M; legendaria (Ultra, cr hasta 45: Mew, Celebi, Jirachi) → 98M. Recompensas: **2M / 4M / 30M / 40M**. Las cifras que había antes aquí (6M/70M/175M y 10M/80M) salían de una estimación a mano y no cuadraban; el test de `economy.ts` deriva el límite del motor, así que no puede volver a pasar. **Cómo se ingresa:** el monedero es `usedSinceInstall − spentTokens` y `sanitized` acota `spentTokens` a ≥ 0 (por eso el reembolso de robos se limita a `min(stolen, spentTokens)`); restar la recompensa de `spentTokens` se perdería en silencio para quien gasta poco. Se añade `earnedTokens` (solo crece) y `spendableBalance = used + earned − spent`, con su regla en `sanitized` (acotar) y en `mergeSaves` (del ganador, como `spentTokens`).
 
 **Coste de desbloquear toda la Pokédex capturando** (fase 3 + 3b): ~649 especies × coste esperado de captura ≈ **4–8B** según la mezcla de rarezas. Desbloquear es barato; registrar (46,5B) es el juego largo. Coherente con lo pedido.
 
@@ -295,6 +295,10 @@ El compañero elegido viene del lado ganador. `earnedTokens` (ver C6) viene del 
 - Capturar: desbloquea la especie y suma el **5 %** de `registerXP`. Esto sustituye al registro `wild` aislado; el historial de capturas se mantiene.
 - Duplicado: recompensa en tokens, calibrada con el simulador de la fase 1b.
 - Texto del resultado de la captura con el % ganado y la recompensa (`dispatch.ts`).
+- Mejoras de UI pedidas por Diego (2026-10-20), detalladas en el sub-plan § Mejoras de UI:
+  - barra de EXP al estilo de los juegos, con lo que lleva y lo que le queda integrado y del mismo color;
+  - aviso de captura como el de subir de nivel, en la zona del salvaje: el % de registro sumado y si es nuevo en la Pokédex;
+  - una Poké Ball en la tarjeta del salvaje si ya lo tienes, como en los juegos.
 - **Sub-plan:** `docs/plans/03-capturar-registra.md`.
 
 ### Fase 3b — Salvajes con formas evolucionadas
@@ -322,6 +326,11 @@ El compañero elegido viene del lado ganador. `earnedTokens` (ver C6) viene del 
 - Elegir una especie *vista* o *desconocida* no desbloqueada como objetivo. Su peso de aparición se multiplica en el sorteo de la fase 3b (hoy el mapa `weights` en `pokeapi.ts:493`).
 - Coste y duración (¿objeto de la tienda?, ¿tokens por día?) se deciden en el sub-plan, con el simulador de la fase 1b.
 - **Sub-plan:** `docs/plans/06-senuelo.md`.
+
+### Fase 8 — Una sola interfaz: el aparato, el papel y el contador
+
+- Unificar la interfaz (paleta del aparato, una sola barra `.game-meter`, botones de juego, escalas de etiquetas y tipografía, regla de capas, diseño a 280 px). Auditoría y decisiones de Diego en el sub-plan, preparado por @helper.
+- **Sub-plan:** `docs/plans/08-ui-unificada.md`.
 
 ### Fase 7 — Ideas de diseño (para priorizar con Diego)
 

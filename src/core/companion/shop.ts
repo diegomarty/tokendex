@@ -10,22 +10,29 @@ import {
   type CandyGrant,
   type CandyWindow,
   type CompanionState,
+  EGG_STOCK_MAX,
   FreshEgg,
   ITEM_KINDS,
   type ItemKind,
   NATURES,
   Pokeball,
   type PokemonNature,
+  RARITIES,
   RareCandy,
   type Rarity,
   type ShopEntry,
+  type SpeciesProgress,
   itemIsBundled,
   itemIsPassive,
   itemShopPrice,
   shopEntryPrice,
+  currentSpeciesID,
 } from './model.js'
 import type { RNG } from './growth.js'
+import { progressOf, registerShiny, shinyTarget } from './registry.js'
+import { EconomyBalance } from './economy.js'
 import { spendableBalance } from './ledger.js'
+import { eggOnStage, isFreshGame } from './eggs.js'
 
 // MARK: - Inventory
 
@@ -65,9 +72,10 @@ export function shopEntries(state: CompanionState): ShopEntry[] {
       quantity: Pokeball.bundleSize,
     })),
   )
-  // Eggs are only offered while there is a Pokémon to discard.
-  if (state.active !== undefined) {
-    entries.push(...FreshEgg.shopTiers.map((tier) => ({ kind: 'egg' as const, tier })))
+  // The egg itself and its guarantees, once the game has begun; `canBuyEgg` says which can be
+  // bought now (a guarantee needs an egg incubating, the egg needs room in the stock).
+  if (!isFreshGame(state)) {
+    entries.push(...[undefined, ...FreshEgg.shopTiers].map((tier) => ({ kind: 'egg' as const, tier })))
   }
   return entries.sort((a, b) => {
     const aDone = isPurchasedPassive(state, a)
@@ -129,24 +137,35 @@ export function eggGuarantee(state: CompanionState): Rarity | undefined {
 }
 
 /**
- * An egg may only be bought while there is a Pokémon to discard.
+ * What the shop sells is the **guarantee** on the egg incubating now — eggs themselves arrive
+ * one a day, free. So it needs an egg on the stage (no companion) and the balance.
  *
  * The sold-tier check comes first and is deliberately enforced here rather than at the call
  * site: buying an unsatisfiable guarantee (legendary, which capture_rate cannot express)
- * leaves both roll paths with zero candidates, so the egg never hatches, the guarantee is
- * never consumed, and buying another egg is blocked by the active-Pokémon gate — the tokens
- * would be gone with no way back.
+ * leaves both roll paths with zero candidates, so the egg never hatches and the guarantee is
+ * never consumed — the tokens would be gone with no way back.
  */
 export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): boolean {
+  // No tier is the egg itself, for the stock (Diego): once the game has begun, while there is room.
+  if (tier === undefined) {
+    return (
+      !isFreshGame(state) &&
+      state.eggStock.count < EGG_STOCK_MAX &&
+      spendableBalance(state) >= FreshEgg.price
+    )
+  }
   if (!FreshEgg.shopTiers.includes(tier)) return false
-  return state.active !== undefined && spendableBalance(state) >= FreshEgg.price_(tier)
+  // Over a guarantee, only a stronger one (code review 9.12 #6): the same one again is paid for
+  // nothing, a weaker one is paid for a downgrade.
+  if (state.eggTier !== undefined && RARITIES.indexOf(tier) <= RARITIES.indexOf(state.eggTier))
+    return false
+  return eggOnStage(state) && spendableBalance(state) >= FreshEgg.price_(tier)
 }
 
 /**
- * Buys an egg: discards the active Pokémon and restarts incubation from zero.
- *
- * Mirrors only graduation's egg reset. `dex` and `collectedFinals` are untouched, so the
- * discarded Pokémon counts as never drawn — and stage growth is lost, which is the real cost.
+ * Writes the guarantee onto the egg incubating. Nothing is discarded and the incubation keeps
+ * its progress; the species pre-rolled before the purchase goes, so the guarantee can be
+ * honoured by the next roll.
  *
  * No species is rolled here. Rolling needs the network, so doing it at purchase time would
  * burn the tokens offline for nothing. Only the guarantee is written to state; the prefetch
@@ -154,14 +173,20 @@ export function canBuyEgg(state: CompanionState, tier: Rarity | undefined): bool
  */
 export function buyEgg(state: CompanionState, tier: Rarity | undefined): CompanionState | undefined {
   if (!canBuyEgg(state, tier)) return undefined
+  // The egg itself goes to the stock, where the free daily ones wait; nothing on stage changes.
+  if (tier === undefined) {
+    return {
+      ...state,
+      spentTokens: state.spentTokens + FreshEgg.price,
+      eggStock: { ...state.eggStock, count: state.eggStock.count + 1 },
+    }
+  }
   const next: CompanionState = {
     ...state,
     spentTokens: state.spentTokens + FreshEgg.price_(tier),
-    eggUsage: 0,
     inventory: { ...state.inventory },
   }
-  delete next.active // discarded, not graduated
-  delete next.pendingHatchID // reroll from scratch under the new guarantee
+  delete next.pendingHatchID // reroll under the new guarantee
   if (tier === undefined) delete next.eggTier
   else next.eggTier = tier
   return next
@@ -172,19 +197,37 @@ export function buyEgg(state: CompanionState, tier: Rarity | undefined): Compani
 export type CandyUseResult = 'evolved' | 'graduated' | 'progressed' | 'unavailable'
 
 /**
- * Rare Candy needs the evolution line loaded. Without it (just after restart, or offline) the
- * XP would accrue without ever evolving, which reads as the candy having done nothing.
+ * Whether the species on stage can still take a candy: `RareCandy.maxPerSpecies` each, counted
+ * on the form itself, so evolving into the next form renews the allowance.
  */
-export function canUseRareCandy(state: CompanionState, lineLoaded: boolean): boolean {
-  return state.active !== undefined && lineLoaded && itemCount(state, 'rareCandy') > 0
+export function candyRoomLeft(state: CompanionState): boolean {
+  if (state.active === undefined) return false
+  return progressOf(state, currentSpeciesID(state.active)).candiesUsed < RareCandy.maxPerSpecies
 }
 
-/** Consumes one candy. The caller then applies `RareCandy.xp` through the growth path. */
+/**
+ * Rare Candy needs the evolution line loaded. Without it (just after restart, or offline) the
+ * XP would accrue without ever evolving, which reads as the candy having done nothing. And the
+ * species on stage must have room left under its cap.
+ */
+export function canUseRareCandy(state: CompanionState, lineLoaded: boolean): boolean {
+  return lineLoaded && itemCount(state, 'rareCandy') > 0 && candyRoomLeft(state)
+}
+
+/**
+ * Consumes one candy and counts it against the species on stage. The caller then applies
+ * `rareCandyXP` through the growth path.
+ */
 export function consumeRareCandy(state: CompanionState): CompanionState | undefined {
-  if (state.active === undefined || itemCount(state, 'rareCandy') <= 0) return undefined
+  if (state.active === undefined || itemCount(state, 'rareCandy') <= 0 || !candyRoomLeft(state))
+    return undefined
+  const speciesID = currentSpeciesID(state.active)
+  // Only the count moves; whether the species is unlocked is the growth path's business.
+  const progress = progressOf(state, speciesID)
   return {
     ...state,
     inventory: { ...state.inventory, rareCandy: itemCount(state, 'rareCandy') - 1 },
+    species: { ...state.species, [speciesID]: { ...progress, candiesUsed: progress.candiesUsed + 1 } },
   }
 }
 
@@ -293,4 +336,110 @@ export function grantCandies(
   }
   const changed = grants.length > 0 || JSON.stringify(grantTier) !== JSON.stringify(state.candyGrantTier)
   return { state: { ...state, candyGrantTier: grantTier, inventory }, grants, changed }
+}
+
+// MARK: - The shiny boost
+
+/**
+ * Tokens the wallet can still put into a species' shiny bar, 1:1 (C5): the species registered
+ * with its line's rarity known and its shiny not yet registered; then at most
+ * `EconomyBalance.shinyBoostShare` of the bar over all purchases, never past what is left of it,
+ * never past the wallet. 0 = nothing to sell.
+ */
+export function shinyBoostRoom(state: CompanionState, speciesID: number): number {
+  const p = progressOf(state, speciesID)
+  if (!p.registered || p.shinyRegistered === true || p.lineRarity === undefined) return 0
+  const left = shinyTarget(p.lineRarity) - (p.shinyXP ?? 0)
+  return Math.max(0, Math.min(shinyBoostCapLeft(state, speciesID), left, spendableBalance(state)))
+}
+
+/**
+ * What is left of the boost cap for a species — `shinyBoostShare` of its bar, less what was
+ * bought. The one statement of the cap: `shinyBoostRoom` and the panel's "why not" both read it.
+ * 0 without the line's rarity.
+ */
+export function shinyBoostCapLeft(state: CompanionState, speciesID: number): number {
+  const p = progressOf(state, speciesID)
+  if (p.lineRarity === undefined) return 0
+  const cap = Math.floor(EconomyBalance.shinyBoostShare * shinyTarget(p.lineRarity))
+  return Math.max(0, cap - (p.shinyBoosted ?? 0))
+}
+
+/**
+ * What the Pokédex offers to buy: a tenth of the bar, and all that can be bought — one figure
+ * when the two coincide or the tenth no longer fits. Empty when nothing can be.
+ */
+export function shinyBoostOffers(state: CompanionState, speciesID: number): number[] {
+  const room = shinyBoostRoom(state, speciesID)
+  if (room <= 0) return []
+  // A positive room means the rarity is known (`shinyBoostRoom` returns 0 without it).
+  const tenth = Math.round(shinyTarget(progressOf(state, speciesID).lineRarity!) / 10)
+  return tenth < room ? [tenth, room] : [room]
+}
+
+/**
+ * Buys `amount` of a species' shiny bar. Charged to `spentTokens`, counted in `shinyBoosted`;
+ * filling the bar registers the shiny, and the companion wears it if it is that species.
+ * `undefined` when the amount is not a positive whole number within `shinyBoostRoom`.
+ */
+export function boostShiny(
+  state: CompanionState,
+  speciesID: number,
+  amount: number,
+): CompanionState | undefined {
+  if (!Number.isInteger(amount) || amount <= 0 || amount > shinyBoostRoom(state, speciesID))
+    return undefined
+  const p = progressOf(state, speciesID)
+  const shinyXP = (p.shinyXP ?? 0) + amount
+  const out: CompanionState = {
+    ...state,
+    spentTokens: state.spentTokens + amount,
+    species: {
+      ...state.species,
+      [speciesID]: { ...p, shinyXP, shinyBoosted: (p.shinyBoosted ?? 0) + amount },
+    },
+  }
+  // Filling the bar registers the shiny through the one path (`registerShiny`).
+  return shinyXP >= shinyTarget(p.lineRarity!) ? registerShiny(out, speciesID) : out
+}
+
+// MARK: - The lure
+
+/**
+ * What a lure on this species costs, or `undefined` when it cannot be lured: it must have been
+ * seen (its line and rarity known from the encounter), not yet obtained, and of a line that is
+ * not legendary — those have their own roads.
+ */
+export function lurePrice(state: CompanionState, speciesID: number): number | undefined {
+  const p = progressOf(state, speciesID)
+  if (!p.seen || p.unlocked || p.lineRarity === undefined) return undefined
+  if (p.baseID === undefined || p.stageIndex === undefined) return undefined
+  // The one already lured: buying it again would only restart its clock at full price.
+  if (state.lure?.speciesID === speciesID) return undefined
+  return EconomyBalance.lure.price[p.lineRarity]
+}
+
+/**
+ * Buys a day aimed at `speciesID`, charged to `spentTokens`. One lure at a time: a new one
+ * replaces the one running (the confirmation says so). `undefined` when it cannot be lured or
+ * the wallet is short.
+ */
+export function setLure(
+  state: CompanionState,
+  speciesID: number,
+  now: number,
+): CompanionState | undefined {
+  const price = lurePrice(state, speciesID)
+  if (price === undefined || spendableBalance(state) < price) return undefined
+  const p = progressOf(state, speciesID)
+  return {
+    ...state,
+    spentTokens: state.spentTokens + price,
+    lure: {
+      speciesID,
+      baseID: p.baseID!,
+      stageIndex: p.stageIndex!,
+      until: now + EconomyBalance.lure.durationMs,
+    },
+  }
 }

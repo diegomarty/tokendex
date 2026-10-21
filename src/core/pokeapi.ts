@@ -6,7 +6,7 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import * as AppPaths from './appPaths.js'
 import { atomicWriteFile } from './coordination/atomicWrite.js'
 import type { BaseStats } from './companion/encounters.js'
@@ -21,7 +21,9 @@ import {
   meetsRarityFloor,
   pokemonTypes,
   rarityFrom,
+  type Lure,
 } from './companion/model.js'
+import { EconomyBalance } from './companion/economy.js'
 
 /**
  * A hatch candidate: the start of an evolution line, plus its official rarity signals.
@@ -41,6 +43,21 @@ export interface BaseSpecies {
   captureRate: number
   isLegendary?: boolean
   isMythical?: boolean
+  /**
+   * The line's other forms, for wild encounters (`chooseWildFromIndex`). Absent in an index built
+   * over REST or written before schema 3: the wild then meets bases only, as it always did.
+   */
+  forms?: WildForm[]
+  /** Forms on the longest road through the line, the base included. Absent = 1. */
+  lineForms?: number
+}
+
+/** A form past the base: its stage (1 = first evolution) and the forms on the road through it. */
+export interface WildForm {
+  id: number
+  stage: number
+  captureRate: number
+  totalForms: number
 }
 
 /**
@@ -69,6 +86,10 @@ export interface WildSpecies {
   types?: PokemonType[]
 }
 
+// The entry's shape lives with no Node in it, so the webview's type-check can read it too.
+export type { DexDetails } from './dexDetails.js'
+import type { DexDetails } from './dexDetails.js'
+
 /** Injectable so tests use a stub rather than the network. */
 export interface PokeProviding {
   line(baseSpeciesID: number): Promise<EvoLine>
@@ -89,16 +110,26 @@ const INDEX_TTL_MS = 30 * 86_400_000
  * than deleted: it is refetched at the next opportunity, but it still stands in offline, where
  * a stale index beats no index — the only thing it cannot do is answer a legendary pool, and a
  * reward that waits is better than one that hands over the wrong species. History: 1 = id and
- * capture rate only, 2 = with `is_legendary`/`is_mythical`.
+ * capture rate only, 2 = with `is_legendary`/`is_mythical`, 3 = with every form of each line.
  */
-const INDEX_SCHEMA = 2
+const INDEX_SCHEMA = 3
+/** Shape of `species-names.json`. */
+const NAMES_SCHEMA = 1
+/** Shape of `dex-details.json`; a file at another version is ignored and refilled. */
+const DEX_SCHEMA = 1
 // 8 s, not the previous 15: PokéAPI answers in well under a second when healthy, and the
 // timeout is what bounds how long a sick network can hold `update()` — and with it the scan.
 const REQUEST_TIMEOUT_MS = 8_000
 /** Below this, a REST-built index is too thin to persist; retry next session instead. */
 const MIN_REST_INDEX_SIZE = 150
 
+interface LocalisedDTO {
+  language: { name: string }
+}
+
 interface SpeciesDTO {
+  genera?: (LocalisedDTO & { genus: string })[]
+  flavor_text_entries?: (LocalisedDTO & { flavor_text: string })[]
   capture_rate: number
   is_legendary: boolean
   is_mythical: boolean
@@ -113,14 +144,19 @@ interface SpeciesDTO {
  * its terrain. The rest — the whole learnset — is ignored.
  */
 interface PokemonDTO {
+  /** Decimetres and hectograms; only the Pokédex entry reads them. */
+  height?: number
+  weight?: number
   stats?: { base_stat: number; stat: { name: string } }[]
   types?: { slot: number; type: { name: string } }[]
 }
 
-/** What an encounter keeps from `/pokemon/{id}`. */
+/** What an encounter and the Pokédex entry keep from `/pokemon/{id}`. */
 interface PokemonDetails {
   stats?: BaseStats
   types?: PokemonType[]
+  heightDm?: number
+  weightHg?: number
 }
 
 /** Primary first, by slot. A type this build does not know is dropped rather than guessed. */
@@ -177,6 +213,41 @@ function namesByLanguage(dto: SpeciesDTO): Record<string, string> {
   return byLang
 }
 
+/**
+ * PokéAPI language code → app language. Japanese takes the kana text the UI writes in; the
+ * kanji one (`ja`) only stands in when there is no kana.
+ */
+const DEX_LANGS: [code: string, lang: string][] = [
+  ['ko', 'ko'],
+  ['en', 'en'],
+  ['ja', 'ja'],
+  ['ja-Hrkt', 'ja'],
+  ['es', 'es'],
+]
+
+/** The last entry per app language (PokéAPI lists them oldest first), later codes winning ties. */
+function byAppLanguage<T extends LocalisedDTO>(entries: T[] | undefined, text: (entry: T) => string) {
+  const out: Record<string, string> = {}
+  for (const [code, lang] of DEX_LANGS) {
+    const own = (entries ?? []).filter((entry) => entry.language.name === code)
+    const last = own[own.length - 1]
+    if (last !== undefined) out[lang] = text(last)
+  }
+  return out
+}
+
+/**
+ * A Pokédex text on one line. The games break lines for their screens (`\n`, `\f`) and hyphenate
+ * softly; the full-width spaces of a Japanese text are its words, and stay.
+ */
+export function cleanFlavorText(text: string): string {
+  return text
+    .replace(/\u00ad/g, '')
+    .replace(/[\n\f\r]+/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
 /** Species id from a PokéAPI resource URL (".../pokemon-species/25/"). */
 function speciesIDFromURL(url: string): number {
   const match = /\/(\d+)\/?$/.exec(url)
@@ -204,6 +275,11 @@ export class PokeAPIClient implements PokeProviding {
   /** Prefetching populates this so hatching costs no network at all. */
   private lineCache = new Map<number, EvoLine>()
   private baseIndexCache: BaseSpecies[] | undefined
+  /** Pokédex entries read or written this session; loaded from disk once. */
+  private dexCache: Map<number, DexDetails> | undefined
+  /** Every species' names (id → PokéAPI language code → name), once read. */
+  private namesCache: Record<number, Record<string, string>> | undefined
+  private namesInFlight: Promise<Record<number, Record<string, string>>> | undefined
   /**
    * Coalesces concurrent index loads. Two callers can want it in the same pass (an encounter
    * spawn and an egg pre-roll), and without this they each pay the full GraphQL round trip.
@@ -219,6 +295,153 @@ export class PokeAPIClient implements PokeProviding {
     private readonly options: { statsTimeoutMs?: number } = {},
   ) {}
 
+  /** Beside the index, so a test's temporary directory holds both. */
+  private get dexFilePath(): string {
+    return join(dirname(this.indexFilePath), 'dex-details.json')
+  }
+
+  // MARK: - Every species' names
+
+  /** The names already read, for a caller that cannot wait (the panel builder). */
+  knownSpeciesNames(): Record<number, Record<string, string>> | undefined {
+    return this.namesCache
+  }
+
+  /**
+   * Every species' names in the app's languages — what the Pokédex's search matches, for the
+   * species not met yet too (Diego). Memory, then disk (`species-names.json`, refreshed after
+   * `INDEX_TTL_MS`, a stale copy kept offline), then one GraphQL request. Throws only when
+   * nothing is cached and the network fails.
+   */
+  async speciesNames(): Promise<Record<number, Record<string, string>>> {
+    if (this.namesCache !== undefined) return this.namesCache
+    this.namesInFlight ??= this.loadNames().finally(() => {
+      this.namesInFlight = undefined
+    })
+    return this.namesInFlight
+  }
+
+  private get namesFilePath(): string {
+    return join(dirname(this.indexFilePath), 'species-names.json')
+  }
+
+  private async loadNames(): Promise<Record<number, Record<string, string>>> {
+    let disk: { fetchedAt: number; names: Record<number, Record<string, string>> } | undefined
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.namesFilePath, 'utf8')) as {
+        version?: number
+        fetchedAt?: number
+        names?: Record<number, Record<string, string>>
+      }
+      if (parsed.version === NAMES_SCHEMA && typeof parsed.names === 'object' && parsed.names !== null) {
+        disk = { fetchedAt: parsed.fetchedAt ?? 0, names: parsed.names }
+      }
+    } catch {
+      // Not there yet, or torn: fetched below.
+    }
+    if (disk !== undefined && Date.now() - disk.fetchedAt < INDEX_TTL_MS) {
+      this.namesCache = disk.names
+      return disk.names
+    }
+    try {
+      const names = await this.fetchNames()
+      this.namesCache = names
+      try {
+        await atomicWriteFile(
+          this.namesFilePath,
+          JSON.stringify({ version: NAMES_SCHEMA, fetchedAt: Date.now(), names }),
+        )
+      } catch {
+        // A cache write failure must never break the search.
+      }
+      return names
+    } catch (error) {
+      if (disk === undefined) throw error
+      this.namesCache = disk.names // offline: stale names beat none
+      return disk.names
+    }
+  }
+
+  private async fetchNames(): Promise<Record<number, Record<string, string>>> {
+    const languages = LANG_CODES.map((code) => `"${code}"`).join(', ')
+    const query = `{ pokemonspeciesname(where: {pokemon_species_id: {_lte: ${ANIMATED_SPECIES_MAX}}, language: {name: {_in: [${languages}]}}}) { pokemon_species_id name language { name } } }`
+    const response = await fetch(GRAPHQL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!response.ok) throw new Error(`graphql: HTTP ${response.status}`)
+    const decoded = (await response.json()) as {
+      data?: {
+        pokemonspeciesname?: { pokemon_species_id: number; name: string; language: { name: string } }[]
+      }
+    }
+    const rows = decoded.data?.pokemonspeciesname ?? []
+    if (rows.length === 0) throw new Error('graphql: no species names')
+    const names: Record<number, Record<string, string>> = {}
+    for (const row of rows) (names[row.pokemon_species_id] ??= {})[row.language.name] = row.name
+    return names
+  }
+
+  // MARK: - Pokédex entries
+
+  /**
+   * A species' Pokédex entry: memory, then disk, then PokéAPI. Only a complete entry (with the
+   * `/pokemon` half) is kept, so a card that opened without its stats asks again next time. Throws
+   * when the species itself cannot be read and nothing is cached.
+   */
+  async dexDetails(id: number): Promise<DexDetails> {
+    const cache = await this.loadDexCache()
+    const cached = cache.get(id)
+    if (cached !== undefined) return cached
+    const [dto, pokemon] = await Promise.all([
+      this.species(id),
+      this.pokemonDetails(id, REQUEST_TIMEOUT_MS),
+    ])
+    const details: DexDetails = {
+      id,
+      captureRate: dto.capture_rate,
+      genus: byAppLanguage(dto.genera, (entry) => entry.genus),
+      flavor: byAppLanguage(dto.flavor_text_entries, (entry) => cleanFlavorText(entry.flavor_text)),
+      ...pokemon,
+    }
+    if (pokemon.stats !== undefined) {
+      cache.set(id, details)
+      await this.writeDexCache(cache)
+    }
+    return details
+  }
+
+  private async loadDexCache(): Promise<Map<number, DexDetails>> {
+    if (this.dexCache !== undefined) return this.dexCache
+    const cache = new Map<number, DexDetails>()
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.dexFilePath, 'utf8')) as {
+        version?: number
+        entries?: DexDetails[]
+      }
+      if (parsed.version === DEX_SCHEMA && Array.isArray(parsed.entries)) {
+        for (const entry of parsed.entries) if (typeof entry?.id === 'number') cache.set(entry.id, entry)
+      }
+    } catch {
+      // No file yet, or a torn one: start empty, PokéAPI refills it.
+    }
+    this.dexCache = cache
+    return cache
+  }
+
+  private async writeDexCache(cache: Map<number, DexDetails>): Promise<void> {
+    try {
+      await atomicWriteFile(
+        this.dexFilePath,
+        JSON.stringify({ version: DEX_SCHEMA, entries: [...cache.values()] }),
+      )
+    } catch {
+      // A cache write failure must never break the card.
+    }
+  }
+
   // MARK: - Lines
 
   async line(baseSpeciesID: number): Promise<EvoLine> {
@@ -231,6 +454,13 @@ export class PokeAPIClient implements PokeProviding {
 
     const chain = await getJSON<{ chain: ChainLinkDTO }>(chainURL)
     const tree = nodeFrom(chain.chain)
+    // Asked by a form that is not the chain's root (a wild Charmeleon, chosen as companion): the
+    // line is the root's — its base and its rarity — never one priced by the evolved form.
+    if (tree.speciesID !== baseSpeciesID) {
+      const rooted = await this.line(tree.speciesID)
+      this.lineCache.set(baseSpeciesID, rooted)
+      return rooted
+    }
     const rarity = rarityFrom(base.capture_rate, base.is_legendary, base.is_mythical)
 
     // Names for every species in the line, restricted to the languages the app supports.
@@ -274,19 +504,21 @@ export class PokeAPIClient implements PokeProviding {
    * default variety's id is the species id. A failure is not cached, so the next spawn of that
    * species tries again.
    */
-  private async pokemonDetails(id: number): Promise<PokemonDetails> {
+  private async pokemonDetails(id: number, timeoutMs?: number): Promise<PokemonDetails> {
     const cached = this.detailsCache.get(id)
     if (cached !== undefined) return cached
     try {
       const dto = await getJSON<PokemonDTO>(
         `${REST_BASE}/pokemon/${id}`,
-        this.options.statsTimeoutMs ?? STATS_TIMEOUT_MS,
+        timeoutMs ?? this.options.statsTimeoutMs ?? STATS_TIMEOUT_MS,
       )
       const details: PokemonDetails = {}
       const stats = baseStatsFrom(dto)
       if (stats !== undefined) details.stats = stats
       const types = typesFrom(dto)
       if (types !== undefined) details.types = types
+      if (typeof dto.height === 'number') details.heightDm = dto.height
+      if (typeof dto.weight === 'number') details.weightHg = dto.weight
       if (stats !== undefined) this.detailsCache.set(id, details)
       return details
     } catch {
@@ -352,8 +584,9 @@ export class PokeAPIClient implements PokeProviding {
 
   private async fetchBaseIndex(): Promise<BaseSpecies[]> {
     // Official GraphQL: evolves_from IS NULL (a base) and id <= 649, the gen-V animated
-    // sprite ceiling. Ditto (#132) is excluded — it exists only for the disguise reveal.
-    const query = `{ pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate is_legendary is_mythical } }`
+    // sprite ceiling. Ditto (#132) is excluded — it exists only for the disguise reveal. The
+    // second selection, in the same request, is every other form, for wild encounters.
+    const query = `{ bases: pokemonspecies(where: {evolves_from_species_id: {_is_null: true}, id: {_lte: ${ANIMATED_SPECIES_MAX}, _neq: ${PokemonOdds.dittoSpeciesID}}}, order_by: {id: asc}) { id capture_rate is_legendary is_mythical } forms: pokemonspecies(where: {evolves_from_species_id: {_is_null: false}, id: {_lte: ${ANIMATED_SPECIES_MAX}}}, order_by: {id: asc}) { id capture_rate evolves_from_species_id } }`
     const response = await fetch(GRAPHQL_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -363,22 +596,30 @@ export class PokeAPIClient implements PokeProviding {
     if (!response.ok) throw new Error(`graphql: HTTP ${response.status}`)
     const decoded = (await response.json()) as {
       data?: {
-        pokemonspecies?: {
+        bases?: {
           id: number
           capture_rate: number
           is_legendary?: boolean
           is_mythical?: boolean
         }[]
+        forms?: { id: number; capture_rate: number; evolves_from_species_id: number }[]
       }
     }
-    const rows = decoded.data?.pokemonspecies ?? []
+    const rows = decoded.data?.bases ?? []
     if (rows.length === 0) throw new Error('graphql: empty base index')
-    return rows.map((r) => ({
-      id: r.id,
-      captureRate: r.capture_rate,
-      isLegendary: r.is_legendary === true,
-      isMythical: r.is_mythical === true,
-    }))
+    return attachForms(
+      rows.map((r) => ({
+        id: r.id,
+        captureRate: r.capture_rate,
+        isLegendary: r.is_legendary === true,
+        isMythical: r.is_mythical === true,
+      })),
+      (decoded.data?.forms ?? []).map((f) => ({
+        id: f.id,
+        captureRate: f.capture_rate,
+        from: f.evolves_from_species_id,
+      })),
+    )
   }
 
   /**
@@ -400,7 +641,9 @@ export class PokeAPIClient implements PokeProviding {
     if (bases.length < MIN_REST_INDEX_SIZE) return
     bases.sort((a, b) => a.id - b.id)
     this.baseIndexCache = bases
-    await this.writeDiskIndex(bases)
+    // No forms over REST, so it is written under the schema before forms: it still stands in
+    // offline, and the next load with GraphQL up replaces it instead of it passing for current.
+    await this.writeDiskIndex(bases, INDEX_SCHEMA - 1)
   }
 
   /** Single-species REST check: is this a line start, and what is its capture rate. */
@@ -436,13 +679,13 @@ export class PokeAPIClient implements PokeProviding {
     }
   }
 
-  private async writeDiskIndex(entries: BaseSpecies[]): Promise<void> {
+  private async writeDiskIndex(entries: BaseSpecies[], version = INDEX_SCHEMA): Promise<void> {
     try {
       // Temp-then-rename, per writer: a torn index reads back as `undefined` and the client
       // rebuilds it over REST — hundreds of requests across the whole species range.
       await atomicWriteFile(
         this.indexFilePath,
-        JSON.stringify({ version: INDEX_SCHEMA, fetchedAt: Date.now(), entries }),
+        JSON.stringify({ version, fetchedAt: Date.now(), entries }),
       )
     } catch {
       // A cache write failure must never break hatching.
@@ -463,6 +706,167 @@ function allIDs(node: EvoNode): number[] {
   return [node.speciesID, ...node.children.flatMap(allIDs)]
 }
 
+// MARK: - The forms of each line
+
+/**
+ * Gives each base its line's other forms, walking `from` links down from it: each form's stage
+ * (its depth) and the forms on the longest road through it, which prices its registration. A
+ * form whose parent is not reachable from a base is dropped — it has no line to belong to.
+ */
+export function attachForms(
+  bases: BaseSpecies[],
+  evolved: { id: number; captureRate: number; from: number }[],
+): BaseSpecies[] {
+  const children = new Map<number, { id: number; captureRate: number }[]>()
+  for (const f of evolved) {
+    const list = children.get(f.from) ?? []
+    list.push(f)
+    children.set(f.from, list)
+  }
+  // Longest road from a node to a leaf, the node included. Guarded against a cyclic `from`.
+  const below = (id: number, seen: Set<number>): number => {
+    if (seen.has(id)) return 1
+    const next = new Set(seen).add(id)
+    return 1 + Math.max(0, ...(children.get(id) ?? []).map((c) => below(c.id, next)))
+  }
+  return bases.map((base) => {
+    const forms: WildForm[] = []
+    const walk = (id: number, stage: number, seen: Set<number>) => {
+      for (const child of children.get(id) ?? []) {
+        if (seen.has(child.id)) continue
+        const next = new Set(seen).add(child.id)
+        forms.push({
+          id: child.id,
+          stage,
+          captureRate: child.captureRate,
+          totalForms: stage + below(child.id, seen),
+        })
+        walk(child.id, stage + 1, next)
+      }
+    }
+    walk(base.id, 1, new Set([base.id]))
+    forms.sort((a, b) => a.stage - b.stage || a.id - b.id)
+    return { ...base, forms, lineForms: below(base.id, new Set()) }
+  })
+}
+
+// MARK: - Wild selection
+
+/** What the player has of a species, as the wild draw weighs it. */
+export type WildStatus = 'missing' | 'owned' | 'registered'
+
+const WILD_STATUS_WEIGHT: Record<WildStatus, number> = { missing: 4, owned: 2, registered: 1 }
+
+/** The games' odds of meeting each stage, by the number of forms in the line (percent). */
+const WILD_STAGE_ODDS: Record<number, number[]> = { 1: [100], 2: [75, 25], 3: [65, 30, 5] }
+
+/**
+ * A line's weight in the wild draw: its capture rate, ×4 while any form is missing, ×2 while
+ * any is owned but unregistered, ×1 once all are registered.
+ */
+export function wildLineWeight(base: BaseSpecies, status: (id: number) => WildStatus): number {
+  const ids = [base.id, ...(base.forms ?? []).map((f) => f.id)]
+  const statuses = ids.map(status)
+  const factor = statuses.includes('missing') ? 4 : statuses.includes('owned') ? 2 : 1
+  return Math.max(1, base.captureRate * factor)
+}
+
+/**
+ * A wild pick: the species met, and where it sits in its line (which prices registering it).
+ * `line` is absent when the index cannot say — one without forms knows no line length, and a
+ * made-up one would price the registration wrongly; the catch then owes its share instead.
+ */
+export interface WildPick {
+  speciesID: number
+  line?: { baseID: number; stageIndex: number; totalForms: number; rarity: Rarity }
+}
+
+/**
+ * The wild draw: a line (`wildLineWeight`), a stage by the games' odds (`WILD_STAGE_ODDS`), and
+ * among branches at that stage the form the player has least of. Three draws, in that order.
+ * An index without forms (REST-built, or an older schema) meets bases only.
+ *
+ * `tier` is a floor, passed only for a granted legendary: it narrows the pool as
+ * `meetsRarityFloor` does for an egg (an empty pool returns undefined, never something else) and
+ * meets the base — the one pick builder for ordinary and granted encounters alike.
+ */
+export function chooseWildFromIndex(
+  index: BaseSpecies[],
+  status: (id: number) => WildStatus,
+  rng: RNG,
+  tier?: Rarity,
+  lure?: Pick<Lure, 'speciesID' | 'baseID' | 'stageIndex'>,
+): WildPick | undefined {
+  const pool =
+    tier === undefined
+      ? index
+      : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
+  if (pool.length === 0) return undefined
+  // A lure weighs its line `lineWeight` times (phase 6); everything else draws as usual.
+  const lured = (e: BaseSpecies) => lure !== undefined && e.id === lure.baseID
+  const base = weightedPick(
+    pool,
+    (e) => wildLineWeight(e, status) * (lured(e) ? EconomyBalance.lure.lineWeight : 1),
+    rng,
+  )
+  const rarity = rarityFrom(base.captureRate, base.isLegendary === true, base.isMythical === true)
+  const atBase = (): WildPick =>
+    base.lineForms === undefined
+      ? { speciesID: base.id }
+      : {
+          speciesID: base.id,
+          line: { baseID: base.id, stageIndex: 0, totalForms: base.lineForms, rarity },
+        }
+  if (tier !== undefined || base.lineForms === undefined) return atBase()
+
+  const odds = luredOdds(
+    WILD_STAGE_ODDS[Math.min(Math.max(1, base.lineForms), 3)] ?? [100],
+    lured(base) ? lure : undefined,
+  )
+  let roll = rng() % 100
+  let stage = 0
+  for (; stage < odds.length - 1; stage++) {
+    roll -= odds[stage]!
+    if (roll < 0) break
+  }
+  const atStage = (base.forms ?? []).filter((f) => f.stage === stage)
+  if (stage === 0 || atStage.length === 0) return atBase()
+  // The lured form wins among branches of its stage; otherwise the one the player has least of.
+  const target = lured(base) ? atStage.find((f) => f.id === lure!.speciesID) : undefined
+  const form = target ?? weightedPick(atStage, (f) => WILD_STATUS_WEIGHT[status(f.id)], rng)
+  return {
+    speciesID: form.id,
+    line: { baseID: base.id, stageIndex: form.stage, totalForms: form.totalForms, rarity },
+  }
+}
+
+/**
+ * The stage odds under a lure: its stage takes `stageShare` (60%) — or its own odds, when they
+ * are higher already (a first form's 65% or 75%; a lure never lowers its stage, code review
+ * 9.12) — and the other stages share the rest in proportion to their own odds. Unchanged without
+ * a lure, or with one on a stage the line does not have.
+ */
+function luredOdds(odds: number[], lure: Pick<Lure, 'stageIndex'> | undefined): number[] {
+  if (lure === undefined || lure.stageIndex >= odds.length || odds.length < 2) return odds
+  const share = Math.max(100 * EconomyBalance.lure.stageShare, odds[lure.stageIndex]!)
+  const others = odds.reduce((sum, o, i) => (i === lure.stageIndex ? sum : sum + o), 0)
+  // No other stage has any odds to share the rest: the lured stage takes all of it.
+  if (others <= 0) return odds.map((_, i) => (i === lure.stageIndex ? 100 : 0))
+  return odds.map((o, i) => (i === lure.stageIndex ? share : ((100 - share) * o) / others))
+}
+
+/** One weighted draw: `rng() % total`, walked in order. `items` must not be empty. */
+function weightedPick<T>(items: T[], weight: (item: T) => number, rng: RNG): T {
+  const weights = items.map(weight)
+  const total = weights.reduce((a, b) => a + b, 0)
+  let r = rng() % total
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i]!
+    if (r < 0) return items[i]!
+  }
+  return items[items.length - 1]!
+}
+
 // MARK: - Hatch candidate selection
 
 export type RNG = () => number
@@ -481,7 +885,7 @@ export type RNG = () => number
 export function chooseBaseFromIndex(
   index: BaseSpecies[],
   tier: Rarity | undefined,
-  collectedFinals: ReadonlySet<string>,
+  unlocked: ReadonlySet<number>,
   rng: RNG,
 ): number | undefined {
   const pool =
@@ -490,17 +894,11 @@ export function chooseBaseFromIndex(
       : index.filter((e) => meetsRarityFloor(tier, e.captureRate, e.isLegendary, e.isMythical))
   if (pool.length === 0) return undefined
 
-  const weights = pool.map((e) => {
-    const seen = [...collectedFinals].some((k) => k.startsWith(`${e.id}:`))
-    return Math.max(1, seen ? Math.floor(e.captureRate / 2) : e.captureRate)
-  })
-  const total = weights.reduce((a, b) => a + b, 0)
-  let r = rng() % total
-  for (let i = 0; i < weights.length; i++) {
-    r -= weights[i]!
-    if (r < 0) return pool[i]!.id
-  }
-  return pool[pool.length - 1]?.id // unreachable, kept as a guard
+  return weightedPick(
+    pool,
+    (e) => Math.max(1, unlocked.has(e.id) ? Math.floor(e.captureRate / 2) : e.captureRate),
+    rng,
+  ).id
 }
 
 /**

@@ -124,6 +124,30 @@ describe('the encounter scene', () => {
     expect(px('.battle .wild-scene.has-wild', 'height')).toBeGreaterThan(pad.to)
   })
 
+  // The plates are content-sized, so their heights are measured in the bench, not read here: the
+  // wild plate is 70px at its tallest (moods on one line, a status row under them) and yours 85px
+  // (the name, the EXP bar, its figures). Pinned so a plate that grows is caught here too.
+  const WILD_PLATE = 70
+  const PLAYER_PLATE = 85
+
+  // [trigger branch] Narrow, the wild Pokémon stands under its plate — just under it. With the
+  // plate at 103px the box started at 104; once the plate shrank to 70 that left a gap of sky
+  // above the Pokémon and pushed its platform under your plate.
+  it('stands the wild Pokémon just under its plate in a narrow sidebar', () => {
+    const plateEnd = px('.plate-wild', 'top') + WILD_PLATE
+    const top = px('.battle .wild-scene.has-wild .wild-mon', 'top')
+    expect(top).toBeGreaterThanOrEqual(plateEnd)
+    expect(top).toBeLessThanOrEqual(plateEnd + 8)
+  })
+
+  // [trigger branch] …and its platform clears your plate, which stands on the scene's bottom edge.
+  it('keeps the wild platform clear of your plate in a narrow sidebar', () => {
+    const padEnd = px('.battle .wild-scene.has-wild .pad-wild', 'top') + px('.pad-wild', 'height')
+    const playerTop =
+      px('.battle .wild-scene.has-wild', 'height') - px('.plate-player', 'bottom') - PLAYER_PLATE
+    expect(padEnd).toBeLessThanOrEqual(playerTop)
+  })
+
   // [trigger branch] The follower is the sprite that was NOT native-sized — a 48px square,
   // half Game Freak's own scale and a squash for every non-square frame. Pinning a size back
   // on is both the regression that shrinks it again and the one that lifts it off the floor,

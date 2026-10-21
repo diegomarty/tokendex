@@ -1,7 +1,14 @@
 # Fase 1 — Núcleo de registro por especie
 
 **Plan maestro:** `00-master.md` § Fase 1. Hereda las decisiones de la tabla del maestro y las conclusiones C1 (escala), C2 (partida real), C3 (÷15), C4 (Caramelo Raro).
-**Estado:** borrador. Se detalla en modo plan justo antes de implementar.
+**Estado:** implementado en `feat/species-registry` (2026-10-20). Diferencias respecto al borrador, por lo que enseñó el código:
+
+- La siembra de la migración corre **al final** del decodificador, después de colocar el compañero: colocada antes, el `active` decodido después recuperaba su progreso (378M frente a 33M) y se graduaba en el primer fold. Lo destapó la partida real, no la suite; ahora lo fija `companion-model`.
+- El crédito en bruto a la especie (`creditSpeciesXP`, en `registry.ts`) lo hace **`creditDelta`** (`ledger.ts`), el único sitio que sabe si el delta fue al huevo o al compañero; la revisión encontró que las dos copias a mano (fold y fusión) ya habían divergido: la fusión construía el registro fusionado desde el mapa anterior al crédito y lo perdía. Ahora hay un test que lo fija.
+- `applyUsage` recibe el conjunto de especies desbloqueadas (`ReadonlySet<number>`) en lugar de `collectedFinals`, y el mapa `species`; devuelve el mapa actualizado. `graduate()` sigue escribiendo `collectedFinals` por compatibilidad, pero ya nadie lo lee para decidir.
+- Candy: `candyRoomLeft(state)` en `shop.ts` es la única comprobación del tope; el store aplica `rareCandyXP(active)`.
+- Capturar ya desbloquea la especie y cuenta `caught` (sin el 5 %, que es de la fase 3): si no, una captura anterior a la migración leía como obtenida y una posterior no. El sorteo de salvajes mantiene además el sesgo sobre las capturas `wild` del `dex`.
+- Revisión de código (10 hallazgos): arreglados la fusión, `species: null` (ahora siembra), las entradas vacías del mapa (se descartan), el Ditto (mueve solo la xp de esta vida) y la copia del mapa en cada fold (copy-on-write). Descartados por diseño: reexpresar los precios de la tienda en función de la escala (fase 4) y los campos reservados (`earnedTokens`, shiny, `pendingShare`) que las fases 3 y 5 escriben.
 **Depende de:** fase 0 (commits).
 
 ## Objetivo

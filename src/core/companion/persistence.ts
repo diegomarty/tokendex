@@ -7,14 +7,18 @@
  * starts fresh.
  */
 
+import { type ChallengeBoard, boardFor } from './challenges.js'
 import {
   APP_LANGUAGES,
   COMPANION_STATE_SCHEMA,
+  EGG_STOCK_MAX,
+  type EggStock,
   type AppLanguage,
   type CompanionState,
   type DexEntry,
   type MonState,
   NATURES,
+  isPokemonType,
   type PokemonNature,
   RARITIES,
   type Rarity,
@@ -22,10 +26,15 @@ import {
   type Temperament,
   type TrailEntry,
   type WildEncounter,
+  type WildLine,
+  type Lure,
   type WildFind,
   freshCompanionState,
+  freshSpeciesProgress,
   pokemonTypes,
+  type SpeciesProgress,
 } from './model.js'
+import { reconcileShinies, seedRegistry } from './registry.js'
 import {
   EncounterBalance,
   LegendaryBalance,
@@ -113,6 +122,8 @@ export function decodeMonState(value: unknown): MonState | undefined {
   if (nature !== undefined) mon.nature = nature
   const disguise = lenientOptional(value, 'dittoDisguise', isInt)
   if (disguise !== undefined) mon.dittoDisguise = disguise
+  if (value['disguiseUnlocked'] === true) mon.disguiseUnlocked = true
+  if (value['chosenWhenRegistered'] === true) mon.chosenWhenRegistered = true
   return mon
 }
 
@@ -153,6 +164,81 @@ export function decodeDexEntry(value: unknown): DexEntry | undefined {
 }
 
 /**
+ * A challenge board, rebuilt from the generator (`boardFor`) for its day and week: only the
+ * challenges that date deals, with the targets it deals, keep their saved progress and done flag.
+ * A forged or a newer build's item has nothing to attach to and is gone — a board can never pay
+ * more than three challenges' rewards.
+ */
+function decodeChallengeBoard(value: unknown): ChallengeBoard | undefined {
+  if (!isObject(value)) return undefined
+  const day = lenientOptional(value, 'day', isString)
+  const week = lenientOptional(value, 'week', isString)
+  if (day === undefined || week === undefined || !Array.isArray(value['items'])) return undefined
+  const saved = new Map<string, Record<string, unknown>>()
+  for (const raw of value['items']) {
+    if (!isObject(raw)) continue
+    const id = lenientOptional(raw, 'id', isString)
+    if (id !== undefined && !saved.has(id)) saved.set(id, raw)
+  }
+  const items = boardFor(day, week).map((c) => {
+    const raw = saved.get(c.id)
+    if (raw === undefined) return c
+    return {
+      ...c,
+      progress: Math.min(c.target, Math.max(0, lenient(raw, 'progress', isInt, 0))),
+      done: raw['done'] === true,
+    }
+  })
+  return { day, week, items }
+}
+
+/** All or nothing: a lure aimed at an impossible species, or with no end, is dropped. */
+function decodeLure(value: unknown): Lure | undefined {
+  if (!isObject(value)) return undefined
+  const speciesID = lenientOptional(value, 'speciesID', isInt)
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  const until = lenientOptional(value, 'until', isNumber)
+  if (
+    speciesID === undefined ||
+    baseID === undefined ||
+    stageIndex === undefined ||
+    until === undefined
+  ) {
+    return undefined
+  }
+  if (speciesID <= 0 || baseID <= 0 || stageIndex < 0) return undefined
+  // As a wild line's: a base is its own line's base, an evolved form is not.
+  if ((stageIndex === 0) !== (baseID === speciesID)) return undefined
+  return { speciesID, baseID, stageIndex, until }
+}
+
+/**
+ * All four or nothing, and consistent with the species it prices: a base is its own line's base,
+ * an evolved form is not. A partial or contradictory position would price a registration wrongly.
+ */
+function decodeWildLine(value: unknown, speciesID: number): WildLine | undefined {
+  if (!isObject(value)) return undefined
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  const totalForms = lenientOptional(value, 'totalForms', isInt)
+  const rarity = lenientOptional(value, 'rarity', isRarity)
+  if (
+    baseID === undefined ||
+    stageIndex === undefined ||
+    totalForms === undefined ||
+    rarity === undefined
+  ) {
+    return undefined
+  }
+  if (baseID <= 0 || stageIndex < 0 || totalForms < 1 || totalForms > 12 || stageIndex >= totalForms) {
+    return undefined
+  }
+  if ((stageIndex === 0) !== (baseID === speciesID)) return undefined
+  return { baseID, stageIndex, totalForms, rarity }
+}
+
+/**
  * One queued wild encounter. Anything missing an identity, a species or a capture rate is
  * dropped rather than defaulted: a made-up capture rate would silently change the catch odds,
  * which is worse than losing one encounter the player has not seen yet.
@@ -180,6 +266,8 @@ export function decodeWildEncounter(value: unknown): WildEncounter | undefined {
   }
   const names = lenientOptional(value, 'names', isStringRecord)
   if (names !== undefined) encounter.names = names
+  const line = decodeWildLine(value['line'], speciesID)
+  if (line !== undefined) encounter.line = line
   // Everything below is optional and dropped rather than defaulted when malformed: an absent mood
   // reads as the initial mood for its temperament, which is the player-favourable direction — a
   // corrupt value must never arrive as "furious".
@@ -277,6 +365,75 @@ function decodeAccrualDays(value: unknown): string[] {
   return unique.slice(-StreakBalance.windowDays)
 }
 
+const isShare = (v: unknown): v is number => isNumber(v) && v >= 0 && v <= 1
+
+/** One species' entry, or nothing: a malformed entry is dropped, never defaulted upward. */
+export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefined {
+  if (!isObject(value)) return undefined
+  const fresh = freshSpeciesProgress()
+  const progress: SpeciesProgress = {
+    xp: Math.max(0, lenient(value, 'xp', isInt, 0)),
+    unlocked: lenient(value, 'unlocked', isBool, false),
+    seen: lenient(value, 'seen', isBool, false),
+    registered: lenient(value, 'registered', isBool, false),
+    caught: Math.max(0, lenient(value, 'caught', isInt, 0)),
+    candiesUsed: Math.max(0, lenient(value, 'candiesUsed', isInt, 0)),
+  }
+  const threshold = lenientOptional(value, 'threshold', isInt)
+  if (threshold !== undefined && threshold > 0) progress.threshold = threshold
+  const baseID = lenientOptional(value, 'baseID', isInt)
+  if (baseID !== undefined && baseID > 0) progress.baseID = baseID
+  const stageIndex = lenientOptional(value, 'stageIndex', isInt)
+  if (stageIndex !== undefined && stageIndex >= 0) progress.stageIndex = stageIndex
+  const totalForms = lenientOptional(value, 'totalForms', isInt)
+  if (totalForms !== undefined && totalForms > 0) progress.totalForms = totalForms
+  const lineRarity = lenientOptional(value, 'lineRarity', isRarity)
+  if (lineRarity !== undefined) progress.lineRarity = lineRarity
+  const pendingShare = lenientOptional(value, 'pendingShare', isShare)
+  if (pendingShare !== undefined && pendingShare > 0) progress.pendingShare = pendingShare
+  const shinyXP = lenientOptional(value, 'shinyXP', isInt)
+  if (shinyXP !== undefined && shinyXP > 0) progress.shinyXP = shinyXP
+  const shinyBoosted = lenientOptional(value, 'shinyBoosted', isInt)
+  if (shinyBoosted !== undefined && shinyBoosted > 0) progress.shinyBoosted = shinyBoosted
+  if (value['shinyUnlocked'] === true) progress.shinyUnlocked = true
+  if (value['shinyRegistered'] === true) progress.shinyRegistered = true
+  const registeredAt = lenientOptional(value, 'registeredAt', isInt)
+  if (registeredAt !== undefined && registeredAt > 0) progress.registeredAt = registeredAt
+  const nature = lenientOptional(value, 'nature', isNature)
+  if (nature !== undefined) progress.nature = nature
+  if (value['companionShiny'] === true) progress.companionShiny = true
+  // An entry that says nothing is dropped: it would only make the map grow.
+  const empty = Object.entries(progress).every(([key, v]) => v === fresh[key as keyof SpeciesProgress])
+  return empty ? undefined : progress
+}
+
+/** Clamped to the stock's capacity; a day that is not day-shaped never matches, so it re-grants. */
+export function decodeEggStock(value: unknown): EggStock {
+  if (!isObject(value)) return { count: 0 }
+  const stock: EggStock = {
+    count: Math.min(EGG_STOCK_MAX, Math.max(0, lenient(value, 'count', isInt, 0))),
+  }
+  const lastGrantDay = lenientOptional(value, 'lastGrantDay', isDayKey)
+  if (lastGrantDay !== undefined) stock.lastGrantDay = lastGrantDay
+  return stock
+}
+
+/**
+ * Entry by entry, so one bad species never takes the map with it — which is why this does not
+ * go through `isNumberRecord`-style validation of the whole object.
+ */
+export function decodeSpeciesMap(value: unknown): Record<number, SpeciesProgress> {
+  const out: Record<number, SpeciesProgress> = {}
+  if (!isObject(value)) return out
+  for (const [key, raw] of Object.entries(value)) {
+    const id = Number(key)
+    if (!Number.isInteger(id) || id <= 0) continue
+    const progress = decodeSpeciesProgress(raw)
+    if (progress !== undefined) out[id] = progress
+  }
+  return out
+}
+
 /**
  * Decodes the whole state. Throws only when the payload is not a JSON object at all — the
  * caller backs that file up and starts fresh.
@@ -293,6 +450,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     installBaselineSet: lenient(value, 'installBaselineSet', isBool, false),
     usedSinceInstall: lenient(value, 'usedSinceInstall', isInt, 0),
     spentTokens: lenient(value, 'spentTokens', isInt, 0),
+    earnedTokens: Math.max(0, lenient(value, 'earnedTokens', isInt, 0)),
     eggUsage: lenient(value, 'eggUsage', isInt, 0),
     lastDate: lenient(value, 'lastDate', isString, ''),
     // Per-item isolation: one corrupt entry must not take the whole Pokédex with it.
@@ -338,6 +496,8 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
       .slice(-TrailBalance.maxEntries),
     // Absent means armed: a save from before the notice existed may announce its next fill.
     queueFullArmed: lenient(value, 'queueFullArmed', isBool, true),
+    species: decodeSpeciesMap(value['species']),
+    eggStock: decodeEggStock(value['eggStock']),
   }
   state.finds = state.finds.slice(0, Math.max(0, EncounterBalance.maxQueue - state.wild.length))
 
@@ -370,6 +530,25 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   // an imported save gets its slug checked.
   const trainerID = lenientOptional(value, 'trainerID', isString)
   if (trainerID !== undefined) state.trainerID = trainerID
+  if (value['keepCompletedCompanion'] === true) state.keepCompletedCompanion = true
+  const lure = decodeLure(value['lure'])
+  if (lure !== undefined) state.lure = lure
+  // Only ids the catalogue holds: an unknown one would never be met, nor ever be shown.
+  // Every id kept, even one this build does not know: a newer build celebrated it, and dropping
+  // it would have that build announce it again after a sync. Deduplicated and capped.
+  if (Array.isArray(value['medals'])) {
+    const ids = value['medals'].filter((id): id is string => typeof id === 'string' && id.length <= 64)
+    state.medals = [...new Set(ids)].slice(0, 512)
+  }
+  if (value['medalsSeeded'] === true) state.medalsSeeded = true
+  const challenges = decodeChallengeBoard(value['challenges'])
+  if (challenges !== undefined) state.challenges = challenges
+  if (Array.isArray(value['challengesPaid'])) {
+    const ids = value['challengesPaid'].filter(
+      (id): id is string => typeof id === 'string' && id.length <= 64,
+    )
+    state.challengesPaid = [...new Set(ids)].slice(-64)
+  }
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 
@@ -390,7 +569,13 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
     )
   }
 
-  return state
+  // The registry is seeded from what the save already shows — flags and zeros only — but
+  // **only when the key is absent**: a save that carries the key, even empty, has been seeded
+  // once. Same rule as `milestonesAwarded` and for the same reason: "absent" is the one thing
+  // that must not read as "none" — and a key that is present but unusable (`null`, a string) is
+  // absent for this purpose. Last, after the active Pokémon is in place, because the seed also
+  // resets its stage progress.
+  return reconcileShinies(isObject(value['species']) ? state : seedRegistry(state))
 }
 
 /** Parses raw JSON text, returning `undefined` when it is unusable. */
@@ -404,4 +589,44 @@ export function parseCompanionState(text: string, hostLanguage?: string): Compan
 
 export function encodeCompanionState(state: CompanionState): string {
   return JSON.stringify(state)
+}
+
+// MARK: - The registry's sidecar (code review 9.12 #2)
+
+/**
+ * The keys a build before 1.0.0 does not know, and so drops when it rewrites the save — which a
+ * window still on the old build does at its next refresh, until it reloads. Without them the
+ * `species` key reads as absent and the registry used to be seeded again: every registration,
+ * the experience and the tokens earned, gone.
+ */
+export const SIDECAR_KEYS = [
+  'species',
+  'earnedTokens',
+  'eggStock',
+  'challenges',
+  'challengesPaid',
+  'keepCompletedCompanion',
+  'lure',
+  'medals',
+  'medalsSeeded',
+] as const
+
+/** The sidecar written beside the save: those keys, as the save carries them. */
+export function encodeSidecar(state: CompanionState): string {
+  const picked: Record<string, unknown> = {}
+  for (const key of SIDECAR_KEYS) if (state[key] !== undefined) picked[key] = state[key]
+  return JSON.stringify(picked)
+}
+
+/**
+ * The save as read, with the sidecar's keys put back when an older build stripped them: only
+ * when the save has lost `species` and the sidecar has it. A save that carries the key keeps its
+ * own; one that never had a registry (a real 0.5.0 save, no sidecar) still migrates.
+ */
+export function withSidecar(save: unknown, sidecar: unknown): unknown {
+  if (!isObject(save) || isObject(save['species'])) return save
+  if (!isObject(sidecar) || !isObject(sidecar['species'])) return save
+  const restored: Record<string, unknown> = { ...save }
+  for (const key of SIDECAR_KEYS) if (sidecar[key] !== undefined) restored[key] = sidecar[key]
+  return restored
 }

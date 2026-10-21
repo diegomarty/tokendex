@@ -2,6 +2,103 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Every species has its own registration bar.** The tokens your companion uses are its
+  experience, and filling a species' bar registers it in the Pokédex and evolves the companion
+  into the next form, which starts its own bar; you can always go back to an earlier form. A
+  full Pokédex now costs about 46.5B tokens (every line's total divided by fifteen), so it
+  takes an average user one to two years rather than decades. Tokens still count twice: each
+  one is experience and balance, and spending never takes experience away. A Rare Candy is
+  worth a quarter of the current stage, two per species at most.
+- **You choose your companion.** A new game starts by picking one starter from generations
+  1–5. After that, the companion can be any species you have obtained, or an egg: a free egg
+  arrives every day (up to three in stock) and 5M tokens hatch it. The shop's eggs add a
+  guaranteed tier, and the egg itself can be bought into the stock. A PC box lists every
+  obtained species, unfinished first, with search and sorting, to switch in two clicks.
+- **Catching registers.** A first catch obtains the species and fills 5% of its bar; a
+  duplicate pays tokens instead (2M common, 4M uncommon, 30M rare, 40M legendary). Evolved
+  forms appear in the wild at the games' odds (65/30/5 for three-stage lines, 75/25 for two),
+  weighted toward what you are missing, and a Poké Ball on the wild Pokémon's card marks a
+  species you already have.
+- **Shinies are earned.** Once a species is registered, its experience fills a shiny bar
+  eight times its line's total; tokens can buy up to half of it. Catching or hatching a shiny
+  still completes it at once. A Shinydex counts them.
+- **A lure** aims a day at one species you have seen: its line weighs forty times more in the
+  wild draw for 24 hours (20M common, 50M uncommon, 150M rare; no legendary lure).
+- **Medals, regions and challenges.** Medals for registered species, shinies, catches, a line
+  raised to its end and each region (Kanto to Unova) are announced once. Two daily challenges
+  and one weekly one pay 5M and 40M; they are the same on every machine and paid once, even
+  across merged saves. The Pokédex filters by region.
+- **Every species card is a Pokédex entry.** The sprite on the device's screen, its genus, types,
+  height and weight, the Pokédex text written letter by letter, base stats as bars and the
+  evolution line, each form a way to its own card. Read from PokéAPI when the card first opens
+  and kept on disk, so it opens offline afterwards; a species only seen shows its genus and
+  types, and the rest comes with obtaining it.
+- **Packs from ×10 to ×100.** The ten-pack has ▲▼ beside its price, so a big restock is one
+  confirmation at the same 10% off.
+- **The PC box filters and both lists turn around.** Registered, still to register, shiny and
+  region chips in the PC box, and an arrow beside every sort to reverse it.
+- **The Pokédex search finds every species by name**, met or not: the names are read once from
+  PokéAPI and kept on disk. A species not met yet still shows as a silhouette.
+
+### Changed
+
+- **Home is one panel.** Eggs, challenges, the legendary trail, wild Pokémon, finds, the
+  streak and the shop fold into drawers with one-line summaries; usage lives on the device's
+  lid, whose lights read the official limits. Tabs are the device's buttons, drawn with game
+  items, and fade between views. Every bar, button and empty state is drawn one way, and every
+  empty view says how it fills.
+- **The battle menu is Pokémon · Bag · Run.** The Pokémon button opens the companion's card
+  over Home; mood bars on the wild plate are icons that animate when they change; the dialog
+  writes letter by letter (instant with reduced motion, and screen readers get the whole line).
+- **Celebrations are drawn in the panel.** A hatch, an evolution, a registration, a medal or a
+  candy grant shows as a card in the panel when it is on screen, one after another; only when
+  no panel is visible does it become a notification.
+- **Shop prices follow the new scale:** tier guarantees 50M and 80M, Rare Candy 150M, mint
+  30M. The economy is tuned with a simulator that drives the real engine.
+- **Existing saves start the new registry at 0%.** Every species you had is obtained, your
+  companion stays the same, and your balance and catch history are untouched.
+- Buttons say what they do: the ways to the shop say "Shop", and Japanese uses the games' verbs
+  (かう, つかう, にげる).
+- The Shop and Pokédex heads are the same device as Home's lid, titles in the logo's capitals,
+  and the Pokédex's segments, search and filters fold into it.
+- Home's Wild drawer lists the next three in rows with their party icons, then how many more
+  wait. Bag pockets are never greyed out: an empty one says how it fills.
+- The battle dialog writes itself letter by letter in every encounter, not only the first.
+- The Shinydex shows the shinies you have obtained, its region chips count shinies, and the
+  Pokédex grid is a list of entry cards that scrolls on its own and keeps its place between
+  Collection and Shinydex.
+- Every experience and registration bar is the companion plate's EXP bar: Pokédex cells, the
+  species card, the PC box, the catch card and the news. A registered species' bar turns green.
+- The species card opens over a veiled Pokédex: its facts and evolution line first, the game's
+  part next, its Pokédex text and base stats last. Its registration reads on one line — the bar,
+  and the date the species was registered.
+
+### Fixed
+
+- A registered species' catch card showed an empty green pill: its text was painted the pill's
+  own colour. It reads "+5% registered" again, and a test keeps a pill's colours its own.
+- **A window still on an older version can no longer wipe your progress.** It rewrites the save
+  without the keys it does not know, and the registry used to be rebuilt from scratch when read
+  back. The registry and the rest of the new game are now kept beside the save and restored.
+- Choosing a companion at an evolved form (a caught Charmeleon) no longer marks the forms before
+  it as obtained.
+- A Ditto's reveal no longer takes away a species you already owned, and switching away from a
+  Ditto still in disguise reveals it rather than leaving the species it showed shiny.
+- The automatic move-on no longer undoes a companion you had just chosen in another window.
+- An egg's guarantee can only be upgraded, never bought twice or downgraded.
+- Merging saves pays a challenge only the other machine had completed, instead of losing it.
+- A Rare Candy is never spent without its experience.
+- A lure never makes a first form less likely within its line.
+- The Pokédex reads complete only when nothing is missing (646 of 649 used to show 100%).
+- A shiny caught before shiny bars existed now appears in the Shinydex.
+- A species card refreshes when what you own changes, and says so if its entry cannot be read.
+- A species card no longer flickers: it opens once at its full size, and pictures are kept
+  across repaints instead of reloading every time a button answers.
+- The companion on stage no longer shows up in the catch log, which records catches and
+  graduations only.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added

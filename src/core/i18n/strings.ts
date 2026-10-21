@@ -264,23 +264,10 @@ const STRINGS = {
   // No 🥚 in the word: every surface that shows this label already draws an egg next to it
   // (the panel's scene, the compact card's portrait), so the emoji read as two eggs.
   eggIncubating: [`부화 준비 중`, `Incubating`, `孵化の準備中`, `Incubando`],
-  dexEmptyTitle: [
-    `아직 잡은 포켓몬이 없어요!`,
-    `No Pokémon caught yet!`,
-    `まだ捕まえたポケモンがいません！`,
-    `¡Todavía no has capturado ningún Pokémon!`,
-  ],
-  dexEmptyHint: [
-    `토큰을 써서 첫 포켓몬을 부화시켜 보세요.`,
-    `Spend tokens to hatch your first Pokémon.`,
-    `トークンを使って最初のポケモンを孵化させましょう。`,
-    `Usa tokens para eclosionar tu primer Pokémon.`,
-  ],
   dexTitle: [`도감`, `Pokédex`, `図鑑`, `Pokédex`],
-  catchLogTitle: [`포획 로그`, `Catch log`, `捕獲ログ`, `Registro de capturas`],
+  catchLogTitle: [`포획 로그`, `Catch log`, `捕獲ログ`, `Historial de capturas`],
   dexPagePrev: [`이전 페이지`, `Previous page`, `前のページ`, `Página anterior`],
   dexPageNext: [`다음 페이지`, `Next page`, `次のページ`, `Página siguiente`],
-  dexRaising: [`키우는 중`, `Raising`, `育成中`, `Criando`],
   rarityCommon: [`일반`, `Common`, `ノーマル`, `Común`],
   rarityUncommon: [`고급`, `Uncommon`, `アンコモン`, `Poco común`],
   rarityRare: [`희귀`, `Rare`, `レア`, `Raro`],
@@ -291,7 +278,7 @@ const STRINGS = {
     `タップでこの希少度のみ表示・再タップで全体`,
     `Toca para ver solo esta rareza · toca de nuevo para ver todo`,
   ],
-  dexShinyLabel: [`이로치`, `Shiny`, `色違い`, `Variocolor`],
+  dexShinyLabel: [`이로치`, `Shiny`, `色違い`, `Shiny`],
   statusEgg: [`곧 깨어나요.`, `Hatching soon.`, `もうすぐ孵化します。`, `Está a punto de eclosionar.`],
   statusIdle: [
     `오늘은 조용히 자리를 지켜요.`,
@@ -324,7 +311,7 @@ const STRINGS = {
     `✨ 이로치 포켓몬!`,
     `✨ Shiny Pokémon!`,
     `✨ 色違いポケモン！`,
-    `✨ ¡Pokémon variocolor!`,
+    `✨ ¡Pokémon shiny!`,
   ],
   eggImminent: [`곧 부화해요!`, `About to hatch!`, `もうすぐ孵化！`, `¡Está a punto de eclosionar!`],
   eggFirstRunHint: [
@@ -344,7 +331,7 @@ const STRINGS = {
     `🎭✨ 어라? 이로치 메타몽!`,
     `🎭✨ Huh? A shiny Ditto!`,
     `🎭✨ あれ？色違いメタモン！`,
-    `🎭✨ ¿Eh? ¡Un Ditto variocolor!`,
+    `🎭✨ ¿Eh? ¡Un Ditto shiny!`,
   ],
   notifGraduateTitle: [`🎓 졸업!`, `🎓 Graduated!`, `🎓 卒業！`, `🎓 ¡Graduado!`],
   limitRefreshNoCredential: [
@@ -417,12 +404,6 @@ const STRINGS = {
     `Límite personal de Codex`,
   ],
   bag: [`가방`, `Bag`, `バッグ`, `Bolsa`],
-  bagEmptyTitle: [
-    `아직 가방이 비어있어요!`,
-    `Your bag is empty!`,
-    `バッグはまだ空っぽです！`,
-    `¡Tu bolsa todavía está vacía!`,
-  ],
   useItem: [`사용하기`, `Use`, `つかう`, `Usar`],
   use: [`사용`, `Use`, `つかう`, `Usar`],
   cancel: [`취소`, `Cancel`, `キャンセル`, `Cancelar`],
@@ -447,7 +428,7 @@ const STRINGS = {
     `使ったトークンでアイテムを購入できます。`,
     `Usa los tokens que has consumido para comprar objetos.`,
   ],
-  buy: [`구매`, `Buy`, `購入`, `Comprar`],
+  buy: [`구매`, `Buy`, `かう`, `Comprar`],
   notEnoughTokens: [
     `토큰이 부족해요`,
     `Not enough tokens`,
@@ -460,15 +441,15 @@ const STRINGS = {
     `이로치 확률 ↑ · 적용 중`,
     `Shiny rate ↑ · active`,
     `色違い率↑ · 適用中`,
-    `Prob. variocolor ↑ · activo`,
+    `Prob. shiny ↑ · activo`,
   ],
   freshEggShinyWarning: [
     `⚠️ 이로치 포켓몬이에요! 정말 놓아줄까요?`,
     `⚠️ This one is shiny! Really send it off?`,
     `⚠️ 色違いです！本当に手放しますか？`,
-    `⚠️ ¡Este es variocolor! ¿Seguro que quieres soltarlo?`,
+    `⚠️ ¡Este es shiny! ¿Seguro que quieres soltarlo?`,
   ],
-  freshEggDiscardShiny: [`이로치 놓아주기`, `Send shiny off`, `手放す`, `Soltar variocolor`],
+  freshEggDiscardShiny: [`이로치 놓아주기`, `Send shiny off`, `手放す`, `Soltar shiny`],
 } as const satisfies Record<string, Quad>
 
 export type StringKey = keyof typeof STRINGS
@@ -602,21 +583,21 @@ export const f = {
       `부화까지 ${amount}`,
       `${amount} to hatch`,
       `孵化まで ${amount}`,
-      `${amount} para eclosionar`,
+      `faltan ${amount} para eclosionar`,
     ]),
   toNextEvolution: (lang: AppLanguage, amount: string): string =>
     pick(lang, [
       `다음 진화까지 ${amount}`,
       `${amount} to next evolution`,
       `次の進化まで ${amount}`,
-      `${amount} para la siguiente evolución`,
+      `faltan ${amount} para la siguiente evolución`,
     ]),
   toGraduation: (lang: AppLanguage, amount: string): string =>
     pick(lang, [
-      `졸업까지 ${amount}`,
-      `${amount} to graduation`,
-      `卒業まで ${amount}`,
-      `${amount} para graduarse`,
+      `등록까지 ${amount}`,
+      `${amount} to registration`,
+      `登録まで ${amount}`,
+      `faltan ${amount} para registrarlo`,
     ]),
   graduated: (lang: AppLanguage, name: string): string =>
     pick(lang, [
@@ -648,7 +629,7 @@ export const f = {
       `이로치 ${name}이(가) 태어났어요! (1/64)`,
       `A shiny ${name} hatched! (1 in 64)`,
       `色違いの ${name} が生まれました！(1/64)`,
-      `¡Nació un ${name} variocolor! (1 entre 64)`,
+      `¡Nació un ${name} shiny! (1 entre 64)`,
     ]),
   notifEvolveBody: (lang: AppLanguage, name: string): string =>
     pick(lang, [
@@ -669,7 +650,7 @@ export const f = {
       `${disguise}인 줄 알았는데 — 이로치 메타몽이었어요! (1/64)`,
       `You thought it was ${disguise} — it was a shiny Ditto! (1 in 64)`,
       `${disguise} だと思ってた… 色違いのメタモンでした！(1/64)`,
-      `Pensabas que era ${disguise} — ¡era un Ditto variocolor! (1 entre 64)`,
+      `Pensabas que era ${disguise} — ¡era un Ditto shiny! (1 entre 64)`,
     ]),
   notifGraduateBody: (lang: AppLanguage, name: string): string =>
     pick(lang, [

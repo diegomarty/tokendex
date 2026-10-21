@@ -10,9 +10,14 @@
 import type {
   PanelLineItem,
   PanelShopAction,
+  PanelShopPack,
   PanelState,
   PanelEncounterResult,
+  PanelDexSpecies,
+  PanelDrawer,
   PanelMoodMeter,
+  PanelNews,
+  PanelPokedexEntry,
   PanelWildEncounter,
   PanelWalletChange,
 } from './protocol.js'
@@ -21,6 +26,7 @@ import {
   ANIMATED_SPRITE_MAX,
   itemSpriteIsSheet,
   itemSpriteURL,
+  menuIconURL,
   sceneSpriteURL,
   spriteURL,
   trainerURL,
@@ -36,7 +42,8 @@ const vscode = acquireVsCodeApi()
 
 /** One list for the skeleton, the renderers and the restore guard — shell.ts owns it. */
 type TabID = PanelTabID
-type DexSegment = 'species' | 'log'
+type DexSegment = 'species' | 'shiny' | 'medals' | 'log'
+const DEX_SEGMENTS: readonly DexSegment[] = ['species', 'shiny', 'medals', 'log']
 let current: PanelState | undefined
 let tab: TabID = 'home'
 let dexSegment: DexSegment = 'species'
@@ -44,7 +51,44 @@ let dexSegment: DexSegment = 'species'
 let dexSelected: number | undefined
 /** Pokédex narrowing. Panel-owned view state, so it survives a repaint but not a reload. */
 let dexQuery = ''
+/** The Pokédex grid's order (view state): number by default, as a Pokédex reads. */
+let dexSort: SortID = 'number'
+/**
+ * Pokédex entries (plan 9.7), asked of the host when a card first shows a species and kept for the
+ * session, by language — the entry is localised text. `entriesAsked` stops a repaint from asking
+ * twice while the answer is on its way.
+ */
+const dexEntries = new Map<string, PanelPokedexEntry>()
+const entriesAsked = new Set<string>()
+/** Entries that timed out: shown as unavailable until the next state asks them again. */
+const entriesFailed = new Set<string>()
+let entriesOwnership = ''
+/** The Pokédex's sort turned around (plan 9.8): its natural direction flipped. */
+let dexReverse = false
 let dexOwnedOnly = false
+/** The region the Pokédex grid is narrowed to (`kanto`…), or none. View state only. */
+let dexRegion: string | undefined
+/**
+ * Home's drawers that are open — the lid's usage (`usage`) among them. View state: it never
+ * reaches the host, and it survives a reload through `vscode.setState`.
+ */
+const openDrawers = new Set<string>()
+/** The shop's pack multiplier per row: an index into the core's `packs`. View state only. */
+const packSteps = new Map<string, number>()
+/** The shop opened its balls once, on its first showing (view state). */
+let shopDrawersSeen = false
+/** Each shop drawer's icon: a game item that stands for its group. */
+const SHOP_GROUP_ICONS: Record<PanelState['shop'][number]['group'], string> = {
+  balls: 'poke-ball',
+  berries: 'oran-berry',
+  items: 'rare-candy',
+  eggs: 'egg-icon',
+}
+/**
+ * Each wild Pokémon's mood as last drawn, by encounter id and meter: what a new render compares
+ * against, so a berry or a miss shows the cells it added or took away. View state only.
+ */
+const moodSeen = new Map<string, Record<string, number>>()
 /** Catch-log rarity chip: 'all', or a rarity token matching `PanelDexEntry.rarity`. */
 let dexLogFilter = 'all'
 /**
@@ -53,12 +97,37 @@ let dexLogFilter = 'all'
  * kept standing under the *next* Pokémon that stepped up.
  */
 let wildResult: { text: string; encounterID: string } | undefined
+/**
+ * A catch's news, shown over the scene like a level-up once the catch animation is over. Kept
+ * as view state because the scene is rebuilt right after (the caught Pokémon leaves the stage);
+ * `played` stops the entrance from replaying on every later paint.
+ */
+let catchBanner:
+  (NonNullable<PanelEncounterResult['catchNews']> & { until: number; played: boolean }) | undefined
+let catchBannerTimer: ReturnType<typeof setTimeout> | undefined
+/** How long the banner stays: long enough to read two lines, short enough not to linger. */
+const CATCH_BANNER_MS = 2800
+/** A new species plays its reveal and its bar filling first (~1.9 s), so it stays longer. */
+const NEW_SPECIES_BANNER_MS = 4200
 /** Which level of the battle menu is open, and for which encounter. View state only. */
 let wildMenu: 'main' | 'bag' = 'main'
+/** The starter picked on the first-run screen, before it is confirmed. View state only. */
+let starterSelected: number | undefined
 /** The bag's open pocket and selected item. View state only. */
 let bagPocket: 'balls' | 'berries' | 'items' | undefined
 let bagSelected: string | undefined
 let stagedID: string | undefined
+/** The PC box is open over the scene (view state; Esc or a click outside closes it). */
+let pcOpen = false
+/** The species card open as a window over Home (the battle menu's Pokémon button). */
+let cardOpen: number | undefined
+/** The PC box's search and sort (view state, kept while the panel lives). */
+let pcQuery = ''
+let pcSort: SortID = 'progress'
+let pcReverse = false
+/** The box's chips (plan 9.8): one status and one region at a time, each toggled off again. */
+let pcFilter: PanelState['pcBox']['filters'][number]['id'] | undefined
+let pcRegion: string | undefined
 /**
  * The encounter whose entrance has already played. Home is repainted wholesale — by every state
  * push, and it used to be by every menu click — and the entrance hung off the scene's own class,
@@ -106,6 +175,73 @@ function renderLine(items: PanelLineItem[]): string {
   return `<div class="evoline">${slots}</div>`
 }
 
+/**
+ * The game's one bar (docs/plans/08-ui-unificada.md): every meter the game draws — EXP,
+ * registration, mood, shiny, medals, challenges, the road to the next encounter — is this
+ * markup, and only its surface, tone, cells and size change. The official limits are the
+ * counter's and keep their native bar.
+ */
+interface MeterOptions {
+  /** What it sits on: the device's dark track, paper, the dialog box, or the red casing. */
+  surface: 'device' | 'paper' | 'dialog' | 'casing'
+  /** Fill colour; EXP blue unless said. `mood` takes the row's own `--tone`. */
+  tone?: 'shiny' | 'done' | 'mood'
+  /** Cut into cells, as the mood gauges are: five, so a short gauge's cell is never a hairline. */
+  cells?: 5
+  size?: 'thin' | 'large'
+  /** A glyph at the track's left (★, the game's "EXP"). Decoration: the label names the bar. */
+  glyph?: string
+  glyphClass?: string
+  /** Accessible name. Omitted when the bar repeats text beside it, which is then `hidden`. */
+  label?: string
+  hidden?: boolean
+  /** The track's content when it is not one fill (the new-entry card's base and gain). */
+  inner?: string
+  /** A mood gauge that moved since the last render: which way, for its animation. */
+  change?: 'rise' | 'drop'
+}
+
+function gameMeter(percent: number, o: MeterOptions): string {
+  const classes = ['game-meter', `on-${o.surface}`]
+  if (o.tone !== undefined) classes.push(`tone-${o.tone}`)
+  if (o.cells !== undefined) classes.push(`cells-${o.cells}`)
+  if (o.size !== undefined) classes.push(o.size)
+  if (o.change !== undefined) classes.push(`mood-${o.change}`)
+  const glyph =
+    o.glyph === undefined
+      ? ''
+      : `<span class="game-meter-glyph${o.glyphClass === undefined ? '' : ` ${o.glyphClass}`}" aria-hidden="true">${escapeHTML(o.glyph)}</span>`
+  const name =
+    o.hidden === true
+      ? ' aria-hidden="true"'
+      : o.label === undefined
+        ? ''
+        : ` aria-label="${escapeHTML(o.label)}"`
+  const fill = o.inner ?? `<i data-fill="${percent}"></i>`
+  return `<div class="${classes.join(' ')}">${glyph}<div class="bar game-meter-track"${name}>${fill}</div></div>`
+}
+
+/**
+ * The one bar of experience and registration (plan 09 §9.10): the companion plate's EXP bar —
+ * the device's dark frame, the games' "EXP" at its left, the blue fill — wherever a Pokémon's
+ * road is drawn: the plate, the catch card, the Pokédex, the PC, the news. A registered form's
+ * is full and still blue: it is the same bar, at its end.
+ */
+function expMeter(
+  percent: number,
+  o: { label?: string; hidden?: boolean; inner?: string; size?: 'thin' | 'large'; done?: boolean } = {},
+): string {
+  const { done, ...rest } = o
+  // A road at its end — a registered form, in the Pokédex — turns green (Diego).
+  return gameMeter(percent, {
+    surface: 'device',
+    glyph: 'EXP',
+    glyphClass: 'label',
+    ...(done === true ? { tone: 'done' as const } : {}),
+    ...rest,
+  })
+}
+
 /** Name, meta line, progress bar and evolution strip — everything about the companion except
  *  its portrait, which in the unified Home lives inside the scene beside the trainer. */
 function companionInfo(state: PanelState): string {
@@ -120,17 +256,17 @@ function companionInfo(state: PanelState): string {
     .map(escapeHTML)
     .join(' · ')
 
-  const percent = Math.round(c.progress * 100)
-
+  // The figure beside the bar is that bar's own — EXP, as on the scene's plate — so the number
+  // and the fill can never tell two stories.
   return `
       <h1 class="hero-name">${escapeHTML(name)}${c.isShiny ? ' <span class="shiny-mark" title="shiny">✨</span>' : ''}</h1>
       ${meta === '' ? '' : `<div class="hero-meta">${meta}</div>`}
       <div class="progress">
         <div class="meta">
           <span>${escapeHTML(c.toNextText)}</span>
-          <span class="pct">${percent}%</span>
+          <span class="pct">${c.expPercent}%</span>
         </div>
-        <div class="bar"><i data-fill="${percent}"></i></div>
+        ${expMeter(c.expPercent, { size: 'thin', hidden: true })}
       </div>
       ${renderLine(c.line)}`
 }
@@ -247,11 +383,21 @@ function renderHome(state: PanelState): string {
     .join('')
 
   // The spendable balance is currency, and a number with nothing to spend it on is a dead end —
-  // so it carries the way to the shop. `data-tab` reuses the tab handler, no round trip.
-  const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.buy)} →</button>`
+  // so it carries the way to the shop. `data-tab` reuses the tab handler, no round trip. Named
+  // after where it goes, like a drawer's link: it opens the shop, it does not buy anything.
+  const shopLink = `<button class="link" data-tab="shop">${escapeHTML(state.strings.tabs.shop)} →</button>`
 
   const compact = document.body.classList.contains('compact')
-  const game = compact ? renderCompanion(state) + renderWildStrip(state) : renderGame(state)
+  // A brand-new game asks for a starter before anything else; the card is a glance, so it only
+  // says so and opens the panel.
+  const game =
+    state.starters !== undefined
+      ? compact
+        ? `<button class="wild-strip" data-open-panel>${escapeHTML(state.strings.starterTitle)}</button>`
+        : renderStarters(state, state.starters)
+      : compact
+        ? renderCompanion(state) + renderWildStrip(state)
+        : renderGame(state) + renderDrawers(state)
 
   // First run, before any CLI has been found: an empty three-column table reads as broken.
   const breakdown =
@@ -271,40 +417,218 @@ function renderHome(state: PanelState): string {
   // its screen. It is the currency every action on this screen is paid in, and the number that
   // moves when an attack takes tokens or a scan brings some in. The Explorer card is a glance and
   // keeps the plain row.
+  // The lid carries the usage folded: today and this month under the name, the official limits on
+  // its three lights, and a chevron that says it opens. Opened, the detail comes out of the lid as
+  // its own screen — the two figures side by side with their costs, the tools, the limits — so the
+  // usage is read on the device rather than on a box hanging off it.
+  const lid = state.lid
+  const usageOpen = openDrawers.has('usage')
+  const lights = lidLights(state)
+  const columns = lid.columns
+    .map(
+      (c) => `<div class="lid-column">
+          <span class="lid-column-label">${escapeHTML(c.label)}</span>
+          <span class="lid-column-value" title="${escapeHTML(c.exactText)}">${escapeHTML(c.tokensText)}</span>
+          <span class="lid-column-cost">${escapeHTML(c.costText)}</span>
+        </div>`,
+    )
+    .join('')
+  const screen = usageOpen
+    ? `<div class="lid-screen lcd" id="lid-detail" role="region" aria-label="${escapeHTML(lid.toggleLabel)}">
+          <div class="lid-columns">${columns}</div>
+          <div class="lid-table">${breakdown}</div>
+          ${renderLimits(state)}
+        </div>`
+    : `<div id="lid-detail" hidden></div>`
   const wallet = compact
     ? ''
-    : `<div class="wallet-bar">
-        <span class="brand" role="img" aria-label="Tokendex">
-          <span class="brand-lens"></span>
-          <span class="brand-leds"><i></i><i></i><i></i></span>
-          <span class="brand-name">TOKEN<b>DEX</b></span>
-        </span>
-        <button class="wallet-badge" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.buy)}"
+    : `<div class="wallet-bar device-casing${usageOpen ? ' open' : ''}" data-fit>
+        <button class="brand lid-toggle" data-drawer="usage" aria-expanded="${usageOpen}" aria-controls="lid-detail"
+          aria-label="${escapeHTML(lid.toggleLabel)}" aria-describedby="lid-usage">
+          <span class="device-lens"></span>
+          <span class="device-leds">${lights}</span>
+          <span class="brand-text">
+            <span class="brand-name">TOKEN<b>DEX</b></span>
+            <span class="lid-usage-line">
+              <span class="lid-usage" id="lid-usage" data-fit-text><span class="lid-long">${escapeHTML(lid.usageText)}</span><span class="lid-short">${escapeHTML(lid.usageShortText)}</span></span>
+              <i class="codicon codicon-chevron-down lid-chevron" aria-hidden="true"></i>
+            </span>
+          </span>
+        </button>
+        <button class="wallet-badge lcd" data-tab="shop" title="${escapeHTML(state.strings.spendable)} · ${escapeHTML(state.strings.tabs.shop)}"
           aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
           <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
           <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
         </button>
+        ${screen}
       </div>`
-  const walletRow = compact
-    ? `<div class="row-stat">
-        <span class="label">${escapeHTML(state.strings.spendable)}</span>
-        <span class="value">${escapeHTML(state.spendableText)}</span>
-        <span class="note">${shopLink}</span>
-      </div>`
-    : ''
 
-  return `
-    ${wallet}
-    <div class="game">${game}</div>
+  // The compact card keeps the counter in the open: the two figures, the balance, the limits and
+  // the tools. The panel folds all of it into the lid.
+  if (compact)
+    return `<div class="game">${game}</div>
     <div class="stats">
       <div class="stat-tiles">
         ${statTile(state.strings.today, t.todayText, t.todayCostText, t.todayExactText)}
         ${statTile(state.strings.month, t.monthText, t.monthCostText, t.monthExactText)}
       </div>
-      ${walletRow}
+      <div class="row-stat">
+        <span class="label">${escapeHTML(state.strings.spendable)}</span>
+        <span class="value">${escapeHTML(state.spendableText)}</span>
+        <span class="note">${shopLink}</span>
+      </div>
     </div>
     ${renderLimits(state)}
     ${breakdown}`
+  return `
+    ${wallet}
+    <div class="game">${game}</div>`
+}
+
+// MARK: - Drawers
+
+/** The game item each drawer is drawn with, from PokéAPI at runtime like every sprite. */
+const DRAWER_ICONS: Record<PanelDrawer['id'], string> = {
+  incubator: 'egg-icon',
+  challenges: 'exp-share',
+  trail: 'rainbow-wing',
+  wild: 'poke-ball',
+  finds: 'dowsing-machine',
+  streak: 'soothe-bell',
+}
+
+/** Where a drawer leads for the whole system, when it has a tab of its own. */
+const DRAWER_TABS: Partial<Record<PanelDrawer['id'], TabID>> = { incubator: 'shop', finds: 'bag' }
+
+/**
+ * Home's drawers: the bottom half of the Pokédex, under the scene. Each one a line — its LED,
+ * its item, its title and the core's one-line summary — that opens on its detail, drawn with the
+ * same pieces as anywhere else. All folded until opened; the green LED says where to look.
+ */
+function renderDrawers(state: PanelState): string {
+  const drawers = state.drawers ?? []
+  if (drawers.length === 0) return ''
+  const rows = drawers
+    .map((d) => {
+      const open = openDrawers.has(d.id)
+      const icon = DRAWER_ICONS[d.id]
+      const sheet = itemSpriteIsSheet(icon) ? ' sheet' : ''
+      const tab = DRAWER_TABS[d.id]
+      const link =
+        tab === undefined
+          ? ''
+          : `<button class="drawer-link" data-tab="${tab}">${escapeHTML(state.strings.tabs[tab])} →</button>`
+      return drawerHTML({
+        id: d.id,
+        title: d.title,
+        summary: d.summary,
+        icon,
+        iconClass: sheet,
+        attention: d.attention,
+        open,
+        detail: () => `${drawerDetail(state, d.id)}${link}`,
+      })
+    })
+    .join('')
+  return `<section class="drawers device-casing">
+      <div class="drawers-hinge" aria-hidden="true"><i></i><i></i></div>
+      ${rows}
+    </section>`
+}
+
+/**
+ * One drawer — Home's systems and the shop's groups alike: the row (LED, a game item's icon, the
+ * title, the summary, the chevron) and, open, its detail. The one component, so a drawer looks
+ * and behaves the same wherever it is. `detail` is built only when open.
+ */
+function drawerHTML(d: {
+  id: string
+  title: string
+  summary: string
+  icon: string
+  iconClass?: string
+  attention: boolean
+  open: boolean
+  detail: () => string
+}): string {
+  const id = escapeHTML(d.id)
+  return `<div class="drawer drawer-${id}${d.attention ? ' attention' : ''}${d.open ? ' open' : ''}">
+      <button class="drawer-row" data-drawer="${id}" aria-expanded="${d.open}" aria-controls="drawer-${id}">
+        <span class="drawer-led" aria-hidden="true"></span>
+        <img class="drawer-icon${d.iconClass ?? ''}" src="${itemSpriteURL(d.icon)}" alt="">
+        <span class="drawer-title">${escapeHTML(d.title)}</span>
+        <span class="drawer-summary">${escapeHTML(d.summary)}</span>
+        <i class="codicon codicon-chevron-right drawer-chevron" aria-hidden="true"></i>
+      </button>
+      ${d.open ? `<div class="drawer-detail" id="drawer-${id}" role="region" aria-label="${escapeHTML(d.title)}">${d.detail()}</div>` : ''}
+    </div>`
+}
+
+/** The detail of one drawer, from data the panel already carries — one piece per system. */
+function drawerDetail(state: PanelState, id: PanelDrawer['id']): string {
+  switch (id) {
+    case 'incubator':
+      return renderEggs(state)
+    case 'challenges':
+      return renderChallenges(state)
+    case 'trail':
+      return renderTrail(state.wild)
+    case 'wild':
+      return renderWildQueue(state)
+    case 'finds':
+      return renderFinds(state.wild)
+    case 'streak':
+      return streakRow(state.wild.streak)
+  }
+}
+
+// MARK: - Starters and the egg stock
+
+/**
+ * The first-run screen: the fifteen starters, a generation to a row, each on the colour of its
+ * type. Picking one only selects it; the button under the grid confirms — a starter is the one
+ * choice of the game made before there is anything to compare it with.
+ */
+function renderStarters(state: PanelState, starters: NonNullable<PanelState['starters']>): string {
+  const picked = starters.find((s) => s.id === starterSelected)
+  const cells = starters
+    .map(
+      (s) => `<button class="starter type-${escapeHTML(s.types[0] ?? 'normal')}" data-starter="${s.id}"
+          aria-pressed="${s.id === starterSelected}" aria-label="${escapeHTML(s.name)}">
+        <img src="${spriteURL(s.id, false, true)}" alt="" data-fallback="${spriteURL(s.id, false, false)}">
+        <span class="starter-name">${escapeHTML(s.name)}</span>
+      </button>`,
+    )
+    .join('')
+  return `<section class="starters">
+      <h2 class="starters-title">${escapeHTML(state.strings.starterTitle)}</h2>
+      <p class="starters-prompt">${escapeHTML(state.strings.starterPrompt)}</p>
+      <div class="starter-grid" role="group" aria-label="${escapeHTML(state.strings.starterTitle)}">${cells}</div>
+      <button class="btn primary starter-confirm" data-choose-starter="${picked?.id ?? ''}" ${picked === undefined ? 'disabled' : ''}>
+        ${escapeHTML(picked === undefined ? state.strings.chooseCompanion : `${state.strings.chooseCompanion} · ${picked.name}`)}
+      </button>
+    </section>`
+}
+
+/**
+ * The egg stock under the scene: one slot per egg the stock can hold, filled for each one held,
+ * and the button that incubates one (or resumes the one set aside). Nothing to show without a
+ * companion on stage — then the egg is the scene.
+ */
+function renderEggs(state: PanelState): string {
+  const eggs = state.eggs
+  // The three slots always show, empty ones included, so the drawer says what the stock holds
+  // and what it can hold (Diego). With none, a line says how the next one arrives.
+  const slots = Array.from(
+    { length: eggs.max },
+    (_, i) =>
+      `<span class="egg-slot${i < eggs.count ? ' full' : ''}">${i < eggs.count ? `<img class="egg-sprite" src="${itemSpriteURL('egg-icon')}" alt="">` : ''}</span>`,
+  ).join('')
+  return `<div class="egg-stock${eggs.paused ? ' paused' : ''}">
+      <span class="egg-slots" role="img" aria-label="${escapeHTML(eggs.stockText)}">${slots}</span>
+      <span class="egg-text">${escapeHTML(eggs.stockText)}${eggs.emptyText === undefined ? '' : `<span class="egg-empty">${escapeHTML(eggs.emptyText)}</span>`}</span>
+      ${eggs.incubateText === undefined ? '' : `<button class="btn primary egg-incubate" data-incubate>${escapeHTML(eggs.incubateText)}</button>`}
+    </div>`
 }
 
 // MARK: - Wild encounters
@@ -388,7 +712,7 @@ async function playThrow(result: PanelEncounterResult): Promise<void> {
     scene.classList.add(result.kind === 'fled' ? 'fled-out' : 'fed')
     if (result.attacked) await strikeBack(scene)
     const line = document.querySelector<HTMLElement>('.wild-result')
-    if (line !== null) line.textContent = result.resultText
+    if (line !== null) showLineWhole(line, result.encounterID, result.resultText)
     await sleep(RESULT_HOLD_MS)
     finishThrow(result)
     return
@@ -420,10 +744,56 @@ async function playThrow(result: PanelEncounterResult): Promise<void> {
 
   // The dialog box sits under the scene, so it is looked up on the page, not inside the scene.
   const line = document.querySelector<HTMLElement>('.wild-result')
-  if (line !== null) line.textContent = result.resultText
+  if (line !== null) showLineWhole(line, result.encounterID, result.resultText)
 
   await sleep(RESULT_HOLD_MS)
   finishThrow(result)
+}
+
+/** The catch banner over the scene, while it lasts; its entrance plays on the first paint only. */
+function renderCatchBanner(): string {
+  const banner = catchBanner
+  if (banner === undefined || performance.now() >= banner.until) return ''
+  const entering = banner.played ? '' : ' entering'
+  banner.played = true
+  // Hidden from assistive tech: the result line under the scene, which is live, says the same.
+  const reg = banner.registration
+  if (reg === undefined) {
+    return `<div class="catch-banner${banner.isNew ? ' new' : ''}${entering}" aria-hidden="true">
+      <span class="catch-headline">${escapeHTML(banner.headline)}</span>
+      <span class="tag gain catch-detail">${escapeHTML(banner.detail)}</span>
+    </div>`
+  }
+  // A new species, shown as the Pokédex shows a new entry: the device's red casing with its
+  // lens, lights and the entry's number, the Pokémon on the screen, and its registration bar
+  // with the share just earned marked as a span [from, to] — placed by `placeSpans` after the
+  // paint, since the CSP allows no inline style.
+  return `<div class="catch-banner new rich device-casing${entering}" aria-hidden="true">
+      <span class="catch-shine"></span>
+      <div class="dexcard-top">
+        <span class="device-lens small"></span>
+        <span class="device-leds"><i></i><i></i><i></i></span>
+        <span class="dexcard-num">${dexNumber(reg.speciesID)}</span>
+      </div>
+      <div class="dexcard-body">
+        <span class="catch-mon-wrap">
+          <img class="catch-mon" src="${sceneSpriteURL(reg.speciesID, false)}" alt=""
+               data-fallback="${spriteURL(reg.speciesID, false, false)}">
+        </span>
+        <div class="catch-body">
+          <span class="catch-headline">${escapeHTML(banner.headline)}</span>
+          <div class="catch-reg">
+            ${expMeter(reg.toPercent, {
+              size: 'large',
+              hidden: true,
+              inner: `<i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
+                <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>`,
+            })}
+          </div>
+          <span class="tag gain catch-detail">${escapeHTML(banner.detail)}</span>
+        </div>
+      </div>
+    </div>`
 }
 
 /** It lunged at you: a short lunge and a red flash. Its duration is mirrored in styles.css. */
@@ -442,6 +812,19 @@ function finishThrow(result?: PanelEncounterResult): void {
   throwing = undefined
   if (result !== undefined && result.resultText !== '') {
     wildResult = { text: result.resultText, encounterID: result.encounterID }
+  }
+  if (result?.catchNews !== undefined) {
+    const lasts = result.catchNews.registration === undefined ? CATCH_BANNER_MS : NEW_SPECIES_BANNER_MS
+    // One banner at a time, with its own timer: a catch soon after another replaces the banner,
+    // and the earlier timer must not take the new one down with it.
+    clearTimeout(catchBannerTimer)
+    const banner = { ...result.catchNews, until: performance.now() + lasts, played: false }
+    catchBanner = banner
+    catchBannerTimer = setTimeout(() => {
+      if (catchBanner !== banner) return
+      catchBanner = undefined
+      document.querySelector('.catch-banner')?.remove()
+    }, lasts)
   }
   if (flight.deferred !== undefined) applyState(flight.deferred)
   // Even with nothing deferred: the result line is panel-owned view state, not part of a push.
@@ -516,6 +899,7 @@ function renderGame(state: PanelState): string {
       <img class="trainer" src="${trainerURL(state.trainerID)}" alt="">
       ${follower}
       ${playerPlate(state)}
+      ${renderCatchBanner()}
     </div>`
 
   // The dialog box: what just happened, or the question the games ask. Idle, it carries the
@@ -529,25 +913,23 @@ function renderGame(state: PanelState): string {
             <span>${escapeHTML(wild.nextText)}</span>
             <span class="pct">${wild.progressPercent}%</span>
           </div>
-          <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
-          ${streakRow(wild.streak)}
+          ${gameMeter(wild.progressPercent, { surface: 'dialog', hidden: true })}
         </div>`
       : ''
   const prompt = selected === undefined ? undefined : strings.commandPrompt
   const dialog = `
     <div class="dialog${selected === undefined ? '' : ' slim'}">
-      <p class="dialog-text wild-result${(resultLine ?? prompt) ? '' : ' empty'}" aria-live="polite">${escapeHTML(resultLine ?? prompt ?? '')}</p>
+      <p class="dialog-text wild-result${(resultLine ?? prompt) ? '' : ' empty'}" aria-live="polite"
+         data-line-context="${escapeHTML(resultLine === undefined ? (selected?.id ?? '') : (wildResult?.encounterID ?? ''))}">${escapeHTML(resultLine ?? prompt ?? '')}</p>
       ${dialogLines}
     </div>`
 
   if (selected === undefined) {
     const line = c === undefined ? '' : renderLine(c.line)
-    return `<div class="battle">${scene}${dialog}${line === '' ? '' : `<div class="evo-strip">${line}</div>`}</div>
-      ${renderFindsAndTrail(wild)}`
+    return `<div class="battle">${scene}${dialog}${line === '' ? '' : `<div class="evo-strip">${line}</div>`}</div>`
   }
 
-  return `<div class="battle">${scene}${dialog}${commandMenu(state, selected)}</div>
-    ${renderFindsAndTrail(wild)}`
+  return `<div class="battle">${scene}${dialog}${commandMenu(state, selected)}</div>`
 }
 
 /** The glyph beside each mood gauge: a flame for anger, a pulse for nerves, a heart for trust. */
@@ -557,29 +939,63 @@ const MOOD_ICONS: Record<PanelMoodMeter['key'], string> = {
   trust: 'heart',
 }
 
+/** A plate's status as a tag: a berry taking effect is a state, a theft a loss. */
+const STATUS_TONES: Record<PanelWildEncounter['statuses'][number]['key'], string> = {
+  primed: 'state',
+  stolen: 'loss',
+}
+
+/**
+ * A mood gauge that moved since it was last drawn, as the catch card shows a gain: the cells it
+ * gained lit white and filling in the gauge's colour, or the cells it lost fading out. The fill
+ * the gauge ends on is still a `data-fill`, so it keeps its progressbar value.
+ */
+function moodChange(from: number | undefined, to: number): Pick<MeterOptions, 'inner' | 'change'> {
+  if (from === undefined || from === to) return {}
+  const end = `<i class="mood-end" data-fill="${to}"></i>`
+  return from < to
+    ? {
+        change: 'rise',
+        inner: `${end}<i class="base" data-span-from="0" data-span-to="${from}"></i>
+          <i class="gain" data-span-from="${from}" data-span-to="${to}"><b></b></i>`,
+      }
+    : {
+        change: 'drop',
+        inner: `<i data-fill="${to}"></i><i class="loss" data-span-from="${to}" data-span-to="${from}"></i>`,
+      }
+}
+
 /**
  * The wild Pokémon's plate, top left as in the games: name, rarity, character and three gauges
  * where the games put HP. The gauges are anger, nerves and trust — drawn, never measured, here:
  * the core's `tone` picks how loudly each one shows, never a threshold of the webview's own.
  */
 function wildPlate(encounter: PanelWildEncounter): string {
-  // All three low says one thing — "calm" — so it takes one line: the gauges side by side, the
-  // labels kept for the tooltip and the screen reader. Any of them rising opens the full rows.
-  const calm = encounter.meters.every((m) => m.tone === 'low')
+  // The three gauges share one line at every width, each led only by its glyph (Diego): the
+  // plate stays low, and the name of each lives in its title and its accessible name.
+  const before = moodSeen.get(encounter.id)
+  const now: Record<string, number> = {}
   const meters = encounter.meters
-    .map(
-      (
-        m,
-      ) => `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
+    .map((m) => {
+      const percent = Math.max(0, Math.min(100, Math.round(m.percent)))
+      now[m.key] = percent
+      return `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
         <i class="codicon codicon-${MOOD_ICONS[m.key]} meter-icon" aria-hidden="true"></i>
         <span class="meter-label">${escapeHTML(m.label)}</span>
-        <div class="bar gauge" aria-label="${escapeHTML(m.label)}"><i data-fill="${Math.max(0, Math.min(100, Math.round(m.percent)))}"></i></div>
-      </div>`,
-    )
+        ${gameMeter(percent, { surface: 'paper', tone: 'mood', cells: 5, label: m.label, ...moodChange(before?.[m.key], percent) })}
+      </div>`
+    })
     .join('')
+  moodSeen.set(encounter.id, now)
   return `<div class="plate plate-wild">
       <div class="plate-head">
         <span class="plate-name">${escapeHTML(encounter.name)}${encounter.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        ${
+          // Already yours: the games mark it with a Poké Ball beside the name.
+          encounter.ownedText === undefined
+            ? ''
+            : `<span class="owned-ball" role="img" title="${escapeHTML(encounter.ownedText)}" aria-label="${escapeHTML(encounter.ownedText)}"></span>`
+        }
         ${
           // Nature and traits are flavour more than a decision, so they wait behind a glyph by the
           // name instead of taking a line of the plate.
@@ -587,17 +1003,17 @@ function wildPlate(encounter: PanelWildEncounter): string {
             ? ''
             : `<i class="codicon codicon-info plate-info" role="img" tabindex="0" title="${escapeHTML(encounter.temperamentText)}" aria-label="${escapeHTML(encounter.temperamentText)}"></i>`
         }
-        <span class="rarity-badge ${escapeHTML(encounter.rarity)}">${escapeHTML(encounter.rarityText)}</span>
+        <span class="tag xs rarity-badge ${escapeHTML(encounter.rarity)}">${escapeHTML(encounter.rarityText)}</span>
       </div>
 
-      <div class="meters${calm ? ' calm' : ''}">${meters}</div>
+      <div class="meters">${meters}</div>
       ${
         (encounter.statuses ?? []).length === 0
           ? ''
           : `<div class="statuses">${(encounter.statuses ?? [])
               .map(
                 (st) =>
-                  `<span class="status ${escapeHTML(st.key)}" title="${escapeHTML(st.title)}" aria-label="${escapeHTML(st.title)}">${escapeHTML(st.text)}</span>`,
+                  `<span class="tag xs ${STATUS_TONES[st.key]}" title="${escapeHTML(st.title)}" aria-label="${escapeHTML(st.title)}">${escapeHTML(st.text)}</span>`,
               )
               .join('')}</div>`
       }
@@ -617,13 +1033,14 @@ const RISK_ICONS: Record<PanelWildEncounter['risk']['items'][number]['key'], str
 function playerPlate(state: PanelState): string {
   const c = state.companion
   if (c === undefined) return ''
-  const percent = Math.round(c.progress * 100)
+  // The registration bar is the figure; a still-hatching egg has none and shows its EXP instead.
+  const percent = c.registrationPercent ?? c.expPercent
   const meta = [c.stageText, c.rarityText, c.natureText].filter(
     (part): part is string => part !== undefined && part !== '',
   )
-  return `<div class="plate plate-player">
+  return `<div class="plate plate-player" data-fit>
       <div class="plate-head">
-        <span class="plate-name">${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+        <span class="plate-name" data-fit-text>${escapeHTML(c.name ?? state.strings.incubating)}${c.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
         ${
           // Stage, rarity and nature, behind the same glyph as the wild plate's temperament:
           // what the plate is for is the road to the next stage, not the card's details.
@@ -631,13 +1048,32 @@ function playerPlate(state: PanelState): string {
             ? ''
             : `<i class="codicon codicon-info plate-info" role="img" tabindex="0" title="${escapeHTML(meta.join(' · '))}" aria-label="${escapeHTML(meta.join(' · '))}"></i>`
         }
-        <span class="plate-pct">${percent}%</span>
+        <span class="tag xs state plate-pct">${percent}%</span>
+        <button class="pc-open" data-pc-open aria-haspopup="dialog" aria-expanded="${pcOpen}"
+                title="${escapeHTML(state.pcBox.title)}" aria-label="${escapeHTML(state.pcBox.title)}">
+          <span class="pc-icon" aria-hidden="true"></span>
+        </button>
       </div>
-      <div class="exp-row">
-        <i class="codicon codicon-sparkle meter-icon" aria-hidden="true"></i>
-        <div class="bar exp gauge"><i data-fill="${percent}"></i></div>
-      </div>
-      <div class="plate-sub to-next">${escapeHTML(c.toNextText)}</div>
+      ${expBar(c)}
+    </div>`
+}
+
+/**
+ * The EXP bar the games draw under a Pokémon's HP: a dark track with "EXP" at its left and the
+ * blue fill, and under it — in the same blue — what it has of the stage and what is left. Every
+ * figure is the core's; "EXP" is the games' own glyph, printed untranslated in every version, so
+ * it is decoration and the bar is named by the figures instead.
+ */
+function expBar(c: NonNullable<PanelState['companion']>): string {
+  const figures = [c.expText, c.expLeftText].filter((t): t is string => t !== undefined && t !== '')
+  const label = figures.length === 0 ? c.toNextText : figures.join(' · ')
+  return `<div class="exp-meter">
+      ${expMeter(c.expPercent, { label })}
+      ${
+        figures.length === 0
+          ? `<div class="exp-figures"><span>${escapeHTML(c.toNextText)}</span></div>`
+          : `<div class="exp-figures" aria-hidden="true">${c.expText === undefined ? '' : `<span>${escapeHTML(c.expText)}</span>`}${c.expLeftText === undefined ? '' : `<span class="exp-left">${escapeHTML(c.expLeftText)}</span>`}</div>`
+      }
     </div>`
 }
 
@@ -659,10 +1095,10 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
       .map(
         (berry) => `<button class="command item" data-feed="${escapeHTML(encounterID)}"
               data-berry="${escapeHTML(berry.kind)}" data-sprite="${escapeHTML(berry.sprite)}"
-              aria-label="${escapeHTML(berry.name)} ×${berry.count}. ${escapeHTML(berry.effectText)}">
+              aria-label="${escapeHTML(berry.name)} ${escapeHTML(berry.countText)}. ${escapeHTML(berry.effectText)}">
           <img src="${itemSpriteURL(berry.sprite)}" alt="">
           <span class="command-name">${escapeHTML(berry.name)}<small>${escapeHTML(berry.effectText)}</small></span>
-          <span class="command-count">×${berry.count}</span>
+          <span class="command-count">${escapeHTML(berry.countText)}</span>
         </button>`,
       )
       .join('')
@@ -677,7 +1113,7 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
   const balls = wild.balls
     .map((ball) => {
       const none = ball.count === 0
-      const label = `${escapeHTML(ball.name)} ×${ball.count}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}`
+      const label = `${escapeHTML(ball.name)} ${escapeHTML(ball.countText)}${ball.oddsText === undefined ? '' : `, ${escapeHTML(ball.oddsText)}`}`
       return `<button class="command ball${none ? ' none' : ''}" data-throw="${escapeHTML(encounterID)}"
             data-ball="${escapeHTML(ball.kind)}" data-sprite="${escapeHTML(ball.sprite)}"
             ${none ? 'data-tab="shop"' : ''} title="${none ? `${escapeHTML(ball.name)} · ${escapeHTML(strings.getBalls)}` : escapeHTML(ball.name)}"
@@ -685,27 +1121,32 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
         <span class="ball-sprite"><img src="${itemSpriteURL(ball.sprite)}" alt="">${
           none
             ? '<span class="ball-count shop"><i class="codicon codicon-add" aria-hidden="true"></i></span>'
-            : `<span class="ball-count">×${ball.count}</span>`
+            : `<span class="ball-count">${escapeHTML(ball.countText)}</span>`
         }</span>
         <span class="ball-odds">${ball.oddsText === undefined ? '' : escapeHTML(ball.oddsText)}</span>
         <span class="ball-name">${escapeHTML(ball.name)}</span>
       </button>`
     })
     .join('')
-  // At the end of the Bag and Run line: with an empty rack, the way to the shop — the moment
-  // of highest purchase intent; otherwise how many more are waiting, when any are.
+  // Under the menu line: with an empty rack, the way to the shop — the moment of highest
+  // purchase intent. How many more wait is the Wild drawer's, with its LED lit.
   const note = noBalls
     ? `<button class="command info" data-tab="shop">${escapeHTML(strings.getBalls)}</button>`
-    : wild.moreText !== undefined
-      ? `<p class="command info queue" title="${escapeHTML(wild.waitingText)}">
-          <i class="codicon codicon-layers" aria-hidden="true"></i>${escapeHTML(wild.moreText)}</p>`
-      : ''
+    : ''
+  // "Pokémon", as the games' menu has it: your companion's party icon, and a way to its page in
+  // the Pokédex. A still-hatching egg has no page yet, and the button waits for it.
+  const companion = state.companion
+  const mon =
+    companion?.speciesID === undefined
+      ? `<img class="command-icon mon-icon" src="${itemSpriteURL('egg-icon')}" alt="">`
+      : `<img class="command-icon mon-icon" src="${menuIconURL(companion.speciesID)}" alt=""
+             data-fallback="${spriteURL(companion.speciesID, companion.isShiny, false)}">`
   // What a miss risks, over the balls it is the price of.
   const risk = `<p class="dialog-note risk" title="${escapeHTML(encounter.riskText)}" aria-label="${escapeHTML(encounter.riskText)}">
       <span class="risk-heading">${escapeHTML(encounter.risk.heading)}</span>${encounter.risk.items
         .map(
           (item) =>
-            `<span class="risk-item ${escapeHTML(item.key)}"><i class="codicon codicon-${RISK_ICONS[item.key]}" aria-hidden="true"></i>${escapeHTML(item.text)}</span>`,
+            `<span class="tag risk-item ${escapeHTML(item.key)}"><i class="codicon codicon-${RISK_ICONS[item.key]}" aria-hidden="true"></i>${escapeHTML(item.text)}</span>`,
         )
         .join('')}
     </p>`
@@ -713,6 +1154,8 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
       ${risk}
       <div class="ball-row">${balls}</div>
       <div class="command-row">
+        <button class="command" data-dex-open="${companion?.speciesID ?? ''}" ${companion?.speciesID === undefined ? 'disabled' : ''}>
+          ${mon}${escapeHTML(strings.pokemonMenu)}</button>
         <button class="command" data-menu="bag" ${wild.berries.length === 0 ? 'disabled' : ''}>
           <i class="codicon codicon-package command-icon" aria-hidden="true"></i>${escapeHTML(strings.tabs.bag)}</button>
         <button class="command" data-run="${escapeHTML(encounterID)}">
@@ -722,32 +1165,65 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
     </div>`
 }
 
-/** Items lying in the wild area, and legendaries that can still be tracked back. */
-function renderFindsAndTrail(wild: PanelState['wild']): string {
-  const finds =
-    wild.finds.length === 0
+/**
+ * The Wild drawer: who is waiting, as a tight list of cards (the one on stage first), the lure
+ * running, and the road to the next encounter on the game's own bar.
+ */
+function renderWildQueue(state: PanelState): string {
+  const wild = state.wild
+  // Plan 9.4: the one on stage is in the scene above, so the drawer starts behind it — the next
+  // few, a full row each, then one row counting the rest.
+  const more =
+    wild.queueMoreText === undefined
       ? ''
-      : `<section class="wild-finds">
-        <div class="finds-head">
-          <h2 class="section">${escapeHTML(wild.findsText ?? '')}</h2>
-          <button class="link" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
-        </div>
-        <div class="finds-row">${wild.finds
+      : `<li class="queue-more">${escapeHTML(wild.queueMoreText)}</li>`
+  const queue = wild.encounters
+    .slice(1, 1 + wild.queueShown)
+    .map(
+      // The games' party icon: a list's own sprite, whole at its native size, where the 96px
+      // sheet cropped to the row cut heads and tails off. A shiny says so with its ✨.
+      (e) => `<li class="queue-mon">
+          <img class="mon-icon" src="${menuIconURL(e.speciesID)}" alt=""
+               data-fallback="${spriteURL(e.speciesID, e.isShiny, false)}">
+          <span class="queue-name">${escapeHTML(e.name)}${e.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
+          <span class="tag xs rarity-badge ${escapeHTML(e.rarity)}">${escapeHTML(e.rarityText)}</span>
+        </li>`,
+    )
+    .join('')
+  return `${queue === '' ? '' : `<ul class="wild-queue" aria-label="${escapeHTML(wild.waitingText)}">${queue}${more}</ul>`}
+    ${renderLure(state)}
+    <div class="wild-next">
+      <span class="wild-next-text">${escapeHTML(wild.nextText)}</span>
+      ${gameMeter(wild.progressPercent, { surface: 'paper', size: 'thin', hidden: true })}
+    </div>`
+}
+
+/** The Finds drawer: what turned up, a tile per item with its count as in the bag, and one
+ *  button to pick it all up. A tile alone picks up that one. */
+function renderFinds(wild: PanelState['wild']): string {
+  return wild.finds.length === 0
+    ? ''
+    : `<section class="wild-finds">
+        <div class="finds-grid">${wild.finds
           .map(
             (
               find,
             ) => `<button class="find rarity-${escapeHTML(find.rarity)}" data-collect="${escapeHTML(find.id)}"
                 title="${escapeHTML(find.label)} — ${escapeHTML(find.rarityText)}" aria-label="${escapeHTML(find.label)}">
               ${find.sprite === undefined ? `<span class="emoji">${find.emoji}</span>` : `<img src="${itemSpriteURL(find.sprite)}" alt="">`}
-              ${find.count > 1 ? `<span class="count">×${find.count}</span>` : ''}
+              ${find.count > 1 ? `<span class="count">${escapeHTML(find.countText)}</span>` : ''}
             </button>`,
           )
           .join('')}</div>
+        <button class="btn primary finds-collect" data-collect-all>${escapeHTML(wild.collectAllText)}</button>
       </section>`
-  const trail =
-    wild.trail.length === 0
-      ? ''
-      : `<section class="wild-trail">
+}
+
+/** Legendaries that got away and can still be tracked, each with its price. */
+function renderTrail(wild: PanelState['wild']): string {
+  return wild.trail.length === 0
+    ? ''
+    : `<section class="wild-trail">
         <h2 class="section">${escapeHTML(wild.trailTitle)}</h2>
         ${wild.trail
           .map(
@@ -757,14 +1233,13 @@ function renderFindsAndTrail(wild: PanelState['wild']): string {
                 <span class="title">${escapeHTML(entry.name)}${entry.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
                 <span class="desc">${escapeHTML(entry.expiresText)}</span>
               </span>
-              <button class="action" data-track="${escapeHTML(entry.id)}" data-title="${escapeHTML(entry.confirmTitle)}"
+              <button class="btn" data-track="${escapeHTML(entry.id)}" data-title="${escapeHTML(entry.confirmTitle)}"
                       data-price="${escapeHTML(entry.priceText)}" data-confirm="${escapeHTML(entry.confirmLabel)}"
                       ${entry.enabled ? '' : 'disabled'}>${escapeHTML(entry.trackText)}</button>
             </div>`,
           )
           .join('')}
       </section>`
-  return `${finds}${trail}`
 }
 
 /**
@@ -816,6 +1291,7 @@ function shopAction(
   action: PanelShopAction,
   withPrice: boolean,
   withWord: boolean,
+  o: { ghost?: boolean; attrs?: string } = {},
 ): string {
   // Dimmed and italic, never struck through: a line through a price reads as a discount, and
   // this row has a real one two millimetres away.
@@ -823,17 +1299,98 @@ function shopAction(
   // The saving is pinned small to the corner of the price it discounts, so it reads as that
   // price's and no other's.
   const save =
-    action.saveText === undefined ? '' : `<span class="save">${escapeHTML(action.saveText)}</span>`
+    action.saveText === undefined
+      ? ''
+      : `<span class="tag xs gain save">${escapeHTML(action.saveText)}</span>`
   const price = withPrice
     ? `<span class="price-tag"><span class="cost${cant}">${escapeHTML(action.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>${save}</span>`
     : ''
-  return `<button class="action${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"
+  const face = `${withWord ? `<span class="verb">${escapeHTML(action.text)}</span>` : ''}${price}`
+  // A ghost is the same face with nothing to press: it only lends its width (the pack stepper).
+  if (o.ghost === true)
+    return `<button class="btn${withPrice ? ' priced' : ''} pack-ghost" tabindex="-1" aria-hidden="true" disabled>${face}</button>`
+  return `<button class="btn${withPrice ? ' priced' : ''}" data-buy="${escapeHTML(action.id)}"${o.attrs ?? ''}
                 data-title="${escapeHTML(action.confirmTitle)}" data-price="${escapeHTML(action.priceText)}"
                 data-confirm="${escapeHTML(state.strings.buy)}"
                 aria-label="${escapeHTML(action.label)}"
                 ${action.enabled ? '' : 'disabled'}>
-          ${withWord ? `<span class="verb">${escapeHTML(action.text)}</span>` : ''}${price}
+          ${face}
         </button>`
+}
+
+/**
+ * The ten-pack with its multiplier (plan 09 §9.1): ▲▼ beside the ×10 walk the core's steps,
+ * ×10…×100, and the button becomes that step — its id, title, price, word and saving, every one
+ * the core's. Nothing is computed here. The arrow keys step it too; a purchase sets it back.
+ */
+function packStepper(
+  state: PanelState,
+  item: PanelState['shop'][number],
+  packs: PanelShopPack[],
+  withWord: boolean,
+): string {
+  const index = Math.min(packSteps.get(item.id) ?? 0, packs.length - 1)
+  const step = packs[index] ?? packs[0]
+  if (step === undefined) return ''
+  const up = packs[index + 1]
+  const down = packs[index - 1]
+  const button = shopAction(state, item, step, !item.owned, withWord, {
+    attrs: ` id="pack-${escapeHTML(item.id)}" data-pack-keys="${escapeHTML(item.id)}"`,
+  })
+  // The last step, invisible, in the same cell: the most it buys is the longest word and the
+  // highest price, so the cell is as wide as any step will be and stepping never widens it.
+  const last = packs[packs.length - 1]
+  const ghost =
+    last === undefined ? '' : shopAction(state, item, last, !item.owned, withWord, { ghost: true })
+  return `<div class="pack-stepper" data-pack-row="${escapeHTML(item.id)}">
+      <div class="pack-face">${ghost}${button}</div>
+      <div class="stepper" role="group">
+        <button id="pack-up-${escapeHTML(item.id)}" class="step up" data-pack-keys="${escapeHTML(item.id)}" data-pack-step="${escapeHTML(item.id)}" data-step="1"
+          aria-label="${escapeHTML(up?.text ?? step.text)}" ${up === undefined ? 'disabled' : ''}>
+          <i class="codicon codicon-triangle-up" aria-hidden="true"></i></button>
+        <button id="pack-down-${escapeHTML(item.id)}" class="step down" data-pack-keys="${escapeHTML(item.id)}" data-pack-step="${escapeHTML(item.id)}" data-step="-1"
+          aria-label="${escapeHTML(down?.text ?? step.text)}" ${down === undefined ? 'disabled' : ''}>
+          <i class="codicon codicon-triangle-down" aria-hidden="true"></i></button>
+      </div>
+    </div>`
+}
+
+/**
+ * Moves a row's pack multiplier one step, within the core's steps, and redraws that row only:
+ * a repaint of the whole shop recreated every sprite and every drawer under the player's
+ * fingers, which read as the shop resetting on each arrow key (Diego).
+ */
+function stepPack(state: PanelState, itemID: string, by: number): void {
+  const item = state.shop.find((i) => i.id === itemID)
+  const packs = item?.actions.find((a) => a.packs !== undefined)?.packs
+  if (item === undefined || packs === undefined) return
+  const next = Math.max(0, Math.min(packs.length - 1, (packSteps.get(itemID) ?? 0) + by))
+  if (next === (packSteps.get(itemID) ?? 0)) return
+  packSteps.set(itemID, next)
+  const row = document.querySelector<HTMLElement>(`#shop [data-pack-row="${CSS.escape(itemID)}"]`)
+  if (row === null) {
+    invalidate('shop')
+    render()
+    return
+  }
+  const focused = focusInside(row)
+  row.outerHTML = packStepper(state, item, packs, item.owned || item.actions.length > 1)
+  if (focused === undefined) return
+  // A disabled control cannot hold focus: the arrow pressed at an end of the range, or the tag
+  // of a step the wallet cannot cover. Focus goes to the other arrow, then to anything in the
+  // row still enabled — never to the page, where the arrow keys would stop stepping.
+  const usable = (id: string): boolean => {
+    const el = document.getElementById(id)
+    return el instanceof HTMLButtonElement && !el.disabled
+  }
+  const back = by > 0 ? `pack-down-${itemID}` : `pack-up-${itemID}`
+  const target = [
+    focused.id,
+    back,
+    `pack-${itemID}`,
+    by > 0 ? `pack-up-${itemID}` : `pack-down-${itemID}`,
+  ].find(usable)
+  if (target !== undefined) restoreFocus({ id: target, start: null, end: null })
 }
 
 function renderShop(state: PanelState): string {
@@ -859,24 +1416,36 @@ function renderShop(state: PanelState): string {
           <div class="title">${escapeHTML(item.title)}${stat}</div>
           ${desc}
         </div>`
+    const hasPacks = item.actions.some((a) => (a.packs?.length ?? 0) >= 2)
     return `
       <div class="row shop-item${item.owned ? ' owned' : ''}">
         ${itemIcon(item.sprite, item.emoji)}
         ${body}
         <div class="buys">${item.actions
-          .map((a) => shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1))
+          .map((a) =>
+            a.packs === undefined || a.packs.length < 2
+              ? hasPacks
+                ? // Beside a pack, the single keeps the arrows' slot empty, so both prices end at one edge.
+                  `<div class="pack-stepper single"><div class="pack-face">${shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)}</div></div>`
+                : shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)
+              : packStepper(state, item, a.packs, item.owned || item.actions.length > 1),
+          )
           .join('')}</div>
       </div>`
   }
 
-  // The wallet on top: every price below is judged against this number, so making the reader
-  // hop back to Home to know it is a dead end.
-  // Drawn as the Pokédex lid's screen on Home, so the balance looks the same wherever it is read.
-  const wallet = `
-    <div class="shop-wallet">
-      <span class="label">${escapeHTML(state.strings.spendable)}</span>
-      <span class="value">${escapeHTML(state.spendableText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span>
-    </div>`
+  // The head as the Pokédex's: the device's casing, its lens, the tab's name — and the balance on
+  // the lid's own screen, since every price below is judged against it (Diego: the shop follows
+  // Home's style).
+  const wallet = deviceHead(state, {
+    title: state.strings.tabs.shop,
+    className: 'shop-head',
+    screen: `<span class="wallet-badge lcd head-screen" title="${escapeHTML(state.strings.spendable)}"
+            aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
+        <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
+        <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
+      </span>`,
+  })
 
   // `note` is what every card in the group would otherwise repeat. Only the eggs have one so
   // far, and saying it once is the entire reason they each fit on one line now.
@@ -886,22 +1455,37 @@ function renderShop(state: PanelState): string {
     { id: 'items', title: state.strings.shopItems },
     { id: 'eggs', title: state.strings.shopEggs, note: state.strings.shopEggsNote },
   ]
-  // Each group is its own element, with its own row list inside it. Flat, the wide layout's
-  // auto-fill grid swallowed the headings as cells: "ITEMS" landed in a column beside a ball,
-  // and rows sat under a heading they did not belong to.
-  const sections = groups
-    .map((group) => {
-      const items = state.shop.filter((item) => item.group === group.id)
-      if (items.length === 0) return ''
-      const note = group.note === undefined ? '' : `<p class="section-note">${escapeHTML(group.note)}</p>`
-      return `<section class="shop-group">
-        <h2 class="section">${escapeHTML(group.title)}</h2>${note}
-        <div class="shop-rows">${items.map(row).join('')}</div>
-      </section>`
+  // The groups fold into drawers inside the device's casing, as Home's do — the same row, LED,
+  // icon, summary and chevron — so the shop reads as part of the same object. The balls open
+  // the first time the shop is seen; after that each drawer keeps what the player left it.
+  if (!shopDrawersSeen) {
+    shopDrawersSeen = true
+    if (![...openDrawers].some((id) => id.startsWith('shop-'))) openDrawers.add('shop-balls')
+  }
+  const drawers = state.shopGroups
+    .map((g) => {
+      const group = groups.find((x) => x.id === g.id)
+      const items = state.shop.filter((item) => item.group === g.id)
+      const id = `shop-${g.id}`
+      const open = openDrawers.has(id)
+      const note =
+        group?.note === undefined ? '' : `<p class="section-note">${escapeHTML(group.note)}</p>`
+      return drawerHTML({
+        id,
+        title: g.title,
+        summary: g.summary,
+        icon: SHOP_GROUP_ICONS[g.id],
+        attention: false,
+        open,
+        detail: () => `${note}<div class="shop-rows">${items.map(row).join('')}</div>`,
+      })
     })
     .join('')
 
-  return `${wallet}${sections}`
+  return `${wallet}<section class="drawers device-casing shop-drawers">
+      <div class="drawers-hinge" aria-hidden="true"><i></i><i></i></div>
+      ${drawers}
+    </section>`
 }
 
 /**
@@ -910,25 +1494,41 @@ function renderShop(state: PanelState): string {
  * used from here. Which pocket and which item are view state; the contents all come from the core.
  */
 function renderBag(state: PanelState): string {
-  if (state.bag.length === 0) return `<p class="empty">${escapeHTML(state.strings.bagEmpty)}</p>`
+  if (state.bag.length === 0) {
+    return emptyState(
+      state.strings.emptyBag,
+      `<button class="btn primary" data-tab="shop">${escapeHTML(state.strings.emptyBag.action)}</button>`,
+    )
+  }
 
   const pockets: { id: PanelState['bag'][number]['pocket']; label: string }[] = [
     { id: 'balls', label: state.strings.shopBalls },
     { id: 'berries', label: state.strings.shopBerries },
     { id: 'items', label: state.strings.shopItems },
   ]
+  // Plan 9.6: no pocket is ever disabled. The bag opens on the first one with something in it,
+  // and an empty pocket, opened, says how it fills — the way out, not a greyed tab.
   const filled = pockets.filter((p) => state.bag.some((item) => item.pocket === p.id))
-  if (bagPocket === undefined || !filled.some((p) => p.id === bagPocket)) bagPocket = filled[0]?.id
+  bagPocket ??= filled[0]?.id ?? 'balls'
   const items = state.bag.filter((item) => item.pocket === bagPocket)
   const selected = items.find((item) => item.id === bagSelected) ?? items[0]
   bagSelected = selected?.id
 
   const tabs = pockets
-    .map((p) => {
-      const empty = !filled.some((f) => f.id === p.id)
-      return `<button class="pocket" data-pocket="${p.id}" aria-pressed="${p.id === bagPocket}" ${empty ? 'disabled' : ''}>${escapeHTML(p.label)}</button>`
-    })
+    .map(
+      (p) =>
+        `<button class="pocket" data-pocket="${p.id}" aria-pressed="${p.id === bagPocket}">${escapeHTML(p.label)}</button>`,
+    )
     .join('')
+  if (items.length === 0) {
+    return `<div class="bag">
+      <div class="pockets" role="group">${tabs}</div>
+      ${emptyState(
+        state.strings.emptyPocket[bagPocket],
+        `<button class="btn primary" data-tab="shop">${escapeHTML(state.strings.emptyBag.action)}</button>`,
+      )}
+    </div>`
+  }
   const rows = items
     .map(
       (
@@ -936,7 +1536,7 @@ function renderBag(state: PanelState): string {
       ) => `<button class="bag-row" data-bag-select="${escapeHTML(item.id)}" aria-pressed="${item.id === selected?.id}">
         ${itemIcon(item.sprite, item.emoji)}
         <span class="bag-name">${escapeHTML(item.title)}</span>
-        <span class="bag-count">×${item.count}</span>
+        <span class="bag-count">${escapeHTML(item.countText)}</span>
       </button>`,
     )
     .join('')
@@ -944,10 +1544,10 @@ function renderBag(state: PanelState): string {
     selected === undefined
       ? ''
       : `<div class="dialog bag-dialog">
-        <p class="dialog-text">${escapeHTML(selected.description)}</p>
+        <p class="dialog-text" data-line-context="${escapeHTML(selected.id)}">${escapeHTML(selected.description)}</p>
         ${
           selected.usable
-            ? `<button class="dialog-action" data-use="${escapeHTML(selected.id)}">${escapeHTML(state.strings.use)}</button>`
+            ? `<button class="btn primary dialog-action" data-use="${escapeHTML(selected.id)}">${escapeHTML(state.strings.use)}</button>`
             : selected.hint === undefined
               ? ''
               : `<p class="dialog-note">${escapeHTML(selected.hint)}</p>`
@@ -969,86 +1569,472 @@ const dexNumber = (id: number): string => `#${String(id).padStart(3, '0')}`
  * the silhouette and its number — enough to want it, not enough to spoil it.
  */
 function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number] | undefined): string {
-  if (dexSelected === undefined) return ''
+  if (dexSelected === undefined) {
+    cardShown.delete('dex')
+    return ''
+  }
   const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
+  // A never-met species has no entry to wait for; every other card waits for its own briefly.
+  const phase = cardPhase('dex', dexSelected, state, sp !== undefined)
+  // The grid behind the sheet is veiled, as the window over Home veils the scene (Diego): the
+  // card reads as open on top, and a click on the veil closes it.
+  const veil = `<div class="dex-backdrop${phase.opening ? ' opening' : ''}" data-dex-close aria-hidden="true"></div>`
 
-  if (sp === undefined) {
-    return `
-    <div class="dex-detail locked">
-      <div class="dex-entry-head">
+  if (sp === undefined || sp.status === 'seen') {
+    // Seen, as in the games: the genus and the types, and the line saying the rest comes with
+    // obtaining it (plan 9.7). Never met: the number and the silhouette, nothing to ask for.
+    const entry = sp === undefined ? undefined : pokedexEntry(state, sp.id)
+    return `${veil}
+    <div class="dex-detail locked${cardClasses(phase)}">
+      <div class="dex-entry-head device-casing flush">
+        <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(dexSelected)}</span>
         <span class="dex-entry-name">?????</span>
         ${close}
       </div>
       <div class="dex-entry-body">
-        <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+        <div class="portrait dex-screen"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+        <div class="body">
+          ${sp === undefined ? '' : entryFacts(entry)}
+          ${sp?.lure === undefined ? '' : lureOffer(sp.id, sp.lure)}
+        </div>
       </div>
+      ${entry?.lockedText === undefined ? '' : `<p class="dex-entry-note desc">${escapeHTML(entry.lockedText)}</p>`}
     </div>`
   }
 
-  // Every catch-log entry whose final form is this species: dates, wild badge, shiny star —
-  // all pre-formatted fields, laid out here rather than re-derived.
-  const entries = state.dexLog
-    .filter((e) => e.finalID === sp.id)
-    .slice(0, 4)
-    .map((e) => {
-      // Escaped once, at the join below. Escaping here as well double-encodes anything a
-      // translation happens to contain (`&`, an apostrophe) into visible `&amp;#39;`.
-      const parts = [
-        e.isActive ? state.strings.raisingBadge : (e.caughtText ?? ''),
-        e.isWild ? state.strings.wildBadge : '',
-      ].filter((part) => part !== '')
-      return `<div class="desc">${parts.map(escapeHTML).join(' · ')}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>`
-    })
-    .join('')
+  return veil + speciesCard(state, sp, close, false, phase)
+}
 
+/**
+ * Where a species card is in its life. `awaiting`: its entry was just asked for and is not here
+ * yet — the card stays unpainted for `ENTRY_GRACE_MS` rather than drawing its loading shapes and
+ * then growing into the entry a moment later (Diego: a flicker, then it expands). `opening`: its
+ * first painted frame, the only one that plays the entrance; a repaint (the entry arriving, a
+ * state push) must not play it again.
+ */
+interface CardPhase {
+  awaiting: boolean
+  opening: boolean
+}
+
+/** The species each card place last painted, for `opening`. */
+const cardShown = new Map<'dex' | 'window', number>()
+
+function cardPhase(
+  where: 'dex' | 'window',
+  speciesID: number,
+  state: PanelState,
+  hasEntry: boolean,
+): CardPhase {
+  const awaiting = hasEntry && entryAwaited(state, speciesID)
+  const opening = !awaiting && cardShown.get(where) !== speciesID
+  if (!awaiting) cardShown.set(where, speciesID)
+  return { awaiting, opening }
+}
+
+function cardClasses(phase: CardPhase): string {
+  return `${phase.awaiting ? ' awaiting' : ''}${phase.opening ? ' opening' : ''}`
+}
+
+/** How long a card waits unpainted for an entry the core answers from its disk cache. */
+const ENTRY_GRACE_MS = 400
+
+/**
+ * True while the species' entry was asked for less than `ENTRY_GRACE_MS` ago and has not come.
+ * The grace ending repaints, so a slow entry (the network's first read) shows its loading shapes.
+ */
+function entryAwaited(state: PanelState, speciesID: number): boolean {
+  const key = `${state.language}:${speciesID}`
+  if (dexEntries.has(key)) return false
+  pokedexEntry(state, speciesID)
+  const left = (entryAskedAt.get(key) ?? 0) + ENTRY_GRACE_MS - performance.now()
+  if (left <= 0) return false
+  if (!graceTimers.has(key)) {
+    graceTimers.add(key)
+    setTimeout(() => {
+      graceTimers.delete(key)
+      invalidate('dex')
+      render()
+    }, left + 10)
+  }
+  return true
+}
+
+const entryAskedAt = new Map<string, number>()
+const graceTimers = new Set<string>()
+
+/**
+ * A species' card — one component wherever a species is shown in full: the Pokédex detail, and
+ * the battle menu's Pokémon window over Home. The same head, a portrait of fixed size, the
+ * registration bar drawn like the shiny one (full width, its line under it), the catch log, the
+ * shiny road and the companion action. `close` is the caller's: each place closes its own way.
+ */
+function speciesCard(
+  state: PanelState,
+  sp: PanelState['dexSpecies'][number],
+  close: string,
+  inWindow = false,
+  phase: CardPhase = { awaiting: false, opening: false },
+): string {
+  const entry = pokedexEntry(state, sp.id)
   return `
-    <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
-      <div class="dex-entry-head">
+    <div class="dex-detail${sp.isShiny ? ' shiny' : ''}${cardClasses(phase)}">
+      <div class="dex-entry-head device-casing flush">
+        <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(sp.id)}</span>
-        <span class="dex-entry-name">${escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
+        <span class="dex-entry-name">${sp.name === `#${sp.id}` ? '' : escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
         ${close}
       </div>
-      <div class="dex-entry-body">
-        <div class="portrait">
-          <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
-               data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+      <div class="dex-entry-scroll">
+        <div class="dex-entry-body">
+          <div class="portrait dex-screen">
+            <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
+                 data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+          </div>
+          <div class="body">
+            ${entryFacts(entry)}
+            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+          </div>
         </div>
-        <div class="body">
-          <span class="rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
-          ${sp.isRaising ? `<div class="desc">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
-          ${entries}
+        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'line')}
+        <div class="dex-entry-game">
+          ${registrationLine(sp)}
+          ${sp.shinyBar === undefined ? '' : shinySection(sp.id, sp.shinyBar)}
+          ${
+            sp.isCompanion
+              ? `<div class="tag state companion-tag">${escapeHTML(state.strings.companionBadge)}</div>`
+              : sp.canChoose
+                ? `<button class="btn primary dex-choose" data-companion="${sp.id}">${escapeHTML(state.strings.chooseCompanion)}</button>`
+                : ''
+          }
         </div>
+        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'text')}
       </div>
     </div>`
 }
 
+/**
+ * The registration on one line (Diego): the bar, and beside it the figure still to go — or, once
+ * registered, the date it happened. No "Registered" word: the green bar and the card in colour
+ * already say it, and the catch dates belong to the catch log. The sentence is the tooltip and
+ * what a screen reader hears.
+ */
+function registrationLine(sp: PanelState['dexSpecies'][number]): string {
+  const registered = sp.status === 'registered'
+  const label = (registered ? sp.registeredLabel : undefined) ?? sp.percentText
+  const figure = registered ? (sp.registeredDateText ?? '') : sp.percentShortText
+  return `<div class="reg-line" title="${escapeHTML(label)}">
+      ${expMeter(sp.percent, { label, done: registered })}
+      ${figure === '' ? '' : `<span class="reg-figure">${escapeHTML(figure)}</span>`}
+    </div>`
+}
+
+/**
+ * The species' Pokédex entry for this language, or `undefined` while it is on its way — asked of
+ * the host the first time a card shows it (plan 9.7). The answer repaints the card.
+ */
+function pokedexEntry(state: PanelState, speciesID: number): PanelPokedexEntry | undefined {
+  const key = `${state.language}:${speciesID}`
+  const entry = dexEntries.get(key)
+  if (entry === undefined && !entriesAsked.has(key)) {
+    entriesAsked.add(key)
+    entryAskedAt.set(key, performance.now())
+    vscode.postMessage({ type: 'dexEntry', speciesID })
+    // An answer that never comes (the worker restarting, a request lost) must not leave the
+    // card loading for good (code review 9.12 #8): it says so, and the next change asks again.
+    setTimeout(() => {
+      if (dexEntries.has(key) || current === undefined) return
+      dexEntries.set(key, {
+        speciesID,
+        types: [],
+        heightLabel: '',
+        weightLabel: '',
+        statsTitle: '',
+        lineTitle: '',
+        line: [],
+        unavailableText: current.strings.dexEntryUnavailable,
+      })
+      entriesFailed.add(key)
+      invalidate('dex')
+      render()
+    }, ENTRY_TIMEOUT_MS)
+  }
+  return entry
+}
+
+/** How long a card waits for its entry before saying it is unavailable. */
+const ENTRY_TIMEOUT_MS = 8_000
+
+/**
+ * What the entries depend on — which species are seen, obtained, registered, shiny. An entry
+ * cached while a species was only seen hides its text and stats, and the forms of its line not
+ * yet met are "???": when any of that changes, every entry is asked again (the core keeps them
+ * on disk, so this costs no network). Entries that never came back are retried too.
+ */
+function forgetEntriesOnChange(state: PanelState): boolean {
+  const ownership = state.dexSpecies.map((sp) => `${sp.id}${sp.status[0]}${sp.shiny[0]}`).join(',')
+  if (ownership === entriesOwnership && entriesFailed.size === 0) return false
+  if (ownership !== entriesOwnership) {
+    dexEntries.clear()
+    entriesAsked.clear()
+  } else {
+    for (const key of entriesFailed) {
+      dexEntries.delete(key)
+      entriesAsked.delete(key)
+    }
+  }
+  entriesFailed.clear()
+  entriesOwnership = ownership
+  // A card on screen asks again only if it is drawn again.
+  invalidate('dex')
+  return true
+}
+
+/** Beside the portrait: genus, types, and the size readouts — or their shapes while loading. */
+function entryFacts(entry: PanelPokedexEntry | undefined): string {
+  if (entry === undefined) {
+    return `<div class="dex-entry-loading" aria-hidden="true"><i></i><i></i><i></i></div>`
+  }
+  const types = entry.types
+    .map(
+      (type) =>
+        `<span class="tag xs type-badge type-${escapeHTML(type.id)}">${escapeHTML(type.label)}</span>`,
+    )
+    .join('')
+  const measure = (label: string, value: string | undefined): string =>
+    value === undefined
+      ? ''
+      : `<span class="dex-measure lcd"><span class="dex-measure-label">${escapeHTML(label)}</span><b>${escapeHTML(value)}</b></span>`
+  const measures =
+    measure(entry.heightLabel, entry.heightText) + measure(entry.weightLabel, entry.weightText)
+  return `${entry.genusText === undefined ? '' : `<div class="dex-genus">${escapeHTML(entry.genusText)}</div>`}
+    ${types === '' ? '' : `<div class="dex-types">${types}</div>`}
+    ${measures === '' ? '' : `<div class="dex-measures">${measures}</div>`}`
+}
+
+/**
+ * Under the portrait: the entry's text in the dialog box (written letter by letter, as the games
+ * do), the base stats as bars, and the evolution line — each form a way to its own card
+ * (`openAttr`: the Pokédex selects a cell, the window over Home reopens on it). A form never seen
+ * is a silhouette with no name and no way in.
+ */
+function entryPages(
+  entry: PanelPokedexEntry | undefined,
+  speciesID: number,
+  openAttr: string,
+  part: 'line' | 'text',
+): string {
+  if (entry === undefined) return ''
+  if (entry.unavailableText !== undefined) {
+    return part === 'text'
+      ? `<p class="dex-entry-note desc">${escapeHTML(entry.unavailableText)}</p>`
+      : ''
+  }
+  const flavor =
+    entry.flavorText === undefined
+      ? ''
+      : `<div class="dialog dex-flavor"><p class="dialog-text" data-line-context="dex-${speciesID}">${escapeHTML(entry.flavorText)}</p></div>`
+  const locked =
+    entry.lockedText === undefined
+      ? ''
+      : `<p class="dex-entry-note desc">${escapeHTML(entry.lockedText)}</p>`
+  const stats =
+    entry.stats === undefined
+      ? ''
+      : `<div class="dex-entry-page">
+          <div class="dex-page-title"><span>${escapeHTML(entry.statsTitle)}</span><span>${escapeHTML(entry.statTotalText ?? '')}</span></div>
+          <div class="dex-stats">${entry.stats
+            .map(
+              (stat) => `<span class="dex-stat-label">${escapeHTML(stat.label)}</span>
+                <b class="dex-stat-value">${escapeHTML(stat.valueText)}</b>
+                ${gameMeter(stat.percent, { surface: 'paper', size: 'thin', hidden: true })}`,
+            )
+            .join('')}</div>
+        </div>`
+  const line =
+    entry.line.length < 2
+      ? ''
+      : `<div class="dex-entry-page">
+          <div class="dex-page-title"><span>${escapeHTML(entry.lineTitle)}</span></div>
+          <div class="dex-line">${entry.line
+            .map((form, i) => {
+              const arrow =
+                i > 0 && form.stage > entry.line[i - 1]!.stage
+                  ? '<span class="dex-line-arrow" aria-hidden="true">›</span>'
+                  : ''
+              const icon = `<img src="${menuIconURL(form.id)}" alt="" data-fallback="${spriteURL(form.id, false, false)}">`
+              const known = form.status !== 'unknown'
+              const tag = known && !form.isThis ? 'button' : 'span'
+              const open = known && !form.isThis ? ` ${openAttr}="${form.id}"` : ''
+              return `${arrow}<${tag} class="dex-line-form status-${form.status}${form.isThis ? ' this' : ''}"${open}>${icon}<span>${escapeHTML(form.name)}</span></${tag}>`
+            })
+            .join('')}</div>
+        </div>`
+  // The line beside the facts, up top; the entry's text and stats close the card, under the
+  // game's own part (Diego: they read last).
+  if (part === 'line') return line
+  const text = `${flavor}${locked}${stats}`
+  return text === '' ? '' : `<div class="dex-entry-text">${text}</div>`
+}
+
+/**
+ * A species met but not yet owned can be lured: a price tag like the shop's, greyed out with its
+ * price still showing when the wallet is short. Every word and figure is the core's.
+ */
+function lureOffer(speciesID: number, offer: NonNullable<PanelDexSpecies['lure']>): string {
+  return `<div class="lcd-actions lure-actions">
+      <button class="btn priced" data-lure="${speciesID}" data-title="${escapeHTML(offer.confirmTitle)}"
+              data-price="${escapeHTML(offer.priceText)}" aria-label="${escapeHTML(offer.label)}"
+              ${offer.enabled ? '' : 'disabled'}>
+        <span class="verb">${escapeHTML(offer.text)}</span>
+        <span class="price-tag"><span class="cost${offer.enabled ? '' : ' cant'}">${escapeHTML(offer.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span></span>
+      </button>
+    </div>`
+}
+
+/** The lure running, on Home under the scene: the game's Lure item and the core's line. */
+function renderLure(state: PanelState): string {
+  const lure = state.lure
+  if (lure === undefined) return ''
+  return `<div class="lure-status" role="status">
+      <img class="lure-icon" src="${itemSpriteURL('lure')}" alt="">
+      <span class="lure-text">${escapeHTML(lure.text)}</span>
+    </div>`
+}
+
+/**
+ * A registered species' road to its shiny: the gold bar on the device's track, its sentence,
+ * and what the wallet can buy of it — the shop's own price tags, because it is the same act of
+ * paying tokens for something. Every figure and word is the core's.
+ */
+function shinySection(speciesID: number, bar: NonNullable<PanelDexSpecies['shinyBar']>): string {
+  const boosts = bar.boosts
+    .map(
+      (b) => `<button class="btn priced" data-boost="${speciesID}" data-amount="${b.amount}"
+          data-title="${escapeHTML(b.confirmTitle)}" data-price="${escapeHTML(b.priceText)}"
+          aria-label="${escapeHTML(b.label)}">
+          <span class="verb">${escapeHTML(b.text)}</span>
+          <span class="price-tag"><span class="cost">${escapeHTML(b.priceText)}<img class="coin" src="${itemSpriteURL('nugget')}" alt=""></span></span>
+        </button>`,
+    )
+    .join('')
+  return `<div class="shiny-section">
+      ${gameMeter(bar.percent, { surface: 'device', tone: 'shiny', glyph: '★', label: bar.text })}
+      <div class="desc shiny-text">${escapeHTML(bar.text)}</div>
+      ${boosts === '' ? '' : `<div class="shiny-boosts lcd-actions">${boosts}</div>`}
+      ${bar.boostHint === undefined ? '' : `<div class="desc shiny-hint">${escapeHTML(bar.boostHint)}</div>`}
+    </div>`
+}
+
+/**
+ * The medals: a medallion each, gold once earned and grey until then, with the bar to it. Every
+ * name, sentence and figure is the core's.
+ */
+function renderMedals(state: PanelState): string {
+  const items = state.medals.items
+    .map(
+      (
+        m,
+      ) => `<div class="medal${m.earned ? ' earned' : ''}" role="group" aria-label="${escapeHTML(m.name)}">
+        <span class="medallion" aria-hidden="true">★</span>
+        <div class="medal-body">
+          <span class="medal-name">${escapeHTML(m.name)}</span>
+          <span class="desc">${escapeHTML(m.description)}</span>
+          <div class="medal-progress">
+            ${gameMeter(m.percent, { surface: 'paper', ...(m.earned ? { tone: 'shiny' as const } : {}), label: m.progressText })}
+            <span class="medal-count">${escapeHTML(m.progressText)}</span>
+          </div>
+        </div>
+      </div>`,
+    )
+    .join('')
+  return `<div class="medals">${items}</div>`
+}
+
+/**
+ * Today's and this week's challenges on Home: a compact board, each with its bar and reward,
+ * done ones checked. Absent until the day's first fold, as the core sends it.
+ */
+function renderChallenges(state: PanelState): string {
+  const board = state.challenges
+  if (board === undefined || board.items.length === 0) return ''
+  const rows = board.items
+    .map(
+      (c) => `<li class="challenge period-${escapeHTML(c.period)}${c.done ? ' done' : ''}">
+        <span class="challenge-check" aria-hidden="true">${c.done ? '✓' : ''}</span>
+        <div class="challenge-body">
+          <div class="challenge-line">
+            <span class="challenge-period">${escapeHTML(c.periodText)}</span>
+            <span class="challenge-text">${escapeHTML(c.text)}</span>
+          </div>
+          <div class="challenge-progress">
+            ${gameMeter(c.percent, { surface: 'paper', ...(c.done ? { tone: 'done' as const } : {}), label: c.progressText })}
+            <span class="challenge-count">${escapeHTML(c.progressText)}</span>
+          </div>
+        </div>
+        <span class="tag gain challenge-reward">${escapeHTML(c.rewardText)}</span>
+      </li>`,
+    )
+    .join('')
+  return `<section class="challenges">
+      <h2 class="section">${escapeHTML(board.heading)}</h2>
+      <ul class="challenge-list">${rows}</ul>
+    </section>`
+}
+
 function renderDex(state: PanelState): string {
+  // The segments are the device's buttons, in the head's casing under its row (plan 09 §9.3).
   const segments = `
-    <div class="segments">
+    <div class="segments head-segments">
       <button class="seg" data-seg="species" aria-selected="${dexSegment === 'species'}">
-        ${escapeHTML(state.strings.segmentSpecies)} (${state.dexSpecies.length})
+        ${escapeHTML(state.dexSummary.speciesSegmentText)}
+      </button>
+      <button class="seg" data-seg="shiny" aria-selected="${dexSegment === 'shiny'}">
+        ${escapeHTML(state.dexSummary.shinySegmentText)}
+      </button>
+      <button class="seg" data-seg="medals" aria-selected="${dexSegment === 'medals'}">
+        ${escapeHTML(state.medals.headingText)}
       </button>
       <button class="seg" data-seg="log" aria-selected="${dexSegment === 'log'}">
-        ${escapeHTML(state.strings.segmentLog)} (${state.dexLog.length})
+        ${escapeHTML(state.dexSummary.logSegmentText)}
       </button>
     </div>`
 
-  if (dexSegment === 'species') {
+  if (dexSegment === 'medals') return `${dexHead(state, undefined, segments)}${renderMedals(state)}`
+
+  if (dexSegment === 'species' || dexSegment === 'shiny') {
+    // The Shinydex is the same grid seen through the shiny axis: a shiny registered is lit in
+    // gold, a registered species shows its shiny bar, anything else is a silhouette.
+    const shinydex = dexSegment === 'shiny'
     // The whole huntable pool, silhouettes included: an all-caught-species list reads as an
     // archive, but 625 dark shapes read as a goal. Locked cells carry only the silhouette and
     // the number — what is behind them stays a surprise, the same rule the wild queue follows.
-    const done = state.dexSpecies.length
+    // The core counts: the completion is registered species, the collection what is owned.
+    const summary = state.dexSummary
     const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
-    const completion = `
-      <div class="dex-progress">
-        <span class="desc">${done} / ${ANIMATED_SPRITE_MAX}</span>
-        <div class="bar"><i data-fill="${Math.min(100, Math.round((100 * done) / ANIMATED_SPRITE_MAX))}"></i></div>
-      </div>`
-    const hint =
-      done === 0
-        ? `<p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
-      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
+    // A region narrows the grid to its numbers and puts its own progress on the head.
+    const region = summary.regions.find((r) => r.id === dexRegion)
+    const scope =
+      region !== undefined
+        ? shinydex
+          ? {
+              text: region.shinyProgressText,
+              percent: region.shinyPercent,
+              shiny: true,
+              label: region.name,
+            }
+          : { text: region.progressText, percent: region.percent, label: region.name }
+        : shinydex
+          ? { text: summary.shinyProgressText, percent: summary.shinyPercent, shiny: true }
+          : { text: summary.progressText, percent: summary.percent }
+    // The Shinydex says how a shiny is earned; the collection, how a first Pokémon is had.
+    const hint = shinydex
+      ? summary.shinyRegistered === 0
+        ? emptyState(state.strings.emptyShinydex)
+        : ''
+      : summary.owned === 0
+        ? emptyState(state.strings.emptyCollection)
         : ''
 
     // 649 cells is ~217 rows in a sidebar. Scrolling to a species is not something anyone does
@@ -1058,62 +2044,90 @@ function renderDex(state: PanelState): string {
     const query = dexQuery.trim().toLowerCase()
     const numeric = /^#?\d+$/.test(query) ? String(Number(query.replace('#', ''))) : undefined
     const matches = (id: number, sp: PanelState['dexSpecies'][number] | undefined): boolean => {
-      if (dexOwnedOnly && sp === undefined) return false
+      if (region !== undefined && (id < region.from || id > region.to)) return false
+      if (dexOwnedOnly && (sp === undefined || sp.status === 'seen')) return false
+      if (dexOwnedOnly && shinydex && sp?.shiny === 'none') return false
       if (query === '') return true
       if (numeric !== undefined) return String(id).includes(numeric)
-      return sp !== undefined && sp.name.toLowerCase().includes(query)
+      // Every species can be found by name — one not met yet by the core's list of names, while
+      // its card keeps the silhouette: the search finds it, the card does not give it away
+      // (Diego). "Obtained only" above is what narrows the search to what is had.
+      const name = sp?.name ?? summary.names[id]
+      return name !== undefined && name.toLowerCase().includes(query)
     }
 
-    const controls = `
+    // Search, order, "obtained only" and the regions, on the device's own screen under its
+    // buttons — folded with the head's chevron, open until folded (plan 09 §9.3).
+    const controls = openDrawers.has('dex-filters-folded')
+      ? '<div id="dex-filters" hidden></div>'
+      : `<div class="dex-filters lcd" id="dex-filters" role="group" aria-label="${escapeHTML(state.strings.dexFiltersToggle)}">
       <div class="dex-controls">
-        <input id="dex-search" type="search" class="dex-search" value="${escapeHTML(dexQuery)}"
-               placeholder="${escapeHTML(state.strings.dexSearch)}"
-               aria-label="${escapeHTML(state.strings.dexSearch)}">
+        ${listTools({
+          searchAttr: 'id="dex-search"',
+          query: dexQuery,
+          placeholder: state.strings.dexSearch,
+          sorts: summary.sorts,
+          sort: dexSort,
+          sortAttr: 'data-dex-sort',
+          dirAttr: 'data-dex-dir',
+          reverse: dexReverse,
+          strings: state.strings,
+        })}
         <button class="chip" data-dex-owned aria-pressed="${dexOwnedOnly}">
           ${escapeHTML(state.strings.dexOwnedOnly)}
         </button>
-      </div>`
+      </div>
+      <div class="dex-controls region-chips" role="group">
+        ${summary.regions
+          .map((r) => {
+            // The Shinydex counts each region's shinies; the collection, its registered ones.
+            const text = shinydex ? r.shinyProgressText : r.progressText
+            const done = (shinydex ? r.shinyPercent : r.percent) >= 100
+            return `<button class="chip region region-${escapeHTML(r.id)}${done ? ' done' : ''}" data-dex-region="${escapeHTML(r.id)}"
+              aria-pressed="${r.id === dexRegion}" title="${escapeHTML(text)}">${escapeHTML(r.name)}<span class="region-pct">${escapeHTML(text)}</span></button>`
+          })
+          .join('')}
+      </div>
+    </div>`
 
     const cells: string[] = []
-    for (let id = 1; id <= ANIMATED_SPRITE_MAX; id++) {
-      const sp = byID.get(id)
-      if (!matches(id, sp)) continue
-      const selected = id === dexSelected ? ' selected' : ''
+    // The order the grid reads in: number by default; by progress or rarity, the obtained first
+    // (most advanced or rarest first), the silhouettes after them in number order.
+    const ids = Array.from({ length: ANIMATED_SPRITE_MAX }, (_, i) => i + 1).filter((id) =>
+      matches(id, byID.get(id)),
+    )
+    if (dexSort !== 'number') {
+      const key = (id: number): number => {
+        const sp = byID.get(id)
+        if (sp === undefined || sp.status === 'seen') return -1
+        return dexSort === 'rarity' ? sp.rarityRank : sp.percent
+      }
+      // Turned around, the obtained still lead: the silhouettes have no progress or rarity to
+      // order by, so they stay after them in number order either way.
+      ids.sort((a, b) => {
+        const ka = key(a)
+        const kb = key(b)
+        if (ka < 0 !== kb < 0) return ka < 0 ? 1 : -1
+        return (dexReverse ? ka - kb : kb - ka) || a - b
+      })
+    } else if (dexReverse) ids.reverse()
+    for (const id of ids) {
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
-      const tabIndex = ` tabindex="${id === (dexSelected ?? 1) ? 0 : -1}"`
-      if (sp === undefined) {
-        cells.push(`
-        <button class="cell locked${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
-          <img src="${spriteURL(id, false, false)}" alt="" loading="lazy">
-          <div class="num">${dexNumber(id)}</div>
-        </button>`)
-      } else {
-        cells.push(`
-        <button class="cell owned rarity-${escapeHTML(sp.rarity)}${sp.isShiny ? ' shiny' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
-                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.rarityText)}">
-          ${sp.isShiny ? '<span class="star" title="shiny">★</span>' : ''}
-          <img src="${spriteURL(sp.id, sp.isShiny, false)}" alt="" loading="lazy">
-          <div class="num">${dexNumber(id)}</div>
-          <div class="name">${escapeHTML(sp.name)}</div>
-          ${sp.isRaising ? `<div class="badge">${escapeHTML(state.strings.raisingBadge)}</div>` : ''}
-        </button>`)
-      }
+      cells.push(dexCell(state, id, byID.get(id), shinydex, id === (dexSelected ?? 1)))
     }
     const grid =
       cells.length === 0
         ? `<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
-        : `<div class="dex">${cells.join('')}</div>`
+        : `<div class="dex-scroll" data-keep-scroll="dex-grid"><div class="dex">${cells.join('')}</div></div>`
     // The detail renders after the grid but floats fixed at the bottom of the view: a card at
     // the top of a 649-cell grid opens off-screen when the click happened four screens down.
-    return `${dexHead(state, completion)}${segments}${controls}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
+    return `${dexHead(state, scope, segments + controls)}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
   }
 
-  const head = dexHead(state, '')
+  const head = dexHead(state, undefined, segments)
   if (state.dexLog.length === 0) {
-    return `${head}${segments}
-      <p class="empty">${escapeHTML(state.strings.dexEmpty)}<br>
-      <span class="desc">${escapeHTML(state.strings.dexEmptyHint)}</span></p>`
+    return `${head}${emptyState(state.strings.emptyLog)}`
   }
 
   // Rarity chips, counted by the core. The log itself stays chronological — this is the
@@ -1123,7 +2137,7 @@ function renderDex(state: PanelState): string {
       ${state.dexLogFilters
         .map(
           (filter) => `<button class="chip" data-dex-filter="${escapeHTML(filter.id)}"
-            aria-pressed="${filter.id === dexLogFilter}">${escapeHTML(filter.label)} ${filter.count}</button>`,
+            aria-pressed="${filter.id === dexLogFilter}">${escapeHTML(filter.label)} ${escapeHTML(filter.countText)}</button>`,
         )
         .join('')}
     </div>`
@@ -1131,36 +2145,159 @@ function renderDex(state: PanelState): string {
   const visible =
     dexLogFilter === 'all' ? state.dexLog : state.dexLog.filter((e) => e.rarity === dexLogFilter)
   if (visible.length === 0) {
-    return `${head}${segments}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+    return `${head}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
   }
 
   const rows = visible
     .map(
       (e) => `
-      <div class="row log-row rarity-${escapeHTML(e.rarity)}${e.isActive ? ' active' : ''}">
+      <div class="row log-row rarity-${escapeHTML(e.rarity)}">
         <img class="thumb" src="${spriteURL(e.finalID, e.isShiny, false)}" alt="" loading="lazy">
         <div class="body">
           <div class="title">${escapeHTML(e.name)}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>
           <div class="desc">${escapeHTML(e.rarityText)}${e.caughtText === undefined ? '' : ` · ${escapeHTML(e.caughtText)}`}</div>
         </div>
-        ${e.isActive ? `<span class="desc">${escapeHTML(state.strings.raisingBadge)}</span>` : ''}
-        ${e.isWild ? `<span class="badge wild">${escapeHTML(state.strings.wildBadge)}</span>` : ''}
+        ${e.isWild ? `<span class="tag xs">${escapeHTML(state.strings.wildBadge)}</span>` : ''}
       </div>`,
     )
     .join('')
-  return `${head}${segments}${chips}<div class="log">${rows}</div>`
+  return `${head}${chips}<div class="log">${rows}</div>`
 }
 
 /**
- * The top of the device: the Pokédex's own red, its title, and — on the collection — how far
- * along it is. The one accent this tab spends; everything under it stays the editor's.
+ * One Pokédex entry in the grid: a paper card with the number and the rarity (or "companion")
+ * on top, the sprite on the device's little screen, right under it the bar with its percentage —
+ * green and without one at 100% — and the name. What is not had yet is the games' silhouette on
+ * a dark screen; met, on a lit one. In the Shinydex a shiny shows itself once it is the player's
+ * (its shiny form unlocked or registered), with the gold bar; everything else is a silhouette,
+ * with the gold road to its shiny when that road has begun (Diego).
  */
-function dexHead(state: PanelState, progress: string): string {
-  return `<div class="dex-head">
-      <span class="dex-lens" aria-hidden="true"></span>
-      <span class="dex-title">${escapeHTML(state.strings.tabs.dex)}</span>
-      ${progress}
+function dexCell(
+  state: PanelState,
+  id: number,
+  sp: PanelDexSpecies | undefined,
+  shinydex: boolean,
+  focusable: boolean,
+): string {
+  const selected = id === dexSelected ? ' selected' : ''
+  const tabIndex = ` tabindex="${focusable ? 0 : -1}"`
+  // A shiny the player has shows in the Shinydex from the moment its shiny form is unlocked, not
+  // only once its gold bar is full (Diego). The core decides which those are; the count agrees.
+  const isShinyOwned = sp !== undefined && sp.shiny !== 'none'
+  const shown = sp !== undefined && sp.status !== 'seen' && (!shinydex || isShinyOwned)
+  if (!shown) {
+    const seen = sp !== undefined
+    const road =
+      shinydex && sp?.shinyBar !== undefined
+        ? `<span class="cell-bar">${gameMeter(sp.shinyBar.percent, { surface: 'device', tone: 'shiny', glyph: '★', size: 'thin', hidden: true })}<span class="cell-pct">${escapeHTML(sp.shinyBar.percentShortText)}</span></span>`
+        : ''
+    return `
+        <button class="cell locked${seen ? ' seen' : ''}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
+          <span class="cell-top"><span class="num">${dexNumber(id)}</span></span>
+          <span class="cell-screen"><img src="${spriteURL(id, false, false)}" alt="" loading="lazy"></span>
+          ${road}
+        </button>`
+  }
+  const shiny = shinydex ? isShinyOwned : sp.shiny === 'registered' || sp.isShiny
+  // A species whose line never loaded has no name yet, only the core's `#N` fallback — and the
+  // number is already on the card.
+  const name = sp.name === `#${id}` ? '' : `<span class="name">${escapeHTML(sp.name)}</span>`
+  // Under the screen, the bar and its figure on its right: the EXP bar and how far it is, or in
+  // the Shinydex the gold road to the shiny and how far that is.
+  const bar = shinydex
+    ? `${gameMeter(sp.shiny === 'registered' ? 100 : (sp.shinyBar?.percent ?? 0), { surface: 'device', tone: 'shiny', glyph: '★', size: 'thin', hidden: true })}${
+        sp.shiny === 'registered'
+          ? ''
+          : `<span class="cell-pct">${escapeHTML(sp.shinyBar?.percentShortText ?? '')}</span>`
+      }`
+    : sp.status === 'registered'
+      ? expMeter(100, { size: 'thin', hidden: true, done: true })
+      : `${expMeter(sp.percent, { size: 'thin', hidden: true })}<span class="cell-pct">${escapeHTML(sp.percentShortText)}</span>`
+  const star = shiny
+    ? '<span class="star" title="shiny">★</span>'
+    : sp.shiny === 'unlocked'
+      ? '<span class="star open" title="shiny">☆</span>'
+      : ''
+  const road = shinydex && sp.shinyBar !== undefined ? sp.shinyBar.text : sp.percentText
+  // The companion says so in words — the whole top row of its card, and its name — not only with
+  // its blue edge. "Tu compañero" beside the number ran the card off its edge (Diego); the number
+  // and the rarity move to the name then.
+  const label = sp.isCompanion
+    ? [sp.name, dexNumber(id), state.strings.companionBadge, sp.rarityText, road].join(' · ')
+    : [sp.name, sp.rarityText, road].join(' · ')
+  const top = sp.isCompanion
+    ? `<span class="tag xs state">${escapeHTML(state.strings.companionBadge)}</span>`
+    : `<span class="num">${dexNumber(id)}</span>
+            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>`
+  return `
+        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
+                data-dex="${id}"${tabIndex} title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">
+          <span class="cell-top">
+            ${top}
+          </span>
+          <span class="cell-screen">${star}<img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy"></span>
+          <span class="cell-bar">${bar}</span>
+          ${name}
+        </button>`
+}
+
+/**
+ * A tab's head, the lid's twin (plan 09 §9.2): the casing row with its lens, the three lights
+ * (the official limits, as on the lid), the tab's name in the logo's style and a screen on the
+ * right — and, under the row, a thin bar when the screen's figure is a progress. One piece, so
+ * the lid, the Pokédex and the shop read as the same device.
+ */
+function deviceHead(
+  state: PanelState,
+  o: { title: string; screen?: string; bar?: string; className?: string; inside?: string },
+): string {
+  return `<div class="device-head device-casing${o.className === undefined ? '' : ` ${o.className}`}">
+      <span class="brand">
+        <span class="device-lens" aria-hidden="true"></span>
+        <span class="device-leds" aria-hidden="true">${lidLights(state)}</span>
+        <span class="brand-name device-head-title">${escapeHTML(o.title)}</span>
+      </span>
+      ${o.screen ?? ''}
+      ${o.bar === undefined ? '' : `<div class="device-head-bar">${o.bar}</div>`}
+      ${o.inside ?? ''}
     </div>`
+}
+
+/** The lid's three lights: the first three official limits' severity, dark without one. */
+function lidLights(state: PanelState): string {
+  return state.lid.lights.map((light) => `<i class="led-${escapeHTML(light)}"></i>`).join('')
+}
+
+/**
+ * The Pokédex's head: its count on the screen, the bar of that count under the row, and inside
+ * the casing what drives the grid — the segments and, on the collection, the filters' screen,
+ * which the chevron beside the count folds.
+ */
+function dexHead(
+  state: PanelState,
+  scope?: { text: string; percent: number; shiny?: boolean; label?: string },
+  inside = '',
+): string {
+  if (scope === undefined)
+    return deviceHead(state, { title: state.strings.tabs.dex, className: 'dex-head', inside })
+  const label = scope.label === undefined ? scope.text : `${scope.label} · ${scope.text}`
+  const open = !openDrawers.has('dex-filters-folded')
+  const fold = `<button class="head-fold" data-drawer="dex-filters-folded" aria-expanded="${open}" aria-controls="dex-filters"
+      title="${escapeHTML(state.strings.dexFiltersToggle)}" aria-label="${escapeHTML(state.strings.dexFiltersToggle)}">
+      <i class="codicon codicon-chevron-down" aria-hidden="true"></i></button>`
+  return deviceHead(state, {
+    title: state.strings.tabs.dex,
+    className: 'dex-head',
+    screen: `${fold}<span class="wallet-badge lcd head-screen" title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">
+        <span class="wallet-value">${escapeHTML(scope.text)}</span>
+      </span>`,
+    bar: gameMeter(scope.percent, {
+      surface: 'casing',
+      hidden: true,
+      ...(scope.shiny === true ? { tone: 'shiny' as const } : {}),
+    }),
+    inside,
+  })
 }
 
 function renderSettings(state: PanelState): string {
@@ -1206,14 +2343,22 @@ function renderSettings(state: PanelState): string {
         ${refresh}
       </div>
     </div>
+    <label class="setting toggle-setting">
+      <input type="checkbox" role="switch" id="keep-completed"${state.keepCompletedCompanion ? ' checked' : ''}
+             aria-describedby="keep-completed-hint">
+      <span class="toggle-text">
+        <span class="toggle-label">${escapeHTML(state.strings.keepCompleted)}</span>
+        <span class="toggle-hint" id="keep-completed-hint">${escapeHTML(state.strings.keepCompletedHint)}</span>
+      </span>
+    </label>
     <h2 class="section">${escapeHTML(state.strings.trainer)}</h2>
     <div class="setting trainer-setting">
       <div class="trainer-grid">${trainers}</div>
     </div>
     <h2 class="section">${escapeHTML(state.strings.saveSection)}</h2>
     <div class="setting save-actions">
-      <button class="action secondary" id="export">${escapeHTML(state.strings.exportSave)}</button>
-      <button class="action secondary" id="import">${escapeHTML(state.strings.importSave)}</button>
+      <button class="btn" id="export">${escapeHTML(state.strings.exportSave)}</button>
+      <button class="btn" id="import">${escapeHTML(state.strings.importSave)}</button>
     </div>`
 }
 
@@ -1323,6 +2468,71 @@ function applyState(state: PanelState, serialized?: string): void {
  * this same pair of elements, and a progress bar with no role is invisible to a screen reader
  * however many of them there are.
  */
+/**
+ * Places every `[data-span-from][data-span-to]` element over its bar as a segment, in percent.
+ * Like `paintBars`, through the CSSOM: the CSP forbids inline `style` attributes.
+ */
+function placeSpans(root: HTMLElement): void {
+  for (const span of root.querySelectorAll<HTMLElement>('[data-span-from][data-span-to]')) {
+    const from = Math.max(0, Math.min(100, Number(span.dataset['spanFrom']) || 0))
+    const to = Math.max(from, Math.min(100, Number(span.dataset['spanTo']) || 0))
+    span.style.left = `${from}%`
+    span.style.width = `${to - from}%`
+  }
+}
+
+/**
+ * Whether a line fits is a question of its words, its figures and the language, never of one
+ * panel width: each `[data-fit]` measures its `[data-fit-text]` at full length and takes `.tight`
+ * when it does not fit, for the stylesheet to give the short form (the lid's line) or to drop
+ * what stands beside it (the player plate's percentage).
+ */
+function fitTight(): void {
+  for (const box of document.querySelectorAll<HTMLElement>('[data-fit]')) {
+    box.classList.remove('tight')
+    const text = box.querySelector<HTMLElement>('[data-fit-text]')
+    if (text !== null && text.scrollWidth > text.clientWidth + 1) box.classList.add('tight')
+  }
+}
+// A resize changes what fits without a render.
+new ResizeObserver(() => {
+  fitTight()
+  fitScrollers()
+}).observe(document.body)
+
+/**
+ * A list that scrolls on its own (`[data-keep-scroll]`, the Pokédex's grid): it keeps its place
+ * across a repaint, which recreates it, and the place is the list's, not the segment's — the
+ * collection and the Shinydex are the same 649 entries, so going from one to the other stays put.
+ */
+const keptScroll = new Map<string, number>()
+
+function keepScrolls(section: HTMLElement): void {
+  for (const list of section.querySelectorAll<HTMLElement>('[data-keep-scroll]'))
+    keptScroll.set(list.dataset['keepScroll'] ?? '', list.scrollTop)
+}
+
+/**
+ * Each such list takes the window's height from where it starts down, so the page above it —
+ * the head, its buttons and filters — stays put while only the list moves. Its place comes back
+ * here too, once it has its height (a list with no height cannot be scrolled into place).
+ */
+function fitScrollers(): void {
+  for (const list of document.querySelectorAll<HTMLElement>(
+    'main > section:not([hidden]) [data-keep-scroll]',
+  )) {
+    // Where it starts, plus the page's air under it: the list ends where the page would.
+    const below = Number.parseFloat(getComputedStyle(document.body).paddingBottom) || 0
+    list.style.setProperty(
+      '--scroll-top',
+      `${Math.round(list.getBoundingClientRect().top + window.scrollY + below)}px`,
+    )
+    const kept = keptScroll.get(list.dataset['keepScroll'] ?? '')
+    if (kept !== undefined && list.scrollTop !== kept) list.scrollTop = kept
+    keptScroll.delete(list.dataset['keepScroll'] ?? '')
+  }
+}
+
 function paintBars(root: HTMLElement): void {
   for (const fillElement of root.querySelectorAll<HTMLElement>('[data-fill]')) {
     const raw = Number(fillElement.dataset['fill'])
@@ -1361,21 +2571,17 @@ function render(): void {
   // of a sidebar — for a grid nobody was looking at.
   if (!painted.has(tab)) {
     const section = el(tab)
-    // The scene's sprites are animated GIFs. A repaint that recreates them restarts every
-    // animation at frame one, which reads as the whole stage flickering — so a sprite whose
-    // source did not change keeps its node across the repaint.
-    const kept = tab === 'home' ? sceneSprites(section) : new Map<string, HTMLImageElement>()
     const previousTerrain = section.querySelector<HTMLElement>('.wild-scene')?.dataset['terrain']
-    section.innerHTML = RENDERERS[tab](state)
-    if (kept.size > 0) {
-      for (const [key, fresh] of sceneSprites(section)) {
-        const old = kept.get(key)
-        if (old !== undefined && old.src === fresh.src) fresh.replaceWith(old)
-      }
-    }
+    const focused = focusInside(section)
+    keepScrolls(section)
+    keepingPictures(section, () => {
+      section.innerHTML = RENDERERS[tab](state)
+    })
+    restoreFocus(focused)
     changeTerrain(section, previousTerrain)
     painted.add(tab)
     paintBars(section)
+    placeSpans(section)
   }
 
   // Home wears the waiting count: the scene with the queue lives there now.
@@ -1397,7 +2603,7 @@ function render(): void {
     button.title = label
     button.setAttribute('aria-label', label)
   }
-  vscode.setState({ tab, dexSegment, dexSelected })
+  vscode.setState({ tab, dexSegment, dexSelected, drawers: [...openDrawers] })
 
   if (scroller !== null && scroller.scrollTop !== scrollTop) scroller.scrollTop = scrollTop
 
@@ -1410,6 +2616,10 @@ function render(): void {
   // Pokédex, would be news about nothing in particular.
   if (pendingWallet !== undefined && tab === 'home') playWalletChange(pendingWallet)
   pendingWallet = undefined
+  paintPCBox()
+  typeDialogs()
+  fitTight()
+  fitScrollers()
 }
 
 /**
@@ -1466,7 +2676,7 @@ function playWalletChange(change: PanelWalletChange): void {
   const badge = document.querySelector<HTMLElement>('#home .wallet-badge')
   if (badge === null) return
   const chip = document.createElement('span')
-  chip.className = `wallet-delta ${change.kind}`
+  chip.className = `tag m ${change.kind} wallet-delta`
   chip.textContent = change.text
   chip.setAttribute('aria-hidden', 'true')
   badge.append(chip)
@@ -1494,19 +2704,39 @@ function changeTerrain(root: HTMLElement, previous: string | undefined): void {
   scene.dataset['terrain'] = next
 }
 
-/** The scene's sprites by role, so a repaint can tell which of them are the same picture. */
-function sceneSprites(root: HTMLElement): Map<string, HTMLImageElement> {
-  const roles: [string, string][] = [
-    ['wild', '.wild-scene .wild-mon img'],
-    ['companion', '.wild-scene .companion-mon img'],
-    ['trainer', '.wild-scene img.trainer'],
-  ]
-  const found = new Map<string, HTMLImageElement>()
-  for (const [role, selector] of roles) {
-    const img = root.querySelector<HTMLImageElement>(selector)
-    if (img !== null) found.set(role, img)
+/**
+ * Repaints `root` keeping every picture whose source did not change: the old `<img>` node takes
+ * the new one's place, with the new one's attributes. A recreated picture is reloaded — blank
+ * for a frame — and an animated GIF restarts at frame one: on the scene that read as the stage
+ * flickering, and in the Pokédex as the card and the 649 cells behind its veil flashing at every
+ * button the card answered (Diego). Pictures pair up by source, in document order.
+ */
+function keepingPictures(root: HTMLElement, paint: () => void): void {
+  const pool = new Map<string, HTMLImageElement[]>()
+  for (const img of root.querySelectorAll('img')) {
+    const src = img.dataset['fellFrom'] ?? img.getAttribute('src')
+    if (src === null) continue
+    const same = pool.get(src)
+    if (same === undefined) pool.set(src, [img])
+    else same.push(img)
   }
-  return found
+  paint()
+  if (pool.size === 0) return
+  for (const fresh of root.querySelectorAll('img')) {
+    const old = pool.get(fresh.getAttribute('src') ?? '')?.shift()
+    if (old === undefined) continue
+    // A picture already on its fallback keeps showing it: its source is not the one asked for.
+    const settled = new Set(
+      old.dataset['fellFrom'] === undefined ? [] : ['src', 'data-fallback', 'data-fell-from'],
+    )
+    for (const { name } of [...old.attributes]) {
+      if (!fresh.hasAttribute(name) && !settled.has(name)) old.removeAttribute(name)
+    }
+    for (const { name, value } of [...fresh.attributes]) {
+      if (!settled.has(name) && old.getAttribute(name) !== value) old.setAttribute(name, value)
+    }
+    fresh.replaceWith(old)
+  }
 }
 
 /**
@@ -1555,8 +2785,39 @@ document.addEventListener('click', (event) => {
     render()
     return
   }
+  const dexOpen = target.closest<HTMLElement>('[data-dex-open]')
+  if (dexOpen !== null) {
+    const id = Number(dexOpen.dataset['dexOpen'])
+    if (!Number.isInteger(id) || id <= 0) return
+    // The companion's card as a window over Home (Diego): the battle stays where it is.
+    cardOpen = id
+    pcOpen = false
+    render()
+    document.querySelector<HTMLElement>('#pc-layer [data-modal-close]')?.focus()
+    return
+  }
   if (target.closest('[data-dex-close]') !== null) {
     dexSelected = undefined
+    invalidate('dex')
+    render()
+    return
+  }
+  const drawerButton = target.closest('[data-drawer]')
+  if (drawerButton !== null) {
+    const id = (drawerButton as HTMLElement).dataset['drawer'] ?? ''
+    if (openDrawers.has(id)) openDrawers.delete(id)
+    else openDrawers.add(id)
+    invalidate('home')
+    invalidate('shop') // the shop's groups are drawers too
+    invalidate('dex') // and the Pokédex's filters fold like one
+    render()
+    return
+  }
+  const regionChip = target.closest('[data-dex-region]')
+  if (regionChip !== null) {
+    const id = (regionChip as HTMLElement).dataset['dexRegion']
+    // A second click on the region in use lifts the filter.
+    dexRegion = id === dexRegion ? undefined : id
     invalidate('dex')
     render()
     return
@@ -1575,6 +2836,79 @@ document.addEventListener('click', (event) => {
     render()
     return
   }
+  const starterCell = target.closest('[data-starter]')
+  if (starterCell !== null) {
+    const id = Number((starterCell as HTMLElement).dataset['starter'])
+    starterSelected = Number.isInteger(id) ? id : undefined
+    invalidate('home')
+    render()
+    return
+  }
+  const confirmStarter = target.closest('[data-choose-starter]')
+  if (confirmStarter !== null) {
+    const id = Number((confirmStarter as HTMLElement).dataset['chooseStarter'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'chooseStarter', speciesID: id })
+    return
+  }
+  // The PC box: open from the player plate, pick to switch (the same `setCompanion` the Pokédex
+  // posts), close on the backdrop or the close button.
+  if (target.closest('[data-pc-open]') !== null) {
+    pcOpen = !pcOpen
+    cardOpen = undefined
+    invalidate('home')
+    render()
+    if (pcOpen) {
+      document
+        .querySelector<HTMLElement>(
+          '.pc-box [data-pc-search], .pc-box [data-pc-pick], .pc-box [data-pc-close]',
+        )
+        ?.focus()
+    }
+    return
+  }
+  // The sort's direction, in either list; the box's chips. Focus stays on what was pressed.
+  if (target.closest('[data-dex-dir]') !== null) {
+    dexReverse = !dexReverse
+    invalidate('dex')
+    render()
+    document.querySelector<HTMLElement>('[data-dex-dir]')?.focus()
+    return
+  }
+  const pcControl = target.closest<HTMLElement>('[data-pc-dir], [data-pc-filter], [data-pc-region]')
+  if (pcControl !== null) {
+    if (pcControl.dataset['pcDir'] !== undefined) pcReverse = !pcReverse
+    const filter = pcControl.dataset['pcFilter'] as typeof pcFilter
+    if (filter !== undefined) pcFilter = filter === pcFilter ? undefined : filter
+    const region = pcControl.dataset['pcRegion']
+    if (region !== undefined) pcRegion = region === pcRegion ? undefined : region
+    repaintPCTools(pcControl)
+    return
+  }
+  const pcPick = target.closest('[data-pc-pick]')
+  if (pcPick !== null) {
+    const id = Number((pcPick as HTMLElement).dataset['pcPick'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'setCompanion', speciesID: id })
+    closePCBox()
+    return
+  }
+  if (target.closest('[data-pc-close]') !== null) {
+    closePCBox()
+    return
+  }
+  if (target.closest('[data-modal-close]') !== null) {
+    closeCard()
+    return
+  }
+  const companionButton = target.closest('[data-companion]')
+  if (companionButton !== null) {
+    const id = Number((companionButton as HTMLElement).dataset['companion'])
+    if (Number.isInteger(id) && id > 0) vscode.postMessage({ type: 'setCompanion', speciesID: id })
+    return
+  }
+  if (target.closest('[data-incubate]') !== null) {
+    vscode.postMessage({ type: 'incubateEgg' })
+    return
+  }
   const dexCell = target.closest('[data-dex]')
   if (dexCell !== null) {
     const id = Number((dexCell as HTMLElement).dataset['dex'])
@@ -1584,9 +2918,54 @@ document.addEventListener('click', (event) => {
     render()
     return
   }
+  const lureButton = target.closest('[data-lure]')
+  if (lureButton !== null) {
+    const el = lureButton as HTMLElement
+    const speciesID = Number(el.dataset['lure'])
+    // A native modal on the host, like a purchase; it says when it replaces the lure running.
+    if (Number.isInteger(speciesID) && speciesID > 0 && current !== undefined) {
+      vscode.postMessage({
+        type: 'setLure',
+        speciesID,
+        title: el.dataset['title'] ?? '',
+        priceText: el.dataset['price'] ?? '',
+        confirmLabel: current.strings.buy,
+      })
+    }
+    return
+  }
+  const boost = target.closest('[data-boost]')
+  if (boost !== null) {
+    const el = boost as HTMLElement
+    const speciesID = Number(el.dataset['boost'])
+    const amount = Number(el.dataset['amount'])
+    // The confirmation is the host's native modal, as for a purchase; it re-checks the amount.
+    if (Number.isInteger(speciesID) && Number.isFinite(amount) && amount > 0 && current !== undefined) {
+      vscode.postMessage({
+        type: 'boostShiny',
+        speciesID,
+        amount,
+        title: el.dataset['title'] ?? '',
+        priceText: el.dataset['price'] ?? '',
+        confirmLabel: current.strings.buy,
+      })
+    }
+    return
+  }
+  const packStep = target.closest<HTMLElement>('[data-pack-step]')
+  if (packStep !== null && current !== undefined) {
+    stepPack(current, packStep.dataset['packStep'] ?? '', Number(packStep.dataset['step']) || 0)
+    return
+  }
   const buy = target.closest('[data-buy]')
   if (buy !== null) {
     const el = buy as HTMLElement
+    // A purchase sets the multiplier back to ×10: the next one starts from the pack.
+    const packRow = el.closest<HTMLElement>('[data-pack-row]')?.dataset['packRow']
+    if (packRow !== undefined && packSteps.delete(packRow)) {
+      invalidate('shop')
+      queueMicrotask(render)
+    }
     // The confirmation is a native VS Code modal, raised on the extension side: a webview
     // dialog would be trivially dismissable and this spends real progress.
     vscode.postMessage({
@@ -1728,6 +3107,35 @@ document.addEventListener('click', (event) => {
 })
 
 /**
+ * A field with focus keeps it across a repaint of its section, caret and all — a scan's state
+ * push arriving mid-word in the Pokédex's search used to throw both away. Only fields with an
+ * id, the ones a repaint recreates under the same name.
+ */
+function focusInside(
+  section: HTMLElement,
+): { id: string; start: number | null; end: number | null } | undefined {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || active.id === '' || !section.contains(active)) return undefined
+  const field = active as HTMLInputElement
+  const selectable = typeof field.selectionStart === 'number'
+  return {
+    id: active.id,
+    start: selectable ? field.selectionStart : null,
+    end: selectable ? field.selectionEnd : null,
+  }
+}
+
+function restoreFocus(focused: ReturnType<typeof focusInside>): void {
+  if (focused === undefined) return
+  const fresh = document.getElementById(focused.id) as HTMLInputElement | null
+  if (fresh === null) return
+  // Putting focus back is not a move: the page stays where the reader left it.
+  fresh.focus({ preventScroll: true })
+  if (focused.start !== null && typeof fresh.setSelectionRange === 'function')
+    fresh.setSelectionRange(focused.start, focused.end ?? focused.start)
+}
+
+/**
  * Live filtering as the query is typed.
  *
  * The grid is rebuilt around the input, which throws focus and the caret away with it, so both
@@ -1743,6 +3151,15 @@ function applyDexQuery(field: HTMLInputElement): void {
   restored.focus()
   if (caret !== null) restored.setSelectionRange(caret, caret)
 }
+
+// The pack button steps its multiplier with the arrow keys, as a spin button does.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  const row = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('[data-pack-keys]')
+  if (row === null || row === undefined || current === undefined) return
+  event.preventDefault()
+  stepPack(current, row.dataset['packKeys'] ?? '', event.key === 'ArrowUp' ? 1 : -1)
+})
 
 document.addEventListener('input', (event) => {
   const target = event.target as HTMLElement
@@ -1764,6 +3181,9 @@ document.addEventListener('change', (event) => {
   const target = event.target as HTMLElement
   if (target.id === 'language') {
     vscode.postMessage({ type: 'setLanguage', language: (target as HTMLSelectElement).value })
+  }
+  if (target.id === 'keep-completed') {
+    vscode.postMessage({ type: 'setKeepCompleted', keep: (target as HTMLInputElement).checked })
   }
   if (target.id === 'refresh-interval') {
     const seconds = Number((target as HTMLSelectElement).value)
@@ -1882,7 +3302,15 @@ document.addEventListener(
     const fallback = img.dataset['fallback']
     if (fallback !== undefined) {
       delete img.dataset['fallback']
+      // Remembered so a repaint asking for the same missing picture keeps this one
+      // (`keepingPictures`) instead of failing — and flashing — all over again.
+      img.dataset['fellFrom'] = img.getAttribute('src') ?? ''
       img.src = fallback
+      return
+    }
+    // A tab's item gives way to the codicon under it.
+    if (img.classList.contains('tab-item')) {
+      img.remove()
       return
     }
     // Item sprites degrade to their emoji — set as text, never markup, so nothing re-enters HTML.
@@ -1897,11 +3325,146 @@ document.addEventListener(
   true,
 )
 
+// MARK: - News
+
+/**
+ * The game's news — a hatch, an evolution, a medal, a challenge done — told the way a catch is
+ * (plan 08 §7): the Pokédex's card, over whatever tab is open, one after another. The host sends
+ * it only to a surface that is in view and keeps VS Code's toast for when none is, so the same
+ * moment is never told twice. A click moves to the next; the live region reads each one.
+ */
+const NEWS_MS = 3600
+const newsQueue: PanelNews[] = []
+let newsTimer: ReturnType<typeof setTimeout> | undefined
+
+/** The item a piece of news without a Pokémon is drawn with. */
+const NEWS_ITEMS: Record<string, string> = {
+  medal: 'gold-bottle-cap',
+  challenge: 'exp-share',
+  candy: 'rare-candy',
+  shiny: 'shiny-charm',
+  legendary: 'master-ball',
+}
+
+function queueNews(items: PanelNews[]): void {
+  newsQueue.push(...items)
+  if (newsTimer === undefined) showNextNews()
+}
+
+function showNextNews(): void {
+  clearTimeout(newsTimer)
+  newsTimer = undefined
+  const layer = newsLayer()
+  // A ball in the air, or a catch's own card on the scene, goes first: the news waits its turn.
+  if (newsQueue.length > 0 && (throwing !== undefined || catchBanner !== undefined)) {
+    newsTimer = setTimeout(showNextNews, 400)
+    return
+  }
+  const next = newsQueue.shift()
+  if (next === undefined) {
+    layer.replaceChildren()
+    return
+  }
+  layer.innerHTML = newsCard(next)
+  paintBars(layer)
+  el('announce').textContent =
+    next.detail === undefined ? next.headline : `${next.headline} ${next.detail}`
+  newsTimer = setTimeout(showNextNews, NEWS_MS)
+}
+
+/** Its own layer on <body>, above every tab: the scene's stacking context would bury it. */
+function newsLayer(): HTMLElement {
+  let layer = document.getElementById('news-layer')
+  if (layer === null) {
+    layer = document.createElement('div')
+    layer.id = 'news-layer'
+    layer.setAttribute('aria-hidden', 'true')
+    document.body.append(layer)
+  }
+  return layer
+}
+
+/**
+ * One card: the device's casing with its lens and lights, the Pokémon on its screen (or the
+ * item the news is about), the sentence and its detail. A form that evolved or graduated is
+ * registered whole, so its bar is drawn full.
+ */
+function newsCard(n: PanelNews): string {
+  const id = n.speciesID
+  const item = NEWS_ITEMS[n.kind] ?? 'poke-ball'
+  const art =
+    id === undefined
+      ? `<img class="catch-mon news-item" src="${itemSpriteURL(item)}" alt="">`
+      : `<img class="catch-mon" src="${sceneSpriteURL(id, n.isShiny)}" alt=""
+             data-fallback="${spriteURL(id, n.isShiny, false)}">`
+  const full = n.kind === 'evolved' || n.kind === 'graduated'
+  return `<div class="catch-banner new rich device-casing news news-${escapeHTML(n.kind)} entering" data-news-next>
+      <span class="catch-shine"></span>
+      <div class="dexcard-top">
+        <span class="device-lens small"></span>
+        <span class="device-leds"><i></i><i></i><i></i></span>
+        ${id === undefined ? '' : `<span class="dexcard-num">${dexNumber(id)}</span>`}
+      </div>
+      <div class="dexcard-body">
+        <span class="catch-mon-wrap">${art}</span>
+        <div class="catch-body">
+          <span class="catch-headline">${escapeHTML(n.headline)}</span>
+          ${full ? `<div class="catch-reg">${expMeter(100, { size: 'large', hidden: true })}</div>` : ''}
+          ${n.detail === undefined ? '' : `<span class="tag state catch-detail">${escapeHTML(n.detail)}</span>`}
+        </div>
+      </div>
+    </div>`
+}
+
+document.addEventListener('click', (event) => {
+  if ((event.target as HTMLElement).closest('[data-news-next]') !== null) showNextNews()
+})
+
+/**
+ * The tabs are the device's buttons, each drawn with a game item (plan 08 §7): the item from
+ * PokéAPI at runtime like every sprite, never bundled. The codicon from the shell stays under it
+ * and shows again if the sprite does not load (the `error` handler above removes the image).
+ * The developer tab keeps its beaker: it is no part of the game.
+ */
+const TAB_ITEMS: Partial<Record<TabID, string>> = {
+  home: 'town-map',
+  shop: 'coin-case',
+  bag: 'explorer-kit',
+  dex: 'poke-radar',
+  settings: 'vs-seeker',
+}
+for (const [id, item] of Object.entries(TAB_ITEMS)) {
+  const button = document.getElementById(`tab-${id}`)
+  if (button === null || button.querySelector('.tab-item') !== null) continue
+  const img = document.createElement('img')
+  img.className = 'tab-item'
+  img.alt = ''
+  img.src = itemSpriteURL(item)
+  button.prepend(img)
+}
+
 window.addEventListener(
   'message',
-  (event: MessageEvent<{ type: string; state?: PanelState; result?: PanelEncounterResult }>) => {
+  (
+    event: MessageEvent<{
+      type: string
+      state?: PanelState
+      result?: PanelEncounterResult
+      items?: PanelNews[]
+      entry?: PanelPokedexEntry
+    }>,
+  ) => {
+    if (event.data.type === 'news' && Array.isArray(event.data.items)) queueNews(event.data.items)
+    if (event.data.type === 'dexEntry' && event.data.entry !== undefined && current !== undefined) {
+      const key = `${current.language}:${event.data.entry.speciesID}`
+      dexEntries.set(key, event.data.entry)
+      entriesFailed.delete(key)
+      invalidate('dex')
+      render()
+    }
     if (event.data.type === 'state' && event.data.state !== undefined) {
       noteWalletChange(event.data.state)
+      const forgot = forgetEntriesOnChange(event.data.state)
       // Mid-throw, the fresh state already shows the outcome (the Pokémon gone, the ball
       // spent); rendering it now would spoil the animation still playing. It applies when the
       // ball lands.
@@ -1913,7 +3476,10 @@ window.addEventListener(
       // them made the page jump under the reader every two minutes — worst four screens deep
       // into the Pokédex. One string compare (~50KB, every ~2min) is far cheaper than a paint.
       const incoming = JSON.stringify(event.data.state)
-      if (incoming === lastRenderedState) return
+      if (incoming === lastRenderedState) {
+        if (forgot) render() // the same state, but a card's entry to ask for again
+        return
+      }
       applyState(event.data.state, incoming)
       render()
     }
@@ -1929,13 +3495,20 @@ window.addEventListener(
 // Restore the tab the user was on when the panel was serialised. A compact surface (the
 // Explorer's mini card) has no tab strip, so it always renders Home.
 const saved = vscode.getState() as
-  { tab?: string; dexSegment?: DexSegment; dexSelected?: number } | undefined
+  { tab?: string; dexSegment?: DexSegment; dexSelected?: number; drawers?: unknown } | undefined
+// Strings only, and only as many as there could be: a drawer the core no longer sends is simply
+// never drawn, so an unknown id costs nothing.
+if (Array.isArray(saved?.drawers)) {
+  for (const id of saved.drawers.slice(0, 16)) if (typeof id === 'string') openDrawers.add(id)
+}
 // Validated, not cast: a session serialised before a tab was removed (the old Wild tab) would
 // otherwise restore into a tab that no longer exists and hide every section.
 if (saved?.tab !== undefined && (PANEL_TABS as readonly string[]).includes(saved.tab)) {
   tab = saved.tab as TabID
 }
-if (saved?.dexSegment !== undefined) dexSegment = saved.dexSegment
+// Validated like the tab: a segment from an older build (or a removed one) must not restore.
+if (saved?.dexSegment !== undefined && DEX_SEGMENTS.includes(saved.dexSegment))
+  dexSegment = saved.dexSegment
 if (
   typeof saved?.dexSelected === 'number' &&
   Number.isInteger(saved.dexSelected) &&
@@ -1954,3 +3527,426 @@ if (current === undefined) {
 }
 
 vscode.postMessage({ type: 'ready' })
+
+// MARK: - PC box
+
+/**
+ * The PC box (Diego): the companion switch from the battle plate, as the games keep their boxes
+ * in the PC. A modal sheet over the scene — the obtained species the core lists (`pcBox`), the
+ * unfinished first — each a button that posts the same `setCompanion` the Pokédex does.
+ */
+function pcBox(state: PanelState): string {
+  const box = state.pcBox
+  // Search and sort only when there is something to search: an empty box keeps its one sentence.
+  const tools = box.items.length === 0 ? '' : pcTools(state)
+  return `<div class="pc-backdrop" data-pc-close></div>
+    <div class="pc-box" role="dialog" aria-modal="true" aria-label="${escapeHTML(box.title)}">
+      <div class="pc-head">
+        <span class="pc-icon" aria-hidden="true"></span>
+        <h3>${escapeHTML(box.title)}</h3>
+        <button class="pc-close" data-pc-close aria-label="${escapeHTML(state.strings.close)}" title="${escapeHTML(state.strings.close)}">
+          <i class="codicon codicon-close" aria-hidden="true"></i>
+        </button>
+      </div>
+      ${tools}
+      <div class="pc-grid-wrap">${pcGrid(state)}</div>
+    </div>`
+}
+
+/**
+ * The box's search, sort and direction, then its chips (plan 9.8): status (registered, still to
+ * register, shiny, as the core counts them) and the Pokédex's regions.
+ */
+function pcTools(state: PanelState): string {
+  const box = state.pcBox
+  const status = box.filters
+    .map(
+      (f) =>
+        `<button class="chip" data-pc-filter="${f.id}" aria-pressed="${f.id === pcFilter}" ${f.count === 0 ? 'disabled' : ''}>${escapeHTML(f.label)}<span class="region-pct">${escapeHTML(f.countText)}</span></button>`,
+    )
+    .join('')
+  const regions = state.dexSummary.regions
+    .map(
+      (r) =>
+        `<button class="chip region region-${escapeHTML(r.id)}" data-pc-region="${escapeHTML(r.id)}" aria-pressed="${r.id === pcRegion}">${escapeHTML(r.name)}</button>`,
+    )
+    .join('')
+  return `<div class="pc-tools">
+      <div class="pc-tools-row">${listTools({
+        searchAttr: 'data-pc-search',
+        query: pcQuery,
+        placeholder: box.searchPlaceholder,
+        sorts: box.sorts,
+        sort: pcSort,
+        sortAttr: 'data-pc-sort',
+        dirAttr: 'data-pc-dir',
+        reverse: pcReverse,
+        strings: state.strings,
+      })}</div>
+      <div class="pc-chips" role="group">${status}</div>
+      <div class="pc-chips" role="group">${regions}</div>
+    </div>`
+}
+
+/** The box's grid for the current search and sort. Re-painted alone while typing, keeping focus. */
+function pcGrid(state: PanelState): string {
+  const box = state.pcBox
+  if (box.items.length === 0) return `<p class="pc-empty">${escapeHTML(box.emptyText)}</p>`
+  const query = pcQuery.trim().toLowerCase()
+  const region = state.dexSummary.regions.find((r) => r.id === pcRegion)
+  const shown = box.items
+    .filter(
+      (item) =>
+        query === '' ||
+        item.name.toLowerCase().includes(query) ||
+        String(item.id) === query.replace(/^#/, ''),
+    )
+    .filter(
+      (item) =>
+        pcFilter === undefined ||
+        (pcFilter === 'registered'
+          ? item.registered
+          : pcFilter === 'unregistered'
+            ? !item.registered
+            : item.shinyRegistered),
+    )
+    .filter((item) => region === undefined || (item.id >= region.from && item.id <= region.to))
+    // The core's order is the progress sort; the other two only reorder it, ties by number.
+    .sort((a, b) =>
+      pcSort === 'number'
+        ? a.id - b.id
+        : pcSort === 'rarity'
+          ? b.rarityRank - a.rarityRank || a.id - b.id
+          : 0,
+    )
+  if (pcReverse) shown.reverse()
+  if (shown.length === 0) return `<p class="pc-empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+  return `<div class="pc-grid">${shown
+    .map(
+      (
+        item,
+      ) => `<button class="pc-item rarity-${escapeHTML(item.rarity)}${item.registered ? ' registered' : ''}"
+              data-pc-pick="${item.id}" title="${escapeHTML(item.name)} · ${escapeHTML(item.percentText)}"
+              aria-label="${escapeHTML(item.name)} · ${escapeHTML(item.percentText)}">
+        <img src="${spriteURL(item.id, item.isShiny, false)}" alt="" loading="lazy">
+        <span class="pc-name">${escapeHTML(item.name)}</span>
+        ${expMeter(item.percent, { size: 'thin', hidden: true })}
+      </button>`,
+    )
+    .join('')}</div>`
+}
+
+/**
+ * The PC box lives in its own layer on `<body>`, outside the panel: the scene makes a stacking
+ * context, and a fixed sheet inside it would sit under the dialog and the drawers. Painted after
+ * every render, so it follows the state while open; emptied when closed or off Home.
+ */
+function paintPCBox(): void {
+  let layer = document.getElementById('pc-layer')
+  // Leaving Home closes it: coming back later to a sheet left open would be a surprise.
+  if (tab !== 'home') {
+    pcOpen = false
+    cardOpen = undefined
+  }
+  // The species card window shares the layer: one modal at a time.
+  if (cardOpen !== undefined && current !== undefined) {
+    const sp = current.dexSpecies.find((c) => c.id === cardOpen)
+    if (layer === null) {
+      layer = document.createElement('div')
+      layer.id = 'pc-layer'
+      document.body.append(layer)
+    }
+    const close = `<button class="dex-close" data-modal-close aria-label="${escapeHTML(current.strings.close)}">✕</button>`
+    // The entry arriving from the host repaints the card, like a new state does — and so does
+    // the end of its grace, when it is drawn without the entry.
+    const phase = cardPhase('window', cardOpen, current, sp !== undefined)
+    const signature = `card:${cardOpen}:${JSON.stringify(sp)}:${dexEntries.has(`${current.language}:${cardOpen}`)}:${phase.awaiting}`
+    if (layer.dataset['state'] !== signature) {
+      layer.dataset['state'] = signature
+      const host = layer
+      const state = current
+      keepingPictures(host, () => {
+        host.innerHTML =
+          sp === undefined
+            ? ''
+            : `<div class="pc-backdrop" data-modal-close></div>
+             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(state, sp, close, true, phase)}</div>`
+      })
+    }
+    paintBars(layer)
+    return
+  }
+  cardShown.delete('window')
+  if (!pcOpen || current === undefined) {
+    layer?.replaceChildren()
+    if (layer) delete layer.dataset['state']
+    return
+  }
+  if (layer === null) {
+    layer = document.createElement('div')
+    layer.id = 'pc-layer'
+    document.body.append(layer)
+  }
+  // Repaint only on a new state, not on every render, so a search being typed keeps its focus.
+  const signature = JSON.stringify(current.pcBox)
+  if (layer.dataset['state'] !== signature || layer.childElementCount === 0) {
+    layer.dataset['state'] = signature
+    layer.innerHTML = pcBox(current)
+  }
+  // The bars take their width from `data-fill`, which `paintBars` applies — the panel's sections
+  // get it from `render`, this layer lives outside them.
+  paintBars(layer)
+}
+
+function closePCBox(): void {
+  if (!pcOpen) return
+  pcOpen = false
+  invalidate('home')
+  render()
+  document.querySelector<HTMLElement>('[data-pc-open]')?.focus()
+}
+
+// Esc closes the PC box or the species card, and focus goes back to the button that opened it.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return
+  if (pcOpen) {
+    event.preventDefault()
+    closePCBox()
+  } else if (cardOpen !== undefined) {
+    event.preventDefault()
+    closeCard()
+  }
+})
+
+function closeCard(): void {
+  if (cardOpen === undefined) return
+  cardOpen = undefined
+  render()
+  document.querySelector<HTMLElement>('[data-dex-open]')?.focus()
+}
+
+// The PC box's search filters as you type, and its sort reorders: both repaint the grid alone.
+document.addEventListener('input', (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.('[data-pc-search]')
+  if (field == null || current === undefined) return
+  // As the Pokédex's search: mid-composition the IME owns the field (ko, ja), so the filter runs
+  // on the composition's end instead.
+  if ((event as InputEvent).isComposing) return
+  pcQuery = (field as HTMLInputElement).value
+  repaintPCGrid()
+})
+document.addEventListener('compositionend', (event) => {
+  const field = (event.target as HTMLElement | null)?.closest?.('[data-pc-search]')
+  if (field == null || current === undefined) return
+  pcQuery = (field as HTMLInputElement).value
+  repaintPCGrid()
+})
+document.addEventListener('change', (event) => {
+  const select = (event.target as HTMLElement | null)?.closest?.('[data-pc-sort]')
+  if (select == null || current === undefined) return
+  const value = (select as HTMLSelectElement).value
+  if (value === 'progress' || value === 'number' || value === 'rarity') pcSort = value
+  repaintPCGrid()
+})
+
+// The Pokédex's sort reorders the grid; focus goes back to the select it came from.
+document.addEventListener('change', (event) => {
+  const select = (event.target as HTMLElement | null)?.closest?.('[data-dex-sort]')
+  if (select == null) return
+  const value = (select as HTMLSelectElement).value
+  if (value === 'progress' || value === 'number' || value === 'rarity') dexSort = value
+  invalidate('dex')
+  render()
+  document.querySelector<HTMLElement>('[data-dex-sort]')?.focus()
+})
+
+/** The box's tools and grid after a chip or the direction: the pressed control keeps focus. */
+function repaintPCTools(pressed: HTMLElement): void {
+  const tools = document.querySelector<HTMLElement>('#pc-layer .pc-tools')
+  if (tools === null || current === undefined) return
+  const selector = ['pcDir', 'pcFilter', 'pcRegion']
+    .filter((key) => pressed.dataset[key] !== undefined)
+    .map((key) => {
+      const attr = `data-${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`
+      const value = pressed.dataset[key]
+      return value === '' ? `[${attr}]` : `[${attr}="${value}"]`
+    })[0]
+  tools.outerHTML = pcTools(current)
+  repaintPCGrid()
+  if (selector !== undefined) document.querySelector<HTMLElement>(`#pc-layer ${selector}`)?.focus()
+}
+
+function repaintPCGrid(): void {
+  const wrap = document.querySelector<HTMLElement>('#pc-layer .pc-grid-wrap')
+  if (wrap === null || current === undefined) return
+  const state = current
+  keepingPictures(wrap, () => {
+    wrap.innerHTML = pcGrid(state)
+  })
+  paintBars(wrap)
+}
+
+// MARK: - List tools
+
+type SortID = 'progress' | 'number' | 'rarity'
+
+/**
+ * The one search-and-sort row, shared by the Pokédex and the PC box: a search field and a sort
+ * select, native fields (they are the tool's controls, not the game's). Each caller names its
+ * own field (`searchAttr`) so its handlers find it, and owns its view state.
+ */
+function listTools(o: {
+  searchAttr: string
+  query: string
+  placeholder: string
+  sorts: { id: SortID; label: string }[]
+  sort: SortID
+  sortAttr: string
+  /** The direction toggle (plan 9.8): its attribute, whether the sort is turned around, and the
+   *  core's names for the two orders. */
+  dirAttr: string
+  reverse: boolean
+  strings: PanelState['strings']
+}): string {
+  const ascending = sortAscends(o.sort) !== o.reverse
+  const dirLabel = ascending ? o.strings.sortAscending : o.strings.sortDescending
+  const options = o.sorts
+    .map(
+      (s) =>
+        `<option value="${escapeHTML(s.id)}"${s.id === o.sort ? ' selected' : ''}>${escapeHTML(s.label)}</option>`,
+    )
+    .join('')
+  return `<input ${o.searchAttr} class="list-search" type="search" value="${escapeHTML(o.query)}"
+                 placeholder="${escapeHTML(o.placeholder)}" aria-label="${escapeHTML(o.placeholder)}">
+          <select ${o.sortAttr} class="list-sort" aria-label="${escapeHTML(o.sorts.map((s) => s.label).join(' / '))}">${options}</select>
+          <button ${o.dirAttr} class="list-dir" aria-pressed="${o.reverse}" aria-label="${escapeHTML(dirLabel)}" title="${escapeHTML(dirLabel)}">
+            <i class="codicon codicon-arrow-${ascending ? 'up' : 'down'}" aria-hidden="true"></i>
+          </button>`
+}
+
+/**
+ * The order a sort reads in before it is turned around: numbers count up, progress and rarity
+ * put the most advanced and the rarest first. The toggle flips it, and names what it shows.
+ */
+function sortAscends(sort: SortID): boolean {
+  return sort === 'number'
+}
+
+// MARK: - Dialog, letter by letter
+
+/**
+ * The dialog box writes its line the way the games do, letter by letter (Diego: fast, ~60 a
+ * second). Run after every render on each `.dialog-text`:
+ *
+ *  - The line a screen reader hears is the whole one, at once: it goes to a visually-hidden
+ *    copy inside the live region, and the letters being written are `aria-hidden`.
+ *  - A line already written stays written; a re-render mid-line carries on from the letter it
+ *    had reached rather than starting over.
+ *  - A click or a key finishes it at once; with reduced motion (or a hidden panel) it is
+ *    written whole.
+ */
+const DIALOG_CHARS_PER_SECOND = 60
+/**
+ * A line is remembered *in its context* — the encounter it was said in, the item it describes —
+ * never by its words alone: "What will you do?" is the same sentence for every wild Pokémon, and
+ * keyed by text it was written once and never again (plan 09 §9.5).
+ */
+let typing:
+  { key: string; text: string; shown: number; timer: ReturnType<typeof setInterval> } | undefined
+const writtenLines = new Set<string>()
+
+function lineKey(el: HTMLElement, text: string): string {
+  return `${el.dataset['lineContext'] ?? ''}\n${text}`
+}
+
+function typeDialogs(): void {
+  // Only the open tab's dialogs: a line left in a hidden section would take the typewriter from
+  // the one on screen.
+  for (const el of document.querySelectorAll<HTMLElement>(
+    'main > section:not([hidden]) .dialog-text, #pc-layer .dialog-text',
+  )) {
+    const text = el.dataset['line'] ?? el.textContent ?? ''
+    el.dataset['line'] = text
+    const key = lineKey(el, text)
+    el.dataset['lineKey'] = key
+    if (text === '' || motionOff() || writtenLines.has(key)) continue
+    if (typing === undefined || typing.key !== key) {
+      // The line being written gives the typewriter up whole, never half-written: two dialogs on
+      // screen at once (Home's, and the species card's over it) each end readable (plan 9.12).
+      finishDialog()
+      typing = { key, text, shown: 0, timer: setInterval(stepDialog, 1000 / DIALOG_CHARS_PER_SECOND) }
+    }
+    paintDialogLine(el, typing.shown)
+  }
+}
+
+/**
+ * A line the scene has already shown whole — a throw's result, written as the ball lands — is
+ * written: the repaint after it must not type it out again.
+ */
+function showLineWhole(el: HTMLElement, context: string, text: string): void {
+  finishDialog()
+  el.dataset['lineContext'] = context
+  el.dataset['line'] = text
+  const key = lineKey(el, text)
+  el.dataset['lineKey'] = key
+  remember(key)
+  el.textContent = text
+}
+
+function remember(key: string): void {
+  // Bounded, as lines are many over a day.
+  if (writtenLines.size > 64) writtenLines.clear()
+  writtenLines.add(key)
+}
+
+/** One element's line with `shown` letters written; the whole line for the screen reader. */
+function paintDialogLine(el: HTMLElement, shown: number): void {
+  const text = el.dataset['line'] ?? ''
+  // The letters not written yet are laid out, unseen, so the box is its full size from the
+  // first letter: a dialog growing a line as it writes reads as the card jumping (Diego).
+  const letters = [...text]
+  el.innerHTML = `<span class="visually-hidden">${escapeHTML(text)}</span><span aria-hidden="true">${escapeHTML(
+    letters.slice(0, shown).join(''),
+  )}<span class="dialog-unwritten">${escapeHTML(letters.slice(shown).join(''))}</span></span>`
+}
+
+function stepDialog(): void {
+  if (typing === undefined) return
+  const letters = [...typing.text].length
+  typing.shown += 1
+  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+    if (el.dataset['lineKey'] === typing.key) paintDialogLine(el, typing.shown)
+  }
+  if (typing.shown >= letters) finishDialog()
+}
+
+/** Writes the line whole and stops: on its last letter, or at a click or a key. */
+function finishDialog(): void {
+  if (typing === undefined) return
+  clearInterval(typing.timer)
+  const { key, text } = typing
+  remember(key)
+  typing = undefined
+  for (const el of document.querySelectorAll<HTMLElement>('.dialog-text')) {
+    if (el.dataset['lineKey'] === key) el.textContent = text
+  }
+}
+
+// A click anywhere or any key completes the line being written, as the games' A button does.
+document.addEventListener('pointerdown', () => finishDialog(), true)
+document.addEventListener('keydown', () => finishDialog(), true)
+
+// MARK: - Empty states
+
+/**
+ * One empty view, drawn one way everywhere (plan 08 §7): what it is, and how it fills — with the
+ * way there as a button when there is one. Texts are the core's.
+ */
+function emptyState(empty: { title: string; hint: string }, action = ''): string {
+  return `<div class="empty-state">
+      <p class="empty-title">${escapeHTML(empty.title)}</p>
+      <p class="empty-hint">${escapeHTML(empty.hint)}</p>
+      ${action}
+    </div>`
+}

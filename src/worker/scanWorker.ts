@@ -36,6 +36,8 @@ import { candyEligibleWindows, limitSeverity } from '../core/limits/windows.js'
 import { type BurnTier, burnTierFor, eggProgress, eggTokensToHatch } from '../core/companion/display.js'
 import { stageProgress, tokensToNext } from '../core/companion/growth.js'
 import { spendableBalance } from '../core/companion/ledger.js'
+import { registrationPercent } from '../core/companion/registry.js'
+import { isFreshGame } from '../core/companion/eggs.js'
 import { PokeAPIClient } from '../core/pokeapi.js'
 import {
   type AppLanguage,
@@ -44,7 +46,7 @@ import {
   type Rarity,
   currentSpeciesID,
 } from '../core/companion/model.js'
-import { buyEgg, buyItem, consumeRareCandy, grantCandies, useMint } from '../core/companion/shop.js'
+import { buyEgg, buyItem, grantCandies, useMint } from '../core/companion/shop.js'
 import {
   type DevState,
   addOffset,
@@ -58,6 +60,11 @@ import {
   setShiny,
   tokensToGraduation,
   tokensToMilestone,
+  grantSpeciesXP,
+  registerNow,
+  registerShinyNow,
+  markSeenDev,
+  grantEgg,
 } from '../core/dev/simulation.js'
 import { freshCompanionState } from '../core/companion/model.js'
 import { type DevAction, DEV_GROUPS, DEV_SCENARIOS, devSummary } from '../core/dev/scenarios.js'
@@ -80,7 +87,14 @@ import {
   grantBalls,
   loseTestLegendary,
 } from '../core/dev/simulation.js'
-import type { PanelDevControl, PanelState, PanelEncounterResult } from '../webview/protocol.js'
+import type {
+  PanelDevControl,
+  PanelNews,
+  PanelPokedexEntry,
+  PanelState,
+  PanelEncounterResult,
+} from '../webview/protocol.js'
+import { pokedexEntry } from '../core/panel/dexEntry.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -94,6 +108,12 @@ export type WorkerAction =
   | { action: 'trackLegendary'; trailID: string }
   | { action: 'runFrom'; encounterID: string }
   | { action: 'setTrainer'; trainerID: string }
+  | { action: 'setKeepCompleted'; keep: boolean }
+  | { action: 'boostShiny'; speciesID: number; amount: number }
+  | { action: 'setLure'; speciesID: number }
+  | { action: 'setCompanion'; speciesID: number }
+  | { action: 'chooseStarter'; speciesID: number }
+  | { action: 'incubateEgg' }
   // Development-only. Declared in `core/dev/scenarios.ts` so the panel's Dev tab, the quick pick
   // and this switch are all driven by one table.
   | DevAction
@@ -172,13 +192,33 @@ export interface FlushRequest {
   type: 'flush'
 }
 
+/**
+ * A species' Pokédex entry for its card (plan 9.7). Read-only and network-bound, so it is answered
+ * beside the serialized queue rather than in it: a card must not wait behind a cold scan, and
+ * nothing here writes the save.
+ */
+export interface DexEntryRequest {
+  id: number
+  type: 'dexEntry'
+  speciesID: number
+}
+
 export type WorkerRequest =
-  ScanRequest | PanelRequest | ActionRequest | RenderRequest | SyncRequest | FlushRequest
+  | ScanRequest
+  | PanelRequest
+  | ActionRequest
+  | RenderRequest
+  | SyncRequest
+  | FlushRequest
+  | DexEntryRequest
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
+  /** Toasts, for when no surface is on screen: every event's sentence but the player's own choices. */
   celebrate: string[]
   openLabel: string
+  /** The same moments as news for a surface on screen (plan 08 §7), which then replaces the toasts. */
+  news: PanelNews[]
 }
 
 export type ScanResponse =
@@ -188,6 +228,8 @@ export type ScanResponse =
   /** `extra` rides beside the panel on a throw reply — never inside `PanelState`, which is
    *  replayed to late-opening surfaces and would replay the animation. */
   | { id: number; ok: true; panel: PanelState; extra?: PanelEncounterResult }
+  /** Answer to a `dexEntry`: never fails — offline, the entry says so itself. */
+  | { id: number; ok: true; dexEntry: PanelPokedexEntry }
   | { id: number; ok: false; error: string }
 
 interface WorkerConfig {
@@ -200,7 +242,8 @@ const config = (workerData ?? {}) as WorkerConfig
 
 // Re-exported from the core panel builder, its real home, so the host's import keeps working.
 export { REFRESH_PRESETS } from '../core/panel/build.js'
-import { buildPanelState } from '../core/panel/build.js'
+import { buildPanelState, catchBanner } from '../core/panel/build.js'
+import { type NewsEvent, newsFor, newsToasts } from '../core/panel/news.js'
 
 /**
  * Whether an encounter may toast at all (`tokendex.encounterNotifications`). Carried on every
@@ -212,8 +255,11 @@ let encounterToasts = true
 /** The host's current `tokendex.refreshInterval`, piggybacked on requests like the flag above. */
 let refreshSecondsSetting: number | undefined
 
+/** One client for the store and the Pokédex entries, so they share its caches. */
+const poke = new PokeAPIClient()
+
 const companion = new CompanionStore({
-  provider: new PokeAPIClient(),
+  provider: poke,
   encounterToastsEnabled: () => encounterToasts,
 })
 
@@ -567,9 +613,10 @@ async function accrue(observation: ScanObservation, known: ReturnType<LimitsPoll
   // The game's peak moments — hatch, evolution, graduation, a candy grant — accumulate in
   // the store and would otherwise happen in silence. They ride their own broadcast (not the
   // response) so a panel request and a timer scan celebrate exactly once each.
-  const celebrations: CelebrationEvent[] = [
+  // Typed as news events: the store's carry their species, which the news card draws.
+  const celebrations: NewsEvent[] = [
     ...companion.drainEvents(),
-    ...grants.map((g): CelebrationEvent => ({
+    ...grants.map((g): NewsEvent => ({
       kind: 'candyGranted',
       count: g.count,
       windowName: g.windowName,
@@ -578,7 +625,8 @@ async function accrue(observation: ScanObservation, known: ReturnType<LimitsPoll
   if (celebrations.length > 0) {
     const lang = companion.snapshot().language
     parentPort?.postMessage({
-      celebrate: celebrations.map((event) => celebrationText(lang, event)),
+      celebrate: celebrations.filter(newsToasts).map((event) => celebrationText(lang, event)),
+      news: celebrations.map((event) => newsFor(lang, event)),
       openLabel: openPanelLabel(lang),
     })
   }
@@ -608,11 +656,14 @@ function companionView(
   const wildTooltip = D.wildBadgeTooltip(lang, wildCount)
 
   if (active === undefined) {
+    // A new game has no egg yet — usage is waiting for the starter — so the bar says so instead
+    // of counting down a hatch that is not happening.
+    const fresh = isFreshGame(state)
     return {
       state: 'egg',
       isShiny: false,
-      progress: eggProgress(state),
-      toNextText: f.eggToHatch(lang, compact(eggTokensToHatch(state))),
+      progress: fresh ? 0 : eggProgress(state),
+      toNextText: fresh ? D.starterTitleText(lang) : f.eggToHatch(lang, compact(eggTokensToHatch(state))),
       dexCount,
       spendableTokens,
       wildCount,
@@ -637,6 +688,10 @@ function companionView(
   }
   const name = companion.displayName()
   if (name !== undefined) view.name = name
+  const progress = state.species[currentSpeciesID(active)]
+  if (progress !== undefined) {
+    view.registrationText = D.registrationText(lang, registrationPercent(progress), progress.registered)
+  }
   return view
 }
 
@@ -720,6 +775,16 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
         }),
         animation: !spentSomething ? 'none' : payload.action === 'throwBall' ? 'throw' : 'feed',
         attacked: 'attack' in outcome && outcome.attack !== undefined,
+        ...(outcome.kind === 'caught'
+          ? {
+              catchNews: catchBanner(
+                companion.snapshot().language,
+                before,
+                target?.speciesID ?? 0,
+                outcome,
+              ),
+            }
+          : {}),
       }
     }
 
@@ -750,18 +815,45 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
       await companion.setTrainer(payload.trainerID)
       return undefined
 
+    case 'setKeepCompleted':
+      await companion.setKeepCompletedCompanion(payload.keep)
+      return undefined
+
+    case 'setLure':
+      if (!(await companion.setLure(payload.speciesID))) {
+        throw new Error(D.lureFailedText(companion.snapshot().language))
+      }
+      return undefined
+
+    case 'boostShiny':
+      if (!(await companion.boostShiny(payload.speciesID, payload.amount))) {
+        throw new Error(D.shinyBoostFailedText(companion.snapshot().language))
+      }
+      return undefined
+
+    case 'setCompanion':
+    case 'chooseStarter': {
+      const outcome =
+        payload.action === 'setCompanion'
+          ? await companion.setCompanion(payload.speciesID)
+          : await companion.chooseStarter(payload.speciesID)
+      // Localised here, like a trail that cannot be tracked: the host shows it as an error toast.
+      if (outcome === 'offline') throw new Error(D.companionOfflineText(companion.snapshot().language))
+      if (outcome !== 'set') throw new Error(D.companionLockedText(companion.snapshot().language))
+      return undefined
+    }
+
+    case 'incubateEgg': {
+      const outcome = await companion.incubateEgg()
+      if (outcome === 'noEggs') throw new Error(D.noEggsText(companion.snapshot().language))
+      return undefined
+    }
+
     case 'useItem': {
       if (payload.item === 'rareCandy') {
-        // The debit and the XP it buys are one operation, so they share one hold: committing
-        // the spend and then growing outside it would let another window's write land between
-        // them and swallow the candy's effect while keeping the charge.
-        const result = await companion.mutate((tx) => {
-          const next = consumeRareCandy(tx.state)
-          if (next === undefined) return
-          tx.commit(next)
-          tx.applyCandy()
-        })
-        if (!result.committed) throw new SaveBusyError()
+        // The debit and the XP it buys are one operation in one hold (`useRareCandy`), and only
+        // when the line to grow with is still loaded after the re-read.
+        await companion.useRareCandy()
       } else if (payload.item === 'mint') {
         await commit((state) => useMint(state, () => Math.floor(Math.random() * 0x7fffffff))?.state)
       }
@@ -812,6 +904,21 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
 
     case 'devGrantTokens':
       await commit((state) => grantTokens(state, payload.amount))
+      return undefined
+    case 'devSpeciesXP':
+      await commit((state) => grantSpeciesXP(state, payload.amount))
+      return undefined
+    case 'devRegisterNow':
+      await commit((state) => registerNow(state))
+      return undefined
+    case 'devRegisterShiny':
+      await commit((state) => registerShinyNow(state))
+      return undefined
+    case 'devMarkSeen':
+      await commit((state) => markSeenDev(state, payload.speciesID))
+      return undefined
+    case 'devGrantEgg':
+      await commit((state) => grantEgg(state))
       return undefined
 
     case 'devSetShiny':
@@ -900,7 +1007,12 @@ function buildPanel(
       ? undefined
       : { previous: lastSpendable, id: ++walletSerial }
   lastSpendable = spendable
+  // Every species' name for the Pokédex's search: read once (disk, else one request), and asked
+  // again on the next panel while there are none — offline at start is no reason to never have them.
+  const speciesNames = poke.knownSpeciesNames()
+  if (speciesNames === undefined) void poke.speciesNames().catch(() => undefined)
   return buildPanelState({
+    speciesNames,
     usage,
     state,
     walletChange,
@@ -970,8 +1082,25 @@ parentPort?.on('message', (message: WorkerRequest) => {
   if ('refreshSeconds' in message && typeof message.refreshSeconds === 'number') {
     refreshSecondsSetting = message.refreshSeconds
   }
+  if (message.type === 'dexEntry') {
+    void answerDexEntry(message)
+    return
+  }
   dispatch(message)
 })
+
+/** Either half may fail on its own; the entry then says what it lacks rather than erroring. */
+async function answerDexEntry(request: DexEntryRequest): Promise<void> {
+  const [details, line] = await Promise.all([
+    poke.dexDetails(request.speciesID).catch(() => undefined),
+    poke.line(request.speciesID).catch(() => undefined),
+  ])
+  parentPort?.postMessage({
+    id: request.id,
+    ok: true,
+    dexEntry: pokedexEntry(companion.snapshot(), request.speciesID, details, line),
+  } satisfies ScanResponse)
+}
 
 /**
  * The closing sequence, in this order and for a reason.

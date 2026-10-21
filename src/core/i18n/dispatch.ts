@@ -5,10 +5,20 @@
  * flat four-way tables.
  */
 
-import type { AppLanguage, BallKind, BerryKind, ItemKind, Rarity } from '../companion/model.js'
+import type {
+  AppLanguage,
+  BallKind,
+  BerryKind,
+  ItemKind,
+  PokemonType,
+  Rarity,
+} from '../companion/model.js'
 import { Pokeball, RareCandy, isBallKind } from '../companion/model.js'
+import type { TurnOutcome } from '../companion/encounters.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
+import type { RegionID } from '../companion/regions.js'
+import { type Challenge, challengeReward } from '../companion/challenges.js'
 
 const INDEX: Record<AppLanguage, 0 | 1 | 2 | 3> = { ko: 0, en: 1, ja: 2, es: 3 }
 const t = (lang: AppLanguage, ko: string, en: string, ja: string, es: string): string =>
@@ -53,7 +63,7 @@ export const statusEvolved = (lang: AppLanguage, name: string): string =>
   )
 
 export const buyConfirm = (lang: AppLanguage, name: string): string =>
-  t(lang, `${name} 구매할까요?`, `Buy ${name}?`, `${name} を購入しますか？`, `¿Comprar ${name}?`)
+  t(lang, `${name} 구매할까요?`, `Buy ${name}?`, `${name}を かいますか？`, `¿Comprar ${name}?`)
 
 /** Names for the new-limits `limits[]` entries, from kind plus model scope. */
 export function claudeLimitEntry(
@@ -188,17 +198,30 @@ export function ballCatchLabel(lang: AppLanguage, kind: BallKind): string | unde
   return itemDescription(lang, kind)
 }
 
+/** The bag's hint when the species on stage has had all the candies it will take. */
+export function candyFullHint(lang: AppLanguage): string {
+  const max = RareCandy.maxPerSpecies
+  return t(
+    lang,
+    `이 종은 이미 사탕을 ${max}개 먹었어요. 다음 모습은 다시 먹을 수 있어요.`,
+    `This species has had its ${max} candies; its next form can take more.`,
+    `この種はもうアメを${max}個食べました。次の姿ならまた食べられます。`,
+    `Esta especie ya tomó sus ${max} caramelos; su siguiente forma podrá tomar más.`,
+  )
+}
+
 export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
   switch (kind) {
     case 'rareCandy': {
-      // Derived from the constant so the copy cannot drift from the balance value.
-      const xp = compact(RareCandy.xp)
+      // Derived from the constants so the copy cannot drift from what a candy actually does.
+      const share = Math.round(RareCandy.stageShare * 100)
+      const max = RareCandy.maxPerSpecies
       return t(
         lang,
-        `현재 포켓몬의 경험치를 ${xp} 올려줘요.`,
-        `Raises your Pokémon's EXP by ${xp}.`,
-        `ポケモンの経験値を${xp}上げます。`,
-        `Aumenta la experiencia de tu Pokémon en ${xp}.`,
+        `현재 단계 경험치의 ${share}%만큼 올려줘요. 종마다 최대 ${max}개.`,
+        `Raises your Pokémon's EXP by ${share}% of its current stage. At most ${max} per species.`,
+        `いまの段階の経験値を${share}%ぶん上げます。1種につき${max}個まで。`,
+        `Aumenta la experiencia de tu Pokémon un ${share}% de su etapa actual. Máximo ${max} por especie.`,
       )
     }
     case 'mint':
@@ -215,7 +238,7 @@ export function itemDescription(lang: AppLanguage, kind: ItemKind): string {
         '보유하면 이로치 포켓몬이 태어날 확률이 올라가요.',
         'While owned, raises the chance of hatching a shiny.',
         '持っていると色違いが生まれる確率が上がります。',
-        'Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon variocolor.',
+        'Mientras lo tengas, aumenta la probabilidad de que nazca un Pokémon shiny.',
       )
     // Ball copy states the multiplier rather than a catch percentage: the real odds depend on
     // the species' capture rate, and a single number in the shop would be a lie for most of them.
@@ -311,7 +334,10 @@ export function eggName(lang: AppLanguage, tier: Rarity | undefined): string {
  * sentence, so they cannot drift apart.
  */
 export function eggDescription(lang: AppLanguage, tier: Rarity | undefined): string {
-  if (tier === undefined || tier === 'common') {
+  if (tier === undefined) {
+    return t(lang, '보관함에 추가', 'Goes to your stock', 'ストックに くわわる', 'Va a tu reserva')
+  }
+  if (tier === 'common') {
     return t(lang, '등급은 무작위', 'Any rarity', 'レアリティはランダム', 'Rareza aleatoria')
   }
   return eggGuaranteeHint(lang, tier)
@@ -385,11 +411,15 @@ export const statusOpenPanel = (lang: AppLanguage): string =>
 
 export const runAwayLabel = (lang: AppLanguage): string => t(lang, '도망가기', 'Run', 'にげる', 'Huir')
 
+/** The battle menu's Pokémon button, as the games print it: the companion's entry. */
+export const pokemonMenuLabel = (lang: AppLanguage): string =>
+  t(lang, '포켓몬', 'Pokémon', 'ポケモン', 'Pokémon')
+
 export const trainerLabel = (lang: AppLanguage): string =>
   t(lang, '트레이너', 'Trainer', 'トレーナー', 'Entrenador')
 
 /** Badge on a catch-log row that came from a wild capture rather than a raised line. */
-export const wildCaughtBadge = (lang: AppLanguage): string => t(lang, '야생', 'wild', 'やせい', 'salvaje')
+export const wildCaughtBadge = (lang: AppLanguage): string => t(lang, '야생', 'Wild', 'やせい', 'Salvaje')
 
 /**
  * Native confirmation before letting a wild Pokémon go. Built only for encounters worth the
@@ -417,7 +447,7 @@ export const shopGroupBalls = (lang: AppLanguage): string =>
 export const commandPrompt = (lang: AppLanguage): string =>
   t(lang, '무엇을 할까?', 'What will you do?', 'どうする？', '¿Qué vas a hacer?')
 
-export const commandBalls = (lang: AppLanguage): string => t(lang, '볼', 'Balls', 'ボール', 'Balls')
+export const commandBalls = (lang: AppLanguage): string => t(lang, '볼', 'Balls', 'ボール', 'Poké Balls')
 
 export const commandBack = (lang: AppLanguage): string => t(lang, '뒤로', 'Back', 'もどる', 'Atrás')
 
@@ -435,15 +465,15 @@ export const shopGroupEggs = (lang: AppLanguage): string => t(lang, '알', 'Eggs
 export const shopEggsNote = (lang: AppLanguage): string =>
   t(
     lang,
-    '어떤 알이든 지금 포켓몬을 놓아주고 부화를 처음부터 다시 시작해요.',
-    'Every egg sends off your current Pokémon and starts incubation over.',
-    'どのタマゴも、いまのポケモンを手放してふかをやり直します。',
-    'Cualquier huevo suelta a tu Pokémon actual y reinicia la incubación.',
+    '알은 보관함으로 가요. 보장은 품고 있는 알의 등급을 정해요.',
+    'An egg goes to your stock; a guarantee fixes the rarity of the egg you are incubating.',
+    'タマゴは ストックへ。ほしょうは あたためている タマゴの レアリティを きめます。',
+    'El huevo va a tu reserva; la garantía fija la rareza del que estás incubando.',
   )
 
 /** The call-to-action under an empty ball rack — the moment of highest purchase intent. */
 export const getBallsCta = (lang: AppLanguage): string =>
-  t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Comprar Poké Balls')
+  t(lang, '몬스터볼 사러 가기', 'Get Poké Balls', 'ボールを買いに行く', 'Ir a por Poké Balls')
 
 /**
  * The saving marked on the ten-pack's own action.
@@ -471,7 +501,7 @@ export const buyActionLabel = (lang: AppLanguage, name: string, price: string): 
     lang,
     `${name} 구매 — ${price}`,
     `Buy ${name} — ${price}`,
-    `${name} を購入 — ${price}`,
+    `${name}を かう — ${price}`,
     `Comprar ${name} — ${price}`,
   )
 
@@ -486,7 +516,7 @@ export const bundleBuyLabel = (
     lang,
     `${name} 구매 — ${price}, ${discountPercent}% 할인`,
     `Buy ${name} — ${price}, ${discountPercent}% off`,
-    `${name} を購入 — ${price}、${discountPercent}%お得`,
+    `${name}を かう — ${price}、${discountPercent}%お得`,
     `Comprar ${name} — ${price}, ${discountPercent}% de descuento`,
   )
 
@@ -562,15 +592,15 @@ export function streakProgressText(lang: AppLanguage, days: number, needed: numb
   return t(
     lang,
     `${needed}일 중 ${days}일`,
-    `${days} of ${needed} days`,
-    `${needed}日のうち${days}日`,
-    `${days} de ${needed} días`,
+    `${days} / ${needed} days`,
+    `${days} / ${needed}日`,
+    `${days} / ${needed} días`,
   )
 }
 
 /** Replaces the count once the week has paid out: there is nothing left to count toward. */
 export function streakEarnedText(lang: AppLanguage): string {
-  return t(lang, '전설 획득!', 'Legendary earned', 'でんせつ かくとく！', 'Legendario logrado')
+  return t(lang, '전설 획득!', 'Legendary earned!', 'でんせつ かくとく！', '¡Legendario conseguido!')
 }
 
 // MARK: - Pokédex browsing
@@ -584,7 +614,7 @@ export function dexSearchPlaceholder(lang: AppLanguage): string {
 }
 
 export function dexOwnedOnlyLabel(lang: AppLanguage): string {
-  return t(lang, '보유한 것만', 'Owned only', '所持のみ', 'Solo obtenidos')
+  return t(lang, '보유한 것만', 'Obtained only', '所持のみ', 'Solo obtenidos')
 }
 
 /** The chip that clears the catch log's rarity narrowing. */
@@ -674,7 +704,7 @@ export function fledText(lang: AppLanguage, name: string): string {
 export function turnResultText(
   lang: AppLanguage,
   outcome:
-    | { kind: 'caught'; refunded: number }
+    | Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>
     | { kind: 'broke'; shakes: number; attack?: { stolen: number } }
     | { kind: 'fed'; berry: BerryKind; attack?: { stolen: number } }
     | { kind: 'fled'; trailed: boolean }
@@ -693,7 +723,13 @@ export function turnResultText(
         name: context.name,
         isShiny: context.isShiny,
       })
-      return outcome.refunded > 0 ? `${line} ${refundedText(lang, compact(outcome.refunded))}` : line
+      const parts = [line]
+      if (outcome.registeredPercent !== undefined)
+        parts.push(caughtRegisteredText(lang, outcome.registeredPercent))
+      if (outcome.reward !== undefined) parts.push(duplicateRewardText(lang, compact(outcome.reward)))
+      if (outcome.refunded > 0) parts.push(refundedText(lang, compact(outcome.refunded)))
+      // Japanese runs sentences together after 。/！; the others separate them with a space.
+      return parts.join(lang === 'ja' ? '' : ' ')
     }
     case 'broke':
       return `${brokeFreeText(lang, outcome.shakes)}${attack(outcome.attack)}`
@@ -714,13 +750,13 @@ export function turnResultText(
 
 /** The trail line added to a legendary's flee: it can still be tracked, and for how long. */
 export function trailLeftText(lang: AppLanguage, hours: number): string {
-  const days = Math.round(hours / 24)
+  const h = Math.round(hours)
   return t(
     lang,
-    `발자국이 ${days}일 동안 남아 있어요.`,
-    `Its tracks will stay for ${days} days.`,
-    `足あとが${days}日のこっています。`,
-    `Su rastro seguirá ${days} días.`,
+    `흔적이 ${h}시간 동안 남아 있어요.`,
+    `Its trail will stay for ${h} h.`,
+    `あしあとが ${h}時間 のこっています。`,
+    `Su rastro seguirá ${h} h.`,
   )
 }
 
@@ -907,19 +943,31 @@ export function collectAllLabel(lang: AppLanguage): string {
 }
 
 export function trailTitle(lang: AppLanguage): string {
-  return t(
-    lang,
-    '놓친 전설의 발자국',
-    'Tracks of legendaries that got away',
-    'にげた伝説の足あと',
-    'Rastro de legendarios que se escaparon',
-  )
+  return t(lang, '전설의 흔적', 'Legendary trail', 'でんせつの あしあと', 'Rastro legendario')
 }
 
 /** How long a trail stays warm. `hours` is rounded up so "0 h" never shows while it is still there. */
 export function trailExpiresText(lang: AppLanguage, hours: number): string {
-  const h = Math.max(1, Math.ceil(hours))
-  return t(lang, `${h}시간 남음`, `${h} h left`, `のこり${h}時間`, `Quedan ${h} h`)
+  return timeLeftText(lang, hours)
+}
+
+/**
+ * How long is left, the one way the game says it: hours under a day, days and hours past it
+ * ("2 d 19 h left"), lower case because it follows a name after "·". Rounded up to the hour.
+ */
+export function timeLeftText(lang: AppLanguage, hours: number): string {
+  const total = Math.max(1, Math.ceil(hours))
+  const days = Math.floor(total / 24)
+  const h = total % 24
+  const span = (d: string, hr: string) =>
+    days === 0 ? `${h} ${hr}` : h === 0 ? `${days} ${d}` : `${days} ${d} ${h} ${hr}`
+  return t(
+    lang,
+    `${span('일', '시간')} 남음`,
+    `${span('d', 'h')} left`,
+    `のこり ${span('日', '時間')}`,
+    `quedan ${span('d', 'h')}`,
+  )
 }
 
 export function trackLabel(lang: AppLanguage, price: string): string {
@@ -964,7 +1012,7 @@ export function trackExpiredText(lang: AppLanguage): string {
   return t(
     lang,
     '발자국이 사라져 버렸어요.',
-    'The tracks have gone cold.',
+    'The trail has gone cold.',
     '足あとが消えてしまった。',
     'El rastro se ha enfriado.',
   )
@@ -1064,8 +1112,13 @@ export function mergedText(lang: AppLanguage, dexAdded: number, narrative: 'loca
  */
 export type CelebrationEvent =
   | { kind: 'hatched'; name: string; isShiny: boolean }
-  | { kind: 'evolved'; name: string }
+  | { kind: 'evolved'; name: string; registered?: string }
   | { kind: 'graduated'; name: string }
+  | { kind: 'companionChosen'; name: string }
+  | { kind: 'companionSwitched'; from: string; to?: string }
+  | { kind: 'shinyRegistered'; name: string }
+  | { kind: 'medalEarned'; medalID: string }
+  | { kind: 'challengeDone'; challenge: Challenge }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
@@ -1112,10 +1165,58 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
       return t(
         lang,
         `${event.name}이(가) 도감에 등록되었어요!`,
-        `${event.name} graduated into the Pokédex!`,
+        `${event.name} registered in the Pokédex!`,
         `${event.name}がずかんにとうろくされた！`,
-        `¡${event.name} se ha graduado a la Pokédex!`,
+        `¡${event.name} registrado en la Pokédex!`,
       )
+    case 'challengeDone':
+      return t(
+        lang,
+        `✅ 도전 완료: ${challengeText(lang, event.challenge)} (토큰 +${compact(challengeReward(event.challenge))})`,
+        `✅ Challenge done: ${challengeText(lang, event.challenge)} (+${compact(challengeReward(event.challenge))} tokens)`,
+        `✅ チャレンジ たっせい: ${challengeText(lang, event.challenge)} (トークン +${compact(challengeReward(event.challenge))})`,
+        `✅ Reto cumplido: ${challengeText(lang, event.challenge)} (+${compact(challengeReward(event.challenge))} tokens)`,
+      )
+    case 'medalEarned':
+      return t(
+        lang,
+        `🏅 메달 획득: ${medalName(lang, event.medalID)}`,
+        `🏅 Medal earned: ${medalName(lang, event.medalID)}`,
+        `🏅 メダル かくとく: ${medalName(lang, event.medalID)}`,
+        `🏅 Medalla conseguida: ${medalName(lang, event.medalID)}`,
+      )
+    case 'shinyRegistered':
+      return t(
+        lang,
+        `✨ ${event.name}의 색이 다른 모습이 도감에 등록되었어요!`,
+        `✨ Shiny ${event.name} registered in the Pokédex!`,
+        `✨ いろちがいの ${event.name}が ずかんに とうろくされた!`,
+        `✨ ¡${event.name} shiny registrado en la Pokédex!`,
+      )
+    case 'companionChosen':
+      return t(
+        lang,
+        `이제 ${event.name}이(가) 함께해요!`,
+        `${event.name} joins you now!`,
+        `${event.name}が いっしょに いる!`,
+        `¡Ahora te acompaña ${event.name}!`,
+      )
+    case 'companionSwitched':
+      return event.to === undefined
+        ? t(
+            lang,
+            `${event.from}의 도감이 완성됐어요. 이제 알을 품어요.`,
+            `${event.from} is fully registered. An egg takes the stage.`,
+            `${event.from}のとうろくがかんりょう。つぎはタマゴをあたためよう。`,
+            `${event.from} está registrado del todo. Ahora toca incubar un huevo.`,
+          )
+        : t(
+            lang,
+            `${event.from}의 도감이 완성됐어요. 이제 ${event.to}이(가) 함께해요.`,
+            `${event.from} is fully registered. ${event.to} joins you now.`,
+            `${event.from}のとうろくがかんりょう。こんどは${event.to}がいっしょだ。`,
+            `${event.from} está registrado del todo. Ahora te acompaña ${event.to}.`,
+          )
     case 'dittoRevealed': {
       const text = t(
         lang,
@@ -1140,7 +1241,7 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `야생 ${event.name}이(가) 나타났어요!`,
         `A wild ${event.name} appeared!`,
         `やせいの${event.name}があらわれた！`,
-        `¡Un ${event.name} salvaje apareció!`,
+        `¡Ha aparecido un ${event.name} salvaje!`,
       )
       return event.isShiny ? `${text} ✨` : text
     }
@@ -1200,7 +1301,7 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
 
 /** The celebration toast's single button. */
 export function openPanelLabel(lang: AppLanguage): string {
-  return t(lang, '패널 열기', 'Open panel', 'パネルをひらく', 'Abrir panel')
+  return statusOpenPanel(lang) // the tooltip link's words: one "open panel" in the whole app
 }
 
 /**
@@ -1222,4 +1323,961 @@ export function saveBusyText(lang: AppLanguage): string {
     'ほかのウィンドウがセーブデータを書きこんでいたため、なにも変更されていません。少しあとでもう一度おためしください。',
     'Otra ventana estaba escribiendo tu partida, así que no se cambió nada. Inténtalo de nuevo.',
   )
+}
+
+// MARK: - Companion choice, starters and the egg stock (phase 2)
+
+/** A label with its count, the way the Pokédex segments show it: "Collection (8)". */
+export function countedLabel(label: string, count: number): string {
+  return `${label} (${count})`
+}
+
+/** The Pokédex completion line: "5 / 649". */
+export function dexProgressText(done: number | string, total: number | string): string {
+  return `${done} / ${total}`
+}
+
+/** A species' registration line in the Pokédex: "45% registered", or "Registered" once full. */
+export function registrationText(lang: AppLanguage, percent: number, registered: boolean): string {
+  if (registered) return t(lang, '등록 완료', 'Registered', 'とうろくずみ', 'Registrado')
+  return t(
+    lang,
+    `${percent}% 등록`,
+    `${percent}% registered`,
+    `${percent}% とうろく`,
+    `${percent}% registrado`,
+  )
+}
+
+/** The egg stock: "2 eggs in stock". */
+export function eggStockText(lang: AppLanguage, count: number): string {
+  return t(
+    lang,
+    `알 ${count}개 보유`,
+    count === 1 ? '1 egg in stock' : `${count} eggs in stock`,
+    `タマゴ ${count}こ`,
+    count === 1 ? '1 huevo en reserva' : `${count} huevos en reserva`,
+  )
+}
+
+/** The button that starts incubating an egg from the stock. */
+export const incubateEggText = (lang: AppLanguage): string =>
+  t(lang, '알 부화시키기', 'Incubate an egg', 'タマゴをあたためる', 'Incubar un huevo')
+
+/** The same button when an egg was set aside for a companion and is waiting. */
+export const resumeEggText = (lang: AppLanguage): string =>
+  t(lang, '알 이어서 부화시키기', 'Resume the egg', 'タマゴのつづきをあたためる', 'Retomar el huevo')
+
+/** The Pokédex detail's button that makes an unlocked species the companion. */
+export const chooseCompanionText = (lang: AppLanguage): string =>
+  t(lang, '컴패니언으로 선택', 'Choose as companion', 'コンパニオンにする', 'Elegir como compañero')
+
+/** Badge on the species that is the companion right now. */
+export const companionBadgeText = (lang: AppLanguage): string =>
+  t(lang, '내 컴패니언', 'Your companion', 'あなたのコンパニオン', 'Tu compañero')
+
+/** The first-run screen's title. */
+export const starterTitleText = (lang: AppLanguage): string =>
+  t(
+    lang,
+    '첫 포켓몬을 골라요',
+    'Choose your first Pokémon',
+    'さいしょのポケモンをえらぼう',
+    'Elige tu primer Pokémon',
+  )
+
+/** The first-run screen's line under the title. */
+export const starterPromptText = (lang: AppLanguage): string =>
+  t(
+    lang,
+    '컴패니언이 되어 사용하는 토큰마다 함께 성장해요.',
+    'It becomes your companion, and every token you spend helps it grow.',
+    'コンパニオンになり、つかったトークンでそだちます。',
+    'Será tu compañero, y cada token que gastes lo hará crecer.',
+  )
+
+/** The companion could not be rebuilt: its evolution line needs the network. */
+export function companionOfflineText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 오프라인이라 이 포켓몬을 데려올 수 없어요. 잠시 후 다시 시도하세요.',
+    'This Pokémon cannot join you offline. Try again in a moment.',
+    'オフラインではこのポケモンを連れてこられません。しばらくしてからもう一度。',
+    'Sin conexión no se puede traer a este Pokémon. Inténtalo en un momento.',
+  )
+}
+
+/** The species is not unlocked (or the starter screen is over). */
+export function companionLockedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '아직 얻지 못한 포켓몬이에요.',
+    'You have not obtained that Pokémon yet.',
+    'まだ手に入れていないポケモンです。',
+    'Todavía no has conseguido ese Pokémon.',
+  )
+}
+
+/** Nothing to incubate: the stock is empty and no egg is paused. */
+export function noEggsText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '알이 없어요. 하루에 하나씩 생겨요.',
+    'No eggs to incubate. One arrives each day you work.',
+    'タマゴがありません。作業した日に1つ手に入ります。',
+    'No hay huevos que incubar. Cada día de trabajo llega uno.',
+  )
+}
+
+// MARK: - Catching registers (phase 3)
+
+/** A first catch: how far the species' registration reads now. */
+export function caughtRegisteredText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `도감 등록 ${percent}%!`,
+    `${percent}% registered!`,
+    `ずかん登録 ${percent}%!`,
+    `¡${percent}% registrado!`,
+  )
+}
+
+/** A duplicate catch: the species was already obtained, so it pays tokens instead. */
+export function duplicateRewardText(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `이미 가진 포켓몬이라 토큰 +${amount}.`,
+    `Already had it: +${amount} tokens.`,
+    `もう持っているのでトークン+${amount}。`,
+    `Ya lo tenías: +${amount} tokens.`,
+  )
+}
+
+/** The EXP bar's figure: what it has of what the stage costs, both already compact. */
+export function expProgressText(done: string, total: string): string {
+  return `${done} / ${total}`
+}
+
+/** What is left to the next stage (or the hatch), beside the EXP bar. */
+export function expLeftText(lang: AppLanguage, amount: string): string {
+  return t(lang, `${amount} 남음`, `${amount} to go`, `あと${amount}`, `faltan ${amount}`)
+}
+
+/** Tooltip of the Poké Ball on a wild plate: the species is already obtained. */
+export function ownedText(lang: AppLanguage): string {
+  return t(lang, '이미 가진 포켓몬', 'Already obtained', 'つかまえたことがある', 'Ya lo tienes')
+}
+
+/** A catch's banner headline: the species is new to the Pokédex. */
+export function newInDexText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '도감에 새로 등록!',
+    'New in the Pokédex!',
+    'ずかんに あたらしく とうろく!',
+    '¡Nuevo en la Pokédex!',
+  )
+}
+
+/** A catch's banner headline: a duplicate. */
+export function alreadyOwnedText(lang: AppLanguage): string {
+  return t(lang, '이미 가진 포켓몬', 'Already had it', 'もう もっている', 'Ya lo tenías')
+}
+
+/** A catch's banner detail: the registration share it added. */
+export function catchShareText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `등록 +${percent}%`,
+    `+${percent}% registered`,
+    `とうろく +${percent}%`,
+    `+${percent}% registrado`,
+  )
+}
+
+/** A catch's banner detail: the tokens a duplicate paid. */
+export function rewardTokensText(lang: AppLanguage, amount: string): string {
+  return t(lang, `토큰 +${amount}`, `+${amount} tokens`, `トークン +${amount}`, `+${amount} tokens`)
+}
+
+/** The scene's banner for a catch, or nothing for any other turn. */
+export function catchNews(
+  lang: AppLanguage,
+  outcome: Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>,
+): { isNew: boolean; headline: string; detail: string } {
+  if (outcome.reward !== undefined) {
+    return {
+      isNew: false,
+      headline: alreadyOwnedText(lang),
+      detail: rewardTokensText(lang, compact(outcome.reward)),
+    }
+  }
+  return {
+    isNew: true,
+    headline: newInDexText(lang),
+    detail: catchShareText(lang, outcome.registeredPercent ?? 0),
+  }
+}
+
+/** Settings: the finished-companion toggle. */
+export function keepCompletedLabel(lang: AppLanguage): string {
+  return t(
+    lang,
+    '등록을 마친 포켓몬과 계속 함께하기',
+    'Keep a fully registered companion',
+    'とうろくを おえた ポケモンと いっしょに いる',
+    'Mantener al compañero registrado del todo',
+  )
+}
+
+/** Settings: what the toggle changes, under it. */
+export function keepCompletedHint(lang: AppLanguage): string {
+  return t(
+    lang,
+    '끄면 마지막 진화의 막대가 가득 찼을 때 아직 등록하지 않은 포켓몬으로 바뀌어요. 켜면 그대로 남고 토큰은 색이 다른 모습을 위해 모여요.',
+    'Off: when its last form’s bar is full, it switches to one of yours still unregistered. On: it stays, and its tokens wait for the shiny.',
+    'オフ: さいごの しんかの バーが いっぱいに なると、まだ とうろくしていない ポケモンに かわる。オン: そのまま のこり、トークンは いろちがいの ために たまる。',
+    'Desactivado: cuando su última forma llena la barra, cambia a uno tuyo aún sin registrar. Activado: se queda, y sus tokens esperan al shiny.',
+  )
+}
+
+// MARK: - The shiny bar (phase 5)
+
+/** A registered species' shiny bar: "Shiny 12% · 192M / 1.6B". */
+export function shinyBarText(lang: AppLanguage, percent: number, done: string, total: string): string {
+  return t(
+    lang,
+    `색이 다른 모습 ${percent}% · ${done} / ${total}`,
+    `Shiny ${percent}% · ${done} / ${total}`,
+    `いろちがい ${percent}% · ${done} / ${total}`,
+    `Shiny ${percent}% · ${done} / ${total}`,
+  )
+}
+
+/** The shiny bar once full. */
+export function shinyRegisteredText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '색이 다른 모습 등록 완료',
+    'Shiny registered',
+    'いろちがい とうろくずみ',
+    'Shiny registrado',
+  )
+}
+
+/** A boost button's accessible name. */
+export function shinyBoostLabel(lang: AppLanguage, name: string, amount: string): string {
+  return t(
+    lang,
+    `${name}의 색이 다른 모습에 토큰 ${amount} 쓰기`,
+    `Boost shiny ${name} by ${amount} tokens`,
+    `いろちがいの ${name}に トークン${amount}を つかう`,
+    `Impulsar ${name} shiny con ${amount} tokens`,
+  )
+}
+
+/** A boost's native confirmation title: "Shiny Charizard". */
+export function shinyBoostTitle(lang: AppLanguage, name: string): string {
+  return t(lang, `색이 다른 ${name}`, `Shiny ${name}`, `いろちがいの ${name}`, `${name} shiny`)
+}
+
+/** Nothing to buy: the wallet is empty. */
+export function shinyBoostNoFundsText(lang: AppLanguage): string {
+  return trackCantAffordText(lang) // one sentence for one fact, wherever the wallet is short
+}
+
+/** Nothing to buy: the boost cap (`percent` of the bar) was bought, the rest is played. */
+export function shinyBoostCappedText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `막대의 ${percent}%까지 샀어요. 나머지는 함께하며 채워요.`,
+    `${percent}% of the bar was bought; the rest is earned as your companion.`,
+    `バーの ${percent}%まで かった。のこりは いっしょに ためよう。`,
+    `Ya compraste el ${percent}% de la barra; el resto se gana como compañero.`,
+  )
+}
+
+/** The Shinydex segment's label. */
+export function shinydexLabel(lang: AppLanguage): string {
+  return t(lang, '색이 다른 도감', 'Shinydex', 'いろちがいずかん', 'Shinydex')
+}
+
+/** A boost that no longer fits: the wallet moved, or another window bought first. */
+export function shinyBoostFailedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 그만큼 쓸 수 없어요. 다시 확인해 주세요.',
+    'That boost no longer fits. Nothing was charged.',
+    'いまは それだけ つかえない。なにも はらっていない。',
+    'Ese impulso ya no cabe. No se ha cobrado nada.',
+  )
+}
+
+// MARK: - The lure (phase 6)
+
+/** The lure button: "Lure · 24 h". */
+export function lureButtonText(lang: AppLanguage, hours: number): string {
+  return t(
+    lang,
+    `유인 · ${hours}시간`,
+    `Lure · ${hours} h`,
+    `おびきよせ · ${hours}じかん`,
+    `Atraer · ${hours} h`,
+  )
+}
+
+/** The lure button's accessible name. */
+export function lureLabel(lang: AppLanguage, name: string, hours: number, price: string): string {
+  return t(
+    lang,
+    `${name}을(를) ${hours}시간 유인하기, 토큰 ${price}`,
+    `Lure ${name} for ${hours} hours, ${price} tokens`,
+    `${name}を ${hours}じかん おびきよせる、トークン${price}`,
+    `Atraer a ${name} durante ${hours} horas, ${price} tokens`,
+  )
+}
+
+/** The lure's native confirmation title; says so when it replaces the lure running. */
+export function lureConfirmTitle(lang: AppLanguage, name: string, replaces: boolean): string {
+  const base = t(lang, `${name} 유인`, `Lure ${name}`, `${name}を おびきよせる`, `Atraer a ${name}`)
+  if (!replaces) return base
+  return `${base} ${t(
+    lang,
+    '(지금 유인을 대신해요)',
+    '(replaces the lure running)',
+    '(いまの おびきよせと いれかわる)',
+    '(sustituye a la atracción activa)',
+  )}`
+}
+
+/** The lure running, on Home: "Luring Charmander · 5 h left". */
+export function lureActiveText(lang: AppLanguage, name: string, hoursLeft: number): string {
+  const luring = t(
+    lang,
+    `${name} 유인 중`,
+    `Luring ${name}`,
+    `${name}を おびきよせ中`,
+    `Atrayendo a ${name}`,
+  )
+  return `${luring} · ${timeLeftText(lang, hoursLeft)}`
+}
+
+/** A lure that no longer fits: the wallet moved, or the species was obtained meanwhile. */
+export function lureFailedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '지금은 유인할 수 없어요. 아무것도 쓰지 않았어요.',
+    'That lure no longer fits. Nothing was charged.',
+    'いまは おびきよせられない。なにも はらっていない。',
+    'Ya no puedes atraerlo. No se ha cobrado nada.',
+  )
+}
+
+// MARK: - Medals and regions (phase 7)
+
+/** A region's name, as each language's games call it. */
+export function regionName(lang: AppLanguage, region: RegionID): string {
+  switch (region) {
+    case 'kanto':
+      return t(lang, '관동', 'Kanto', 'カントー', 'Kanto')
+    case 'johto':
+      return t(lang, '성도', 'Johto', 'ジョウト', 'Johto')
+    case 'hoenn':
+      return t(lang, '호연', 'Hoenn', 'ホウエン', 'Hoenn')
+    case 'sinnoh':
+      return t(lang, '신오', 'Sinnoh', 'シンオウ', 'Sinnoh')
+    case 'unova':
+      return t(lang, '하나', 'Unova', 'イッシュ', 'Teselia')
+  }
+}
+
+/** A medal's name, from its id (`medals.ts`): the kind's title and the count it asks for. */
+export function medalName(lang: AppLanguage, medalID: string): string {
+  const [kind, arg] = medalID.split('-') as [string, string | undefined]
+  switch (kind) {
+    case 'registered':
+      return t(
+        lang,
+        `연구원 · ${arg}`,
+        `Researcher · ${arg}`,
+        `けんきゅういん · ${arg}`,
+        `Investigador · ${arg}`,
+      )
+    case 'shiny':
+      return t(
+        lang,
+        `빛나는 수집가 · ${arg}`,
+        `Shiny collector · ${arg}`,
+        `いろちがい コレクター · ${arg}`,
+        `Coleccionista shiny · ${arg}`,
+      )
+    case 'caught':
+      return t(
+        lang,
+        `포획왕 · ${arg}`,
+        `Catcher · ${arg}`,
+        `ほかくの たつじん · ${arg}`,
+        `Capturador · ${arg}`,
+      )
+    case 'line':
+      return t(lang, '첫 진화의 끝', 'Line complete', 'さいしょの しんかの はて', 'Línea completa')
+    case 'region':
+      return t(
+        lang,
+        `${regionName(lang, arg as RegionID)} 도감 완성`,
+        `${regionName(lang, arg as RegionID)} Pokédex`,
+        `${regionName(lang, arg as RegionID)} ずかん かんせい`,
+        `Pokédex de ${regionName(lang, arg as RegionID)}`,
+      )
+    default:
+      return medalID
+  }
+}
+
+/** What a medal asks for, in a sentence. */
+export function medalDescription(lang: AppLanguage, medalID: string): string {
+  const [kind, arg] = medalID.split('-') as [string, string | undefined]
+  switch (kind) {
+    case 'registered':
+      return arg === '1'
+        ? t(lang, '한 종 등록하기', 'Register a species', '1しゅ とうろくする', 'Registra una especie')
+        : t(
+            lang,
+            `${arg}종 등록하기`,
+            `Register ${arg} species`,
+            `${arg}しゅ とうろくする`,
+            `Registra ${arg} especies`,
+          )
+    case 'shiny':
+      return arg === '1'
+        ? t(
+            lang,
+            '색이 다른 모습 한 종 등록하기',
+            'Register a shiny',
+            'いろちがいを 1しゅ とうろくする',
+            'Registra un shiny',
+          )
+        : t(
+            lang,
+            `색이 다른 모습 ${arg}종 등록하기`,
+            `Register ${arg} shinies`,
+            `いろちがいを ${arg}しゅ とうろくする`,
+            `Registra ${arg} shinies`,
+          )
+    case 'caught':
+      return t(
+        lang,
+        `야생 포켓몬 ${arg}마리 잡기`,
+        `Catch ${arg} wild Pokémon`,
+        `やせいの ポケモンを ${arg}ひき つかまえる`,
+        `Captura ${arg} Pokémon salvajes`,
+      )
+    case 'line':
+      return t(
+        lang,
+        '진화 라인을 끝까지 키우기',
+        'Raise a line to its final form',
+        'しんかを さいごまで そだてる',
+        'Cría una línea hasta su forma final',
+      )
+    case 'region':
+      return t(
+        lang,
+        `${regionName(lang, arg as RegionID)}의 모든 종 등록하기`,
+        `Register every species of ${regionName(lang, arg as RegionID)}`,
+        `${regionName(lang, arg as RegionID)}の ぜんしゅを とうろくする`,
+        `Registra todas las especies de ${regionName(lang, arg as RegionID)}`,
+      )
+    default:
+      return ''
+  }
+}
+
+/** The medals section heading: "Medals (4 / 23)". */
+export function medalsHeading(lang: AppLanguage, earned: number, total: number): string {
+  return t(
+    lang,
+    `메달 (${earned} / ${total})`,
+    `Medals (${earned} / ${total})`,
+    `メダル (${earned} / ${total})`,
+    `Medallas (${earned} / ${total})`,
+  )
+}
+
+// MARK: - Challenges (phase 7b)
+
+/** A type's name, as each language's games print it. */
+export function typeName(lang: AppLanguage, type: PokemonType): string {
+  const names: Record<PokemonType, [string, string, string, string]> = {
+    normal: ['노말', 'Normal', 'ノーマル', 'Normal'],
+    fire: ['불꽃', 'Fire', 'ほのお', 'Fuego'],
+    water: ['물', 'Water', 'みず', 'Agua'],
+    electric: ['전기', 'Electric', 'でんき', 'Eléctrico'],
+    grass: ['풀', 'Grass', 'くさ', 'Planta'],
+    ice: ['얼음', 'Ice', 'こおり', 'Hielo'],
+    fighting: ['격투', 'Fighting', 'かくとう', 'Lucha'],
+    poison: ['독', 'Poison', 'どく', 'Veneno'],
+    ground: ['땅', 'Ground', 'じめん', 'Tierra'],
+    flying: ['비행', 'Flying', 'ひこう', 'Volador'],
+    psychic: ['에스퍼', 'Psychic', 'エスパー', 'Psíquico'],
+    bug: ['벌레', 'Bug', 'むし', 'Bicho'],
+    rock: ['바위', 'Rock', 'いわ', 'Roca'],
+    ghost: ['고스트', 'Ghost', 'ゴースト', 'Fantasma'],
+    dragon: ['드래곤', 'Dragon', 'ドラゴン', 'Dragón'],
+    dark: ['악', 'Dark', 'あく', 'Siniestro'],
+    steel: ['강철', 'Steel', 'はがね', 'Acero'],
+    fairy: ['페어리', 'Fairy', 'フェアリー', 'Hada'],
+  }
+  const [ko, en, ja, es] = names[type]
+  return t(lang, ko, en, ja, es)
+}
+
+/** What a challenge asks for, in a sentence: "Catch 3 Pokémon". */
+export function challengeText(lang: AppLanguage, challenge: Challenge): string {
+  const n = challenge.target
+  switch (challenge.kind) {
+    case 'catch':
+      return t(
+        lang,
+        `포켓몬 ${n}마리 잡기`,
+        `Catch ${n} Pokémon`,
+        `ポケモンを ${n}ひき つかまえる`,
+        `Captura ${n} Pokémon`,
+      )
+    case 'catchType': {
+      const type = challenge.type === undefined ? '' : typeName(lang, challenge.type)
+      return n === 1
+        ? t(
+            lang,
+            `${type} 타입 포켓몬 잡기`,
+            `Catch a ${type}-type Pokémon`,
+            `${type}タイプの ポケモンを つかまえる`,
+            `Captura un Pokémon de tipo ${type}`,
+          )
+        : t(
+            lang,
+            `${type} 타입 포켓몬 ${n}마리 잡기`,
+            `Catch ${n} ${type}-type Pokémon`,
+            `${type}タイプの ポケモンを ${n}ひき つかまえる`,
+            `Captura ${n} Pokémon de tipo ${type}`,
+          )
+    }
+    case 'newSpecies':
+      return n === 1
+        ? t(
+            lang,
+            '새로운 종을 도감에 추가하기',
+            'Add a new species to the Pokédex',
+            'あたらしい しゅを ずかんに くわえる',
+            'Añade una especie nueva a la Pokédex',
+          )
+        : t(
+            lang,
+            `새로운 종 ${n}종을 도감에 추가하기`,
+            `Add ${n} new species to the Pokédex`,
+            `あたらしい しゅを ${n}しゅ ずかんに くわえる`,
+            `Añade ${n} especies nuevas a la Pokédex`,
+          )
+    case 'useTokens':
+      return t(
+        lang,
+        `토큰 ${compact(n)} 쓰기`,
+        `Use ${compact(n)} tokens`,
+        `トークンを ${compact(n)} つかう`,
+        `Usa ${compact(n)} tokens`,
+      )
+  }
+}
+
+/** The challenges board's heading. */
+export function challengesHeading(lang: AppLanguage): string {
+  return t(lang, '도전', 'Challenges', 'チャレンジ', 'Retos')
+}
+
+/** A challenge's period label. */
+export function challengePeriodText(lang: AppLanguage, period: 'day' | 'week'): string {
+  return period === 'day'
+    ? t(lang, '오늘', 'Today', 'きょう', 'Hoy')
+    : t(lang, '이번 주', 'This week', 'こんしゅう', 'Esta semana')
+}
+
+export { challengeReward }
+
+// MARK: - Home's drawers (plan 08 §8)
+
+/** A drawer's title. */
+export function drawerTitle(
+  lang: AppLanguage,
+  id: 'incubator' | 'challenges' | 'trail' | 'wild' | 'finds' | 'streak',
+): string {
+  switch (id) {
+    case 'incubator':
+      return t(lang, '부화기', 'Incubator', 'ふか そうち', 'Incubadora')
+    case 'challenges':
+      return challengesHeading(lang) // the board's own heading: one name for one thing
+    case 'trail':
+      return t(lang, '전설의 흔적', 'Legendary trail', 'でんせつの あしあと', 'Rastro legendario')
+    case 'wild':
+      return t(lang, '야생', 'Wild', 'やせい', 'Salvajes')
+    case 'finds':
+      return t(lang, '발견한 물건', 'Finds', 'みつけた どうぐ', 'Hallazgos')
+    case 'streak':
+      return t(lang, '연속 기록', 'Streak', 'れんぞく きろく', 'Racha')
+  }
+}
+
+/** The incubator folded: the egg on stage, one paused, or only the stock. */
+export function incubatorSummary(
+  lang: AppLanguage,
+  egg: { percent?: number; paused?: boolean; stock: number },
+): string {
+  // The egg stock's own sentence, the one Home's strip uses: one fact, one wording.
+  const stock = eggStockText(lang, egg.stock)
+  if (egg.paused === true) {
+    return `${t(lang, '알 일시정지', 'Egg paused', 'タマゴ いちじていし', 'Huevo en pausa')} · ${stock}`
+  }
+  if (egg.percent !== undefined) {
+    return `${t(lang, `알 ${egg.percent}%`, `Egg at ${egg.percent}%`, `タマゴ ${egg.percent}%`, `Huevo al ${egg.percent}%`)} · ${stock}`
+  }
+  return stock
+}
+
+/** The challenges folded: "1 / 3 done". */
+export function challengesSummary(lang: AppLanguage, done: number, total: number): string {
+  return t(
+    lang,
+    `${done} / ${total} 완료`,
+    `${done} / ${total} done`,
+    `${done} / ${total} たっせい`,
+    `${done} / ${total} cumplidos`,
+  )
+}
+
+/** The trail folded: what it tracks, how long it lasts, and how many more. */
+export function trailSummary(lang: AppLanguage, name: string, expires: string, more: number): string {
+  const head = `${name} · ${expires}`
+  return more > 0 ? `${head} · +${more}` : head
+}
+
+/** The usage folded: "Today 12.3M · Month 400M". */
+export function usageSummary(lang: AppLanguage, today: string, month: string): string {
+  return t(
+    lang,
+    `오늘 ${today} · 이번 달 ${month}`,
+    `Today ${today} · This month ${month}`,
+    `きょう ${today} · こんげつ ${month}`,
+    `Hoy ${today} · Este mes ${month}`,
+  )
+}
+
+/** The usage folded into a narrow lid: today only. */
+export function usageShortText(lang: AppLanguage, today: string): string {
+  return t(lang, `오늘 ${today}`, `Today ${today}`, `きょう ${today}`, `Hoy ${today}`)
+}
+
+/** The wild drawer folded with nothing waiting: "Next in 700K", short enough for 280 px. */
+export function nextEncounterShort(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `다음까지 ${amount}`,
+    `Next in ${amount}`,
+    `つぎまで ${amount}`,
+    `Siguiente en ${amount}`,
+  )
+}
+
+/** The expanded lid's column headings: "Today", "This month". */
+export function usageColumnLabel(lang: AppLanguage, which: 'today' | 'month'): string {
+  return which === 'today'
+    ? t(lang, '오늘', 'Today', 'きょう', 'Hoy')
+    : t(lang, '이번 달', 'This month', 'こんげつ', 'Este mes')
+}
+
+/** The lid toggle's accessible name. */
+export function lidToggleLabel(lang: AppLanguage): string {
+  return t(lang, '사용량 자세히', 'Usage details', 'しようりょうの くわしく', 'Detalle de uso')
+}
+
+/** The PC box: the quick switch from the battle plate. */
+export function pcBoxTitle(lang: AppLanguage): string {
+  return t(lang, 'PC 박스', 'PC box', 'パソコンの ボックス', 'Caja del PC')
+}
+
+/** The PC box with nothing else to switch to. */
+export function pcBoxEmptyText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '바꿀 수 있는 포켓몬이 아직 없어요. 잡거나 부화시켜 보세요.',
+    'No other Pokémon to switch to yet. Catch or hatch one.',
+    'まだ ほかの ポケモンが いない。つかまえるか タマゴを かえそう。',
+    'Aún no tienes otro Pokémon para cambiar. Captura o eclosiona uno.',
+  )
+}
+
+/** The PC box's sort options. */
+export function pcSortLabel(lang: AppLanguage, sort: 'progress' | 'number' | 'rarity'): string {
+  switch (sort) {
+    case 'progress':
+      return t(lang, '진행도', 'Progress', 'しんちょく', 'Progreso')
+    case 'number':
+      return t(lang, '번호', 'Number', 'ばんごう', 'Número')
+    case 'rarity':
+      return t(lang, '희귀도', 'Rarity', 'レアリティ', 'Rareza')
+  }
+}
+
+/** The PC box's status chips (plan 9.8). */
+export function pcFilterLabel(
+  lang: AppLanguage,
+  filter: 'unregistered' | 'registered' | 'shiny',
+): string {
+  switch (filter) {
+    case 'unregistered':
+      return t(lang, '미등록', 'Not registered', 'みとうろく', 'Sin registrar')
+    case 'registered':
+      return t(lang, '등록 완료', 'Registered', 'とうろくずみ', 'Registrados')
+    case 'shiny':
+      return t(lang, '색이 다른', 'Shiny', 'いろちがい', 'Shiny')
+  }
+}
+
+/** The sort direction toggle: the order it is showing, for its accessible name and tooltip. */
+export function sortDirectionLabel(lang: AppLanguage, direction: 'ascending' | 'descending'): string {
+  return direction === 'ascending'
+    ? t(lang, '오름차순', 'Ascending', 'しょうじゅん', 'Ascendente')
+    : t(lang, '내림차순', 'Descending', 'こうじゅん', 'Descendente')
+}
+
+/** The Pokédex's filters toggle (plan 9.3): its accessible name and tooltip. */
+export function dexFiltersToggleLabel(lang: AppLanguage): string {
+  return t(lang, '필터', 'Filters', 'フィルター', 'Filtros')
+}
+
+/** The incubator with an empty stock: how the next egg arrives. */
+export function eggsEmptyText(lang: AppLanguage): string {
+  return t(
+    lang,
+    'AI를 사용하는 날마다 알이 하나씩 와요. 상점에서 살 수도 있어요.',
+    'An egg arrives each day you use AI, or buy one in the shop.',
+    'AIを つかった ひに タマゴが ひとつ とどく。ショップでも かえる。',
+    'Cada día que usas IA llega un huevo, o cómpralo en la tienda.',
+  )
+}
+
+// MARK: - Empty states (plan 08 §7)
+
+/** An empty view's title and the line saying how it fills — the way out, not only the absence. */
+export function emptyState(
+  lang: AppLanguage,
+  view: 'collection' | 'shinydex' | 'log' | 'bag' | 'balls' | 'berries' | 'items',
+): { title: string; hint: string } {
+  switch (view) {
+    case 'collection':
+      return {
+        title: t(
+          lang,
+          '아직 포켓몬이 없어요',
+          'No Pokémon yet',
+          'まだ ポケモンが いない',
+          'Aún no tienes Pokémon',
+        ),
+        hint: t(
+          lang,
+          '알을 부화시키거나 야생 포켓몬을 잡아 보세요.',
+          'Hatch an egg or catch a wild one on Home.',
+          'タマゴを かえすか、ホームで やせいの ポケモンを つかまえよう。',
+          'Eclosiona un huevo o captura uno salvaje en Inicio.',
+        ),
+      }
+    case 'shinydex':
+      return {
+        title: t(
+          lang,
+          '아직 색이 다른 포켓몬이 없어요',
+          'No shinies yet',
+          'まだ いろちがいが いない',
+          'Aún no hay shinies',
+        ),
+        hint: t(
+          lang,
+          '등록한 포켓몬을 계속 키우면 색이 다른 막대가 차요. 색이 다른 포켓몬을 잡아도 돼요.',
+          'Keep raising a registered species to fill its shiny bar, or catch a shiny.',
+          'とうろくした ポケモンを そだてつづけると いろちがいの バーが たまる。いろちがいを つかまえても いい。',
+          'Sigue criando una especie registrada para llenar su barra shiny, o captura un shiny.',
+        ),
+      }
+    case 'log':
+      return {
+        title: t(
+          lang,
+          '아직 잡은 포켓몬이 없어요',
+          'Nothing caught yet',
+          'まだ なにも つかまえていない',
+          'Aún no has capturado nada',
+        ),
+        hint: t(
+          lang,
+          'AI를 쓰는 동안 홈에 야생 포켓몬이 나타나요.',
+          'Wild Pokémon turn up on Home while you use AI.',
+          'AIを つかうあいだ、ホームに やせいの ポケモンが あらわれる。',
+          'Los Pokémon salvajes aparecen en Inicio mientras usas IA.',
+        ),
+      }
+    case 'bag':
+      return {
+        title: t(
+          lang,
+          '가방이 비어 있어요',
+          'Your bag is empty',
+          'バッグは からっぽ',
+          'Tu bolsa está vacía',
+        ),
+        hint: t(
+          lang,
+          '상점에서 볼과 열매를 사거나, 야생에서 물건을 주워 보세요.',
+          'Buy balls and berries in the shop, or pick up finds in the wild.',
+          'ショップで ボールや きのみを かうか、やせいで どうぐを ひろおう。',
+          'Compra balls y bayas en la tienda, o recoge hallazgos en estado salvaje.',
+        ),
+      }
+    // A pocket is never disabled (plan 9.6): empty, it says how it fills, like the bag.
+    case 'balls':
+      return {
+        title: t(lang, '볼이 없어요', 'No Poké Balls', 'ボールが ない', 'No tienes Poké Balls'),
+        hint: t(
+          lang,
+          '상점에서 사거나, 야생에서 주워 보세요.',
+          'Buy them in the shop, or pick them up in the wild.',
+          'ショップで かうか、やせいで ひろおう。',
+          'Cómpralas en la tienda o recógelas en estado salvaje.',
+        ),
+      }
+    case 'berries':
+      return {
+        title: t(lang, '열매가 없어요', 'No berries', 'きのみが ない', 'No tienes bayas'),
+        hint: t(
+          lang,
+          '상점에서 사거나, 야생에서 주워 보세요.',
+          'Buy them in the shop, or pick them up in the wild.',
+          'ショップで かうか、やせいで ひろおう。',
+          'Cómpralas en la tienda o recógelas en estado salvaje.',
+        ),
+      }
+    case 'items':
+      return {
+        title: t(lang, '도구가 없어요', 'No items', 'どうぐが ない', 'No tienes objetos'),
+        hint: t(
+          lang,
+          '이상한사탕, 민트, 빛나는부적은 상점에 있어요.',
+          'Rare Candy, Mints and the Shiny Charm are in the shop.',
+          'ふしぎなアメ、ミント、ひかるおまもりは ショップに ある。',
+          'Caramelos Raros, Mentas y el Amuleto Iris están en la tienda.',
+        ),
+      }
+  }
+}
+
+/** The empty bag's way out: to the shop. */
+export function emptyBagAction(lang: AppLanguage): string {
+  return t(lang, '상점으로', 'Go to the shop', 'ショップへ', 'Ir a la tienda')
+}
+
+/** A shop drawer folded: how many things, and the cheapest. */
+export function shopGroupSummary(lang: AppLanguage, count: number, from: string): string {
+  return t(
+    lang,
+    `${count}개 · ${from}부터`,
+    `${count} · from ${from}`,
+    `${count}こ · ${from}から`,
+    `${count} · desde ${from}`,
+  )
+}
+
+/** An evolution's detail in the news: the form it registered on the way. */
+export function registeredOnTheWay(lang: AppLanguage, name: string): string {
+  return t(lang, `${name} 등록 완료`, `${name} registered`, `${name} とうろくずみ`, `${name} registrado`)
+}
+
+// MARK: - Pokédex entry (plan 9.7)
+
+/** A base stat by the games' own name. */
+export function statLabel(
+  lang: AppLanguage,
+  stat: 'hp' | 'attack' | 'defense' | 'specialAttack' | 'specialDefense' | 'speed',
+): string {
+  switch (stat) {
+    case 'hp':
+      return t(lang, 'HP', 'HP', 'HP', 'PS')
+    case 'attack':
+      return t(lang, '공격', 'Attack', 'こうげき', 'Ataque')
+    case 'defense':
+      return t(lang, '방어', 'Defense', 'ぼうぎょ', 'Defensa')
+    case 'specialAttack':
+      return t(lang, '특수공격', 'Sp. Atk', 'とくこう', 'At. Esp.')
+    case 'specialDefense':
+      return t(lang, '특수방어', 'Sp. Def', 'とくぼう', 'Def. Esp.')
+    case 'speed':
+      return t(lang, '스피드', 'Speed', 'すばやさ', 'Velocidad')
+  }
+}
+
+export function statTotalText(lang: AppLanguage, total: number): string {
+  return t(lang, `합계 ${total}`, `Total ${total}`, `ごうけい ${total}`, `Total ${total}`)
+}
+
+export function dexEntryLabels(lang: AppLanguage): {
+  height: string
+  weight: string
+  stats: string
+  line: string
+} {
+  return {
+    height: t(lang, '키', 'Height', 'たかさ', 'Altura'),
+    weight: t(lang, '몸무게', 'Weight', 'おもさ', 'Peso'),
+    stats: t(lang, '종족값', 'Base stats', 'しゅぞくち', 'Estadísticas base'),
+    line: t(lang, '진화', 'Evolution', 'しんか', 'Evolución'),
+  }
+}
+
+/** A measure with the language's decimal mark: `0.8 m`, `0,8 m`. */
+export function dexMeasureText(lang: AppLanguage, value: number, unit: 'm' | 'kg'): string {
+  const plain = value.toFixed(1)
+  return `${t(lang, plain, plain, plain, plain.replace('.', ','))} ${unit}`
+}
+
+/** Where the entry's text, size and stats would be, while the species is only seen. */
+export function dexEntryLockedText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '얻으면 도감 설명과 능력치가 채워져요.',
+    'Obtain it to fill in its entry and stats.',
+    'てに いれると ずかんの せつめいと のうりょくが うまる。',
+    'Obtenlo para completar su entrada y sus estadísticas.',
+  )
+}
+
+/** No network and nothing cached yet. */
+export function dexEntryUnavailableText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '도감 설명을 처음 열 때는 인터넷 연결이 필요해요.',
+    'The entry needs a connection the first time it opens.',
+    'はじめて ひらくときは インターネットに つなぐ ひつようが ある。',
+    'La entrada necesita conexión la primera vez que se abre.',
+  )
+}
+
+/** How many of an item, as a ball, a berry, a find or a bag row prints it: `×7`, every language. */
+export function itemCountText(count: number): string {
+  return `×${count}`
+}
+
+/** A registration's date, short and in the editor's locale: "Oct 21, 2026", "21 oct 2026". */
+export function registeredDateText(date: Date, locale: string | undefined): string {
+  return date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** The registration date as a sentence, for a tooltip and screen readers. */
+export function registeredOnText(lang: AppLanguage, date: string): string {
+  return t(lang, `${date} 등록`, `Registered on ${date}`, `${date}に とうろく`, `Registrado el ${date}`)
 }

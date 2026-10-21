@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { sourceRoot } from './repoRoot.js'
 import {
   APP_LANGUAGES,
   BALL_KINDS,
   BERRY_KINDS,
   ITEM_KINDS,
   RARITIES,
+  RareCandy,
 } from '../src/core/companion/model.js'
 import { f, s } from '../src/core/i18n/strings.js'
 import * as d from '../src/core/i18n/dispatch.js'
@@ -84,9 +86,16 @@ describe('switch-dispatched entries', () => {
     }
   })
 
-  it('derives the candy description from the balance constant', () => {
-    // Hard-coding the number here would let the copy drift from the actual XP granted.
-    expect(d.itemDescription('en', 'rareCandy')).toContain('100M')
+  // The candy is a share of the stage with a cap per species, not a fixed figure; both numbers
+  // come from the constants, so the copy cannot drift from what a candy actually does.
+  it.each(APP_LANGUAGES)('derives the candy description from the balance constants in %s', (lang) => {
+    const text = d.itemDescription(lang, 'rareCandy')
+    expect(text).toContain(`${Math.round(RareCandy.stageShare * 100)}%`)
+    expect(text).toContain(String(RareCandy.maxPerSpecies))
+  })
+
+  it.each(APP_LANGUAGES)('says when the species on stage has had its candies in %s', (lang) => {
+    expect(d.candyFullHint(lang)).toContain(String(RareCandy.maxPerSpecies))
   })
 
   it.each(APP_LANGUAGES)('names every egg tier in %s', (lang) => {
@@ -109,7 +118,8 @@ describe('switch-dispatched entries', () => {
 
   it('describes an unguaranteed egg differently from a guaranteed one', () => {
     expect(d.eggDescription('en', undefined)).not.toBe(d.eggDescription('en', 'rare'))
-    expect(d.eggDescription('en', 'common')).toBe(d.eggDescription('en', undefined))
+    // Untiered is the egg itself, for the stock: not "any rarity", which a common guarantee says.
+    expect(d.eggDescription('en', undefined)).not.toBe(d.eggDescription('en', 'common'))
     expect(d.eggDescription('en', 'rare')).toContain(d.rarityLabel('en', 'rare'))
   })
 
@@ -280,6 +290,20 @@ describe('shop and first-run strings', () => {
     expect(bundle).not.toBe(d.buyActionLabel(lang, 'Poké Ball ×10', '45M'))
   })
 
+  // Plan 08 §7, microcopy: a button says what it does, in the games' verb. The battle's way to
+  // the shop only opens the shop — "Comprar Poké Balls" promised a purchase that never happened.
+  it.each(APP_LANGUAGES)('does not say "buy" on a button that only goes to the shop, in %s', (lang) => {
+    expect(d.getBallsCta(lang)).not.toContain(s(lang, 'buy'))
+  })
+
+  it('speaks the games’ own verbs', () => {
+    // つかう, にげる, ひろう… the Japanese buttons are the games' kana verbs, and so is buying.
+    expect(s('ja', 'buy')).toBe('かう')
+    expect(d.buyActionLabel('ja', 'Poké Ball', '5M')).not.toContain('購入')
+    // "Balls" is the English menu; the Spanish games call them Poké Balls.
+    expect(d.commandBalls('es')).toBe('Poké Balls')
+  })
+
   // [trigger branch] The badge on the bundle is the only place the 10% survives now that the
   // ×10 has no card of its own, so it is derived from the constants the price is divided by.
   it('formats the bundle saving from the discount it is handed', () => {
@@ -426,6 +450,40 @@ describe('turn results', () => {
       }
     }
   })
+
+  // [trigger branch] Each half of a catch's news on its own: the share of a first catch, the
+  // tokens of a duplicate, each formatted here and never in the webview.
+  it.each(APP_LANGUAGES)('tells a first catch its share and a duplicate its reward, in %s', (lang) => {
+    const ball = context('pokeBall')
+    const first = d.turnResultText(lang, { kind: 'caught', refunded: 0, registeredPercent: 5 }, ball)
+    expect(first).toContain(d.caughtRegisteredText(lang, 5))
+    expect(first).toContain('5')
+    const duplicate = d.turnResultText(lang, { kind: 'caught', refunded: 0, reward: 2_000_000 }, ball)
+    expect(duplicate).toContain(d.duplicateRewardText(lang, '2M'))
+    expect(duplicate).not.toContain(d.caughtRegisteredText(lang, 5))
+    // The news the scene shows on a catch: new to the Pokédex with its share, or a duplicate
+    // with its reward — each with a headline and a detail of its own.
+    const isNew = d.catchNews(lang, { kind: 'caught', refunded: 0, registeredPercent: 5 })
+    expect(isNew).toEqual({
+      isNew: true,
+      headline: d.newInDexText(lang),
+      detail: d.catchShareText(lang, 5),
+    })
+    const dup = d.catchNews(lang, { kind: 'caught', refunded: 0, reward: 2_000_000 })
+    expect(dup).toEqual({
+      isNew: false,
+      headline: d.alreadyOwnedText(lang),
+      detail: d.rewardTokensText(lang, '2M'),
+    })
+    expect(new Set([isNew.headline, dup.headline, isNew.detail, dup.detail]).size).toBe(4)
+    // The same number the Pokédex row shows, formatted the same way.
+    expect(d.registrationText(lang, 5, false)).toContain(
+      d.caughtRegisteredText(lang, 5).match(/5\s?%/)![0],
+    )
+    if (lang === 'ja') expect(first).not.toMatch(/[。！!] /)
+    const plain = d.turnResultText(lang, { kind: 'caught', refunded: 0 }, ball)
+    expect(first.length).toBeGreaterThan(plain.length)
+  })
 })
 
 describe('save import strings', () => {
@@ -445,5 +503,131 @@ describe('save import strings', () => {
     expect(new Set(APP_LANGUAGES.map((lang) => d.importChoiceDetail(lang))).size).toBe(
       APP_LANGUAGES.length,
     )
+  })
+})
+
+// Phase 2's copy: every new string exists in every language, and the figures it carries come
+// from its arguments rather than being baked in.
+describe('companion choice copy', () => {
+  it.each(APP_LANGUAGES)('says how far a species is registered in %s', (lang) => {
+    expect(d.registrationText(lang, 45, false)).toContain('45')
+    expect(d.registrationText(lang, 100, true)).not.toContain('100')
+    expect(d.registrationText(lang, 100, true).trim()).not.toBe('')
+  })
+
+  it.each(APP_LANGUAGES)('counts the egg stock in %s', (lang) => {
+    expect(d.eggStockText(lang, 2)).toContain('2')
+  })
+
+  it('uses the singular for one egg', () => {
+    expect(d.eggStockText('en', 1)).toBe('1 egg in stock')
+    expect(d.eggStockText('es', 1)).toBe('1 huevo en reserva')
+  })
+
+  it.each(APP_LANGUAGES)('labels the companion controls and the starter screen in %s', (lang) => {
+    for (const text of [
+      d.incubateEggText(lang),
+      d.resumeEggText(lang),
+      d.chooseCompanionText(lang),
+      d.companionBadgeText(lang),
+      d.starterTitleText(lang),
+      d.starterPromptText(lang),
+    ]) {
+      expect(text.trim()).not.toBe('')
+    }
+    expect(d.incubateEggText(lang)).not.toBe(d.resumeEggText(lang))
+  })
+})
+
+describe('medal strings', () => {
+  // Walks the catalogue, so a medal added to `MEDALS` cannot ship nameless in some language.
+  it.each(APP_LANGUAGES)('names and describes every medal, in %s', async (lang) => {
+    const { MEDALS } = await import('../src/core/companion/medals.js')
+    for (const medal of MEDALS) {
+      expect(d.medalName(lang, medal.id)).not.toBe(medal.id)
+      expect(d.medalName(lang, medal.id).trim()).not.toBe('')
+      expect(d.medalDescription(lang, medal.id).trim()).not.toBe('')
+    }
+  })
+})
+
+describe('medal counts', () => {
+  // One is not plural: "Register 1 species" reads, "Register 1 shinies" does not.
+  it('speaks of one shiny and one catch in the singular', () => {
+    expect(d.medalDescription('en', 'shiny-1')).toBe('Register a shiny')
+    expect(d.medalDescription('es', 'shiny-1')).toBe('Registra un shiny')
+    expect(d.medalDescription('en', 'registered-1')).toBe('Register a species')
+    expect(d.medalDescription('en', 'shiny-10')).toBe('Register 10 shinies')
+  })
+})
+
+describe('one way to write a figure', () => {
+  // Every percentage in the game reads "40%", the way `registrationText` and the Pokédex write it.
+  // A second spelling ("40 %") crept in once with a new phase; this reads the source so it cannot
+  // again, in any language or string.
+  it('writes no space before a percent sign', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(join(sourceRoot(), 'core/i18n/dispatch.ts'), 'utf8')
+    expect(source.match(/[\d}] %/g) ?? []).toEqual([])
+  })
+})
+
+describe('time left', () => {
+  // One way to say how long is left: hours under a day, days and hours past it, lower case
+  // because it always follows a name after "·".
+  it('says hours under a day and days with hours past it', () => {
+    expect(d.timeLeftText('en', 5)).toBe('5 h left')
+    expect(d.timeLeftText('es', 5)).toBe('quedan 5 h')
+    expect(d.timeLeftText('en', 67)).toBe('2 d 19 h left')
+    expect(d.timeLeftText('es', 48)).toBe('quedan 2 d')
+    expect(d.trailExpiresText('en', 67)).toBe(d.timeLeftText('en', 67))
+    expect(d.lureActiveText('es', '#5', 5)).toContain(d.timeLeftText('es', 5))
+  })
+})
+
+describe('one word for one thing', () => {
+  // The end of a line is a registration now, not a graduation; and the shiny form is "shiny" in
+  // every language's Latin-script strings, never also "variocolor". Read from the sources, so a
+  // new string cannot bring the old word back.
+  it('says registered, not graduated, and shiny, not variocolor', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const sources = ['core/i18n/dispatch.ts', 'core/i18n/strings.ts'].map((f) =>
+      readFileSync(join(sourceRoot(), f), 'utf8'),
+    )
+    for (const source of sources) {
+      expect(source).not.toMatch(/variocolor/i)
+      expect(source).not.toMatch(/graduarse|se ha graduado|graduated into|to graduation/)
+    }
+    expect(d.celebrationText('en', { kind: 'graduated', name: 'Venusaur' })).toContain('registered')
+  })
+})
+
+describe('the Pokédex filters toggle', () => {
+  it.each(APP_LANGUAGES)('is named in %s', (lang) => {
+    expect(d.dexFiltersToggleLabel(lang).trim()).not.toBe('')
+  })
+})
+
+describe('the battle menu', () => {
+  it.each(APP_LANGUAGES)('names the Pokémon button, in %s', (lang) => {
+    expect(d.pokemonMenuLabel(lang).trim()).not.toBe('')
+  })
+})
+
+describe('empty states', () => {
+  // Every empty view says what it is and how it fills, in every language — and the Shinydex no
+  // longer borrows the collection's "nothing caught" line, which said nothing about shinies.
+  it.each(APP_LANGUAGES)('titles each empty view and says how it fills, in %s', (lang) => {
+    // Plan 9.6: a bag pocket is never disabled, so an empty one says how it fills too.
+    const views = ['collection', 'shinydex', 'log', 'bag', 'balls', 'berries', 'items'] as const
+    const texts = views.map((v) => d.emptyState(lang, v))
+    for (const { title, hint } of texts) {
+      expect(title.trim()).not.toBe('')
+      expect(hint.trim()).not.toBe('')
+    }
+    expect(new Set(texts.map((x) => x.title)).size).toBe(views.length)
+    expect(d.emptyBagAction(lang).trim()).not.toBe('')
   })
 })

@@ -62,6 +62,8 @@ export interface CompanionView {
   /** Tokens still needed for the next step, already formatted. */
   toNextText: string
   stageText?: string
+  /** Localised "45% registered" / "Registered" for the species on stage. Absent for an egg. */
+  registrationText?: string
   dexCount: number
   spendableTokens: number
   /** Unresolved wild encounters, for the activity-bar badge. */
@@ -365,7 +367,9 @@ function tooltipFor(args: {
       // The stage is dropped rather than rendered as a dangling separator while it loads.
       const stage = companion.stageText === undefined ? '' : ` — ${companion.stageText}`
       lines.push(`**${label}**${companion.isShiny ? ' ✨' : ''}${stage}`)
-      lines.push(`${bar(companion.progress)} · ${companion.toNextText}`)
+      const registration =
+        companion.registrationText === undefined ? '' : ` · ${companion.registrationText}`
+      lines.push(`${bar(companion.progress)} · ${companion.toNextText}${registration}`)
     }
     lines.push(
       `${s(lang, 'dexTitle')} ${companion.dexCount} · ${compact(companion.spendableTokens)} ${s(lang, 'spendableTokens').toLowerCase()}`,

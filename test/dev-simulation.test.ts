@@ -13,12 +13,14 @@ import {
   tokensToGraduation,
   tokensToMilestone,
   parseAmount,
+  registerShinyNow,
 } from '../src/core/dev/simulation.js'
 import { EncounterBalance } from '../src/core/companion/encounters.js'
 import { BALL_KINDS } from '../src/core/companion/model.js'
 import {
   PokemonBalance,
   freshCompanionState,
+  freshSpeciesProgress,
   type CompanionState,
   type MonState,
 } from '../src/core/companion/model.js'
@@ -193,5 +195,36 @@ describe('parseAmount', () => {
     expect(Number.isNaN(parseAmount('lots'))).toBe(true)
     expect(Number.isNaN(parseAmount(''))).toBe(true)
     expect(Number.isNaN(parseAmount('5x'))).toBe(true)
+  })
+})
+
+describe('registering the shiny on stage', () => {
+  // The dev shortcut goes through the same rule as earning it: `obtainShiny`, the bar full.
+  it('registers the companion species’ shiny and dresses the companion', () => {
+    const active = {
+      baseID: 4,
+      pathIDs: [4],
+      plannedPathIDs: [4, 5],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'rare' as const,
+      totalForms: 2,
+      isShiny: false,
+      dittoRevealed: false,
+    }
+    const s = {
+      ...freshCompanionState('en'),
+      active,
+      species: {
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true, lineRarity: 'rare' as const },
+      },
+    }
+    const next = registerShinyNow(s)
+    expect(next.species[4]).toMatchObject({
+      shinyRegistered: true,
+      shinyXP: 8 * PokemonBalance.graduationTotal('rare'),
+    })
+    expect(next.active?.isShiny).toBe(true)
+    expect(registerShinyNow({ ...s, active: undefined })).toEqual({ ...s, active: undefined })
   })
 })

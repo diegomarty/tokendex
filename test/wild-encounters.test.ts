@@ -25,6 +25,7 @@ import {
   queueFullEdge,
   rollFind,
   spawnKind,
+  stealAmount,
   takeTurn,
   temperamentFrom,
   trackLegendary,
@@ -45,8 +46,13 @@ import {
   type TrailEntry,
   type WildEncounter,
   type WildFind,
+  type SpeciesProgress,
+  PokemonBalance,
   freshCompanionState,
+  freshSpeciesProgress,
 } from '../src/core/companion/model.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
+import { registrationPercent } from '../src/core/companion/registry.js'
 
 /** Deterministic RNG so every roll in a throw is pinned. */
 const fixedRNG = (...values: number[]) => {
@@ -113,9 +119,9 @@ describe('accrual', () => {
     expect(owedEncounters(EncounterBalance.threshold * 3, 1)).toBe(3)
   })
 
-  // [trigger branch] Without the ceiling a dev scenario granting 1.5B owes ~600 encounters and
-  // keeps minting them out of one injection; the queue only holds 12, so banking more is
-  // meaningless as well as unbounded.
+  // [trigger branch] Without the ceiling a dev scenario granting 1.5B owes hundreds of encounters
+  // and keeps minting them out of one injection; the queue only holds `EncounterBalance.maxQueue`,
+  // so banking more is meaningless as well as unbounded.
   it('bounds a single absurd delta rather than banking encounters for ever', () => {
     const usage = addEncounterUsage(0, 1_500_000_000)
     expect(owedEncounters(usage, 1)).toBeLessThanOrEqual(EncounterBalance.maxQueue)
@@ -726,7 +732,12 @@ describe('attacks', () => {
       sequence(STAY),
       NOW,
     )
-    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 3_000_000 })
+    expect(result.outcome).toEqual({
+      kind: 'caught',
+      shakes: 4,
+      refunded: 3_000_000,
+      registeredPercent: 5,
+    })
     expect(result.state.spentTokens).toBe(2_000_000)
   })
 })
@@ -752,6 +763,29 @@ describe('the legendary trail', () => {
       sequence(MISS, 0),
       NOW,
     )
+
+  // A catch obtains the species: the registry says so from this moment, as the seed says it for
+  // a catch made before the registry existed. The 5% of registration is phase 3's.
+  it('a catch unlocks the species and counts it', () => {
+    const target = wild()
+    const caught = takeTurn(
+      state({ inventory: { masterBall: 1 }, wild: [target] }),
+      'w1',
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+    expect(caught.outcome.kind).toBe('caught')
+    expect(caught.state.species[target.speciesID]).toMatchObject({ unlocked: true, caught: 1 })
+    const again = takeTurn(
+      { ...caught.state, inventory: { masterBall: 1 }, wild: [wild({ id: 'w2' })] },
+      'w2',
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+    expect(again.state.species[target.speciesID]?.caught).toBe(2)
+  })
 
   it('a legendary that flees leaves tracks; a common does not', () => {
     const gone = flee(legendary())
@@ -983,7 +1017,7 @@ describe('throwBall', () => {
     ])
     const result = throwBall(before, 'w1', 'pokeBall', fixedRNG(0), NOW)
 
-    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 0 })
+    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 0, registeredPercent: 5 })
     expect(result.state.inventory['pokeBall']).toBe(1)
     expect(result.state.wild).toHaveLength(0)
     expect(result.state.dex).toHaveLength(1)
@@ -1062,5 +1096,198 @@ describe('runFromEncounter', () => {
   it('is a no-op for an unknown id', () => {
     const before = state({ wild: [wild({ id: 'a' })] })
     expect(runFromEncounter(before, 'nope')).toBe(before)
+  })
+})
+
+// The wallet is `spendableBalance` and nothing else: what was used, plus what was earned, minus
+// what was spent. Two encounter paths once read `usedSinceInstall − spentTokens` inline, which
+// silently ignored `earnedTokens` — a wallet the shop accepted but a trail refused.
+describe('the wallet encounters spend from', () => {
+  const lost: TrailEntry = {
+    id: 'mew',
+    speciesID: 150,
+    captureRate: 3,
+    isShiny: false,
+    nature: 'timid',
+    temperament: { aggression: 50, skittishness: 50, appetite: 50 },
+    types: ['psychic'],
+    trackedCount: 0,
+    lostAt: NOW,
+  }
+
+  // [trigger branch] Usage alone could not pay; only the earned tokens make the price.
+  it('lets earned tokens pay for a trail', () => {
+    const before = state({
+      legendaryTrail: [lost],
+      usedSinceInstall: 0,
+      earnedTokens: TrailBalance.basePrice,
+    })
+    const result = trackLegendary(before, 'mew', NOW)
+    expect(result.outcome).toBe('tracked')
+    expect(result.state.spentTokens).toBe(TrailBalance.basePrice)
+  })
+
+  // [trigger branch] Spent beyond usage, still solvent through earnings: the attack takes what
+  // the wallet holds — not zero, as usage minus spent would say, and not the full amount.
+  it('lets an attack take exactly the wallet, earnings included', () => {
+    const wallet = 300_000
+    const before = state({ usedSinceInstall: 1_000_000, spentTokens: 1_200_000, earnedTokens: 500_000 })
+    expect(stealAmount(before, wild({ rarity: 'rare' }))).toBe(wallet)
+  })
+})
+
+describe('catching registers', () => {
+  const catchOne = (s: CompanionState, target: WildEncounter = wild()) =>
+    takeTurn(
+      { ...s, inventory: { masterBall: 1 }, wild: [target] },
+      target.id,
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+  const known = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    threshold: 10_000_000,
+    ...over,
+  })
+
+  // [trigger branch] A first catch with the line known: the share goes straight to the bar.
+  it('registers a share of a new species whose threshold is known', () => {
+    const result = catchOne(state({ species: { 10: known({ seen: true }) } }))
+    expect(result.state.species[10]).toMatchObject({ unlocked: true, caught: 1, xp: 500_000 })
+    expect(result.outcome).toMatchObject({ kind: 'caught', registeredPercent: 5 })
+    expect(result.state.earnedTokens).toBe(0)
+  })
+
+  // [trigger branch] No line yet: the share is owed, and the Pokédex already reads it.
+  it('owes the share of a species never raised, and shows it', () => {
+    const result = catchOne(state())
+    const progress = result.state.species[10]!
+    expect(progress).toMatchObject({ unlocked: true, xp: 0, pendingShare: EconomyBalance.catchShare })
+    expect(registrationPercent(progress)).toBe(5)
+    expect(result.outcome).toMatchObject({ registeredPercent: 5 })
+  })
+
+  // [trigger branch] Already obtained: tokens from the table, into `earnedTokens`, and no xp. With
+  // nothing spent, a reward taken off `spentTokens` would clamp to zero and vanish.
+  it('pays a duplicate from the table and adds no experience', () => {
+    const owned = known({ unlocked: true, caught: 1, xp: 500_000 })
+    const result = catchOne(state({ species: { 10: owned }, spentTokens: 0 }))
+    expect(result.state.earnedTokens).toBe(EconomyBalance.duplicateReward.common)
+    expect(result.state.species[10]).toMatchObject({ xp: 500_000, caught: 2 })
+    expect(result.state.species[10]?.pendingShare).toBeUndefined()
+    expect(result.outcome).toMatchObject({ reward: EconomyBalance.duplicateReward.common })
+    expect(result.outcome).not.toHaveProperty('registeredPercent')
+    const rare = catchOne(state({ species: { 10: owned } }), wild({ rarity: 'rare' }))
+    expect(rare.state.earnedTokens).toBe(EconomyBalance.duplicateReward.rare)
+  })
+
+  // [trigger branch] A threshold where 5% is not a whole number: rounding down would read 4%.
+  it('reads the full share whatever the threshold', () => {
+    const odd = known({ seen: true, threshold: 16_666_667 })
+    const result = catchOne(state({ species: { 10: odd } }))
+    expect(result.outcome).toMatchObject({ registeredPercent: 5 })
+    expect(registrationPercent(result.state.species[10]!)).toBe(5)
+  })
+
+  it('never takes a species past its bar with the share', () => {
+    const nearly = known({ seen: true, xp: 9_800_000 })
+    expect(catchOne(state({ species: { 10: nearly } })).state.species[10]?.xp).toBe(10_000_000)
+  })
+
+  it('marks the shiny form obtained when a shiny is caught', () => {
+    expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyUnlocked).toBe(true)
+    expect(catchOne(state()).state.species[10]?.shinyUnlocked).toBeUndefined()
+  })
+
+  // [trigger branch] Caught a shiny of the companion's own species: the companion wears it, as
+  // it does when the bar fills by playing or by a boost.
+  it('dresses the companion when a shiny of its species is caught', () => {
+    const active = {
+      baseID: 10,
+      pathIDs: [10],
+      plannedPathIDs: [10],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'common' as const,
+      totalForms: 1,
+      isShiny: false,
+      dittoRevealed: false,
+    }
+    const owned = known({ unlocked: true, lineRarity: 'common' })
+    const result = catchOne(state({ active, species: { 10: owned } }), wild({ isShiny: true }))
+    expect(result.state.active?.isShiny).toBe(true)
+  })
+
+  // [trigger branch] A shiny caught completes its shiny bar at once (C5): the draw still pays,
+  // duplicate or not, with the bar full when the line's rarity is known.
+  it('completes the shiny bar of a shiny caught', () => {
+    const owned = known({ unlocked: true, lineRarity: 'common' })
+    const result = catchOne(state({ species: { 10: owned } }), wild({ isShiny: true }))
+    expect(result.state.species[10]).toMatchObject({
+      shinyRegistered: true,
+      shinyXP: 8 * PokemonBalance.graduationTotal('common'),
+    })
+    expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyRegistered).toBe(true)
+  })
+})
+
+describe('catching an evolved form', () => {
+  const evolved = (over: Partial<WildEncounter> = {}) =>
+    wild({
+      speciesID: 6,
+      rarity: 'rare',
+      line: { baseID: 4, stageIndex: 2, totalForms: 3, rarity: 'uncommon' },
+      ...over,
+    })
+  const catchIt = (s: CompanionState, target: WildEncounter) =>
+    takeTurn(
+      { ...s, inventory: { masterBall: 1 }, wild: [target] },
+      target.id,
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+
+  // [trigger branch] The encounter knows where the form sits, so the share lands as experience
+  // at once — priced by the line's rarity and stage — instead of waiting as `pendingShare`.
+  it('registers its share against its place in the line', () => {
+    const result = catchIt(state(), evolved())
+    const threshold = PokemonBalance.phaseThreshold('uncommon', 3, 2)
+    expect(result.state.species[6]).toMatchObject({
+      unlocked: true,
+      threshold,
+      baseID: 4,
+      stageIndex: 2,
+      totalForms: 3,
+      lineRarity: 'uncommon',
+      xp: Math.ceil(EconomyBalance.catchShare * threshold),
+    })
+    expect(result.state.species[6]?.pendingShare).toBeUndefined()
+  })
+
+  // [trigger branch] A duplicate pays by the line's rarity, not the form's own.
+  it('pays a duplicate by the line’s rarity', () => {
+    const owned = { 6: { ...freshSpeciesProgress(), unlocked: true } }
+    const result = catchIt(state({ species: owned }), evolved())
+    expect(result.state.earnedTokens).toBe(EconomyBalance.duplicateReward.uncommon)
+  })
+})
+
+describe('catching the lured species', () => {
+  // [trigger branch] The lure has done its job: catching its target ends it, while catching
+  // anything else leaves it running.
+  it('ends the lure on catching its target, and only then', () => {
+    const lure = { speciesID: 10, baseID: 10, stageIndex: 0, until: NOW + 1_000_000 }
+    const go = (s: CompanionState, target: WildEncounter) =>
+      takeTurn(
+        { ...s, inventory: { masterBall: 1 }, wild: [target] },
+        target.id,
+        { kind: 'throw', ball: 'masterBall' },
+        sequence(STAY),
+        NOW,
+      )
+    expect(go(state({ lure }), wild()).state.lure).toBeUndefined()
+    expect(go(state({ lure }), wild({ speciesID: 11 })).state.lure).toEqual(lure)
   })
 })
