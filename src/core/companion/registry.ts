@@ -18,6 +18,7 @@
 
 import {
   PokemonBalance,
+  PokemonOdds,
   currentSpeciesID,
   RareCandy,
   freshSpeciesProgress,
@@ -150,6 +151,7 @@ export function unlockSpecies(state: CompanionState, speciesID: number): Compani
 export function retireCompanion(state: CompanionState): CompanionState {
   const mon = state.active
   if (mon === undefined) return state
+  if (mon.dittoDisguise !== undefined && !mon.dittoRevealed) return retireDisguise(state, mon)
   const id = currentSpeciesID(mon)
   const current = progressOf(state, id)
   const next: SpeciesProgress = { ...current }
@@ -159,6 +161,34 @@ export function retireCompanion(state: CompanionState): CompanionState {
     next.companionShiny = true
   }
   return { ...state, species: { ...state.species, [id]: next } }
+}
+
+/**
+ * A Ditto leaving the stage still in disguise is revealed on the way out (code review 9.12 #4),
+ * by the reveal's own rules (`applyUsage`): this life's experience moves to Ditto, the shown
+ * species keeps only what was its own — and its unlock only if the hatch did not give it — and
+ * the nature and a shiny are Ditto's. Recorded as the species it showed, a shiny disguise used
+ * to leave that species shiny, a Pokémon the player never had, and the Ditto itself was gone.
+ */
+function retireDisguise(state: CompanionState, mon: MonState): CompanionState {
+  const shown = currentSpeciesID(mon)
+  const prior = progressOf(state, shown)
+  const moved = Math.min(prior.xp, mon.usedAtStage)
+  const left = prior.xp - moved
+  const onlyByDisguise =
+    mon.disguiseUnlocked === true && left === 0 && prior.caught === 0 && !prior.registered
+  const ditto = progressOf(state, PokemonOdds.dittoSpeciesID)
+  let revealed: SpeciesProgress = { ...ditto, xp: ditto.xp + moved, unlocked: true }
+  if (mon.nature !== undefined) revealed.nature = mon.nature
+  if (mon.isShiny) revealed = { ...obtainShiny(revealed), companionShiny: true }
+  return {
+    ...state,
+    species: {
+      ...state.species,
+      [shown]: { ...prior, xp: left, unlocked: prior.unlocked && !onlyByDisguise },
+      [PokemonOdds.dittoSpeciesID]: revealed,
+    },
+  }
 }
 
 /**

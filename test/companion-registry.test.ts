@@ -14,6 +14,7 @@ import {
   registerShiny,
   registerXP,
   registrationPercent,
+  retireCompanion,
   seedRegistry,
 } from '../src/core/companion/registry.js'
 
@@ -195,5 +196,52 @@ describe('marking a species seen', () => {
     })
     expect(markSeen(seen, 5, line)).toBe(seen)
     expect(markSeen(state(), 5).species[5]?.lineRarity).toBeUndefined()
+  })
+})
+
+// Code review 9.12 #4. Switching away from a Ditto still in disguise used to record it as the
+// species it showed: a shiny disguise left that species shiny, a Pokémon the player never had,
+// and the Ditto itself was gone. Leaving the stage reveals it instead, as growing would have.
+describe('retiring a Ditto in disguise', () => {
+  const disguised = (over: Partial<MonState> = {}) =>
+    mon({
+      baseID: 4,
+      pathIDs: [4],
+      plannedPathIDs: [4, 5, 6],
+      stageIndex: 0,
+      usedAtStage: 30,
+      dittoDisguise: 132,
+      disguiseUnlocked: true,
+      isShiny: true,
+      nature: 'bold',
+      ...over,
+    })
+
+  it('gives the life to Ditto, never the shiny or the nature to the species it showed', () => {
+    const before = state({
+      active: disguised(),
+      species: { 4: { ...freshSpeciesProgress(), unlocked: true, xp: 30 } },
+    })
+    const after = retireCompanion(before)
+    expect(after.species[4]).toMatchObject({ unlocked: false, xp: 0 })
+    expect(after.species[4]?.shinyUnlocked ?? false).toBe(false)
+    expect(after.species[4]?.companionShiny ?? false).toBe(false)
+    expect(after.species[132]).toMatchObject({
+      unlocked: true,
+      xp: 30,
+      shinyRegistered: true,
+      companionShiny: true,
+      nature: 'bold',
+    })
+  })
+
+  it('keeps a species that was owned before the disguise hatched', () => {
+    const before = state({
+      active: disguised({ disguiseUnlocked: false, isShiny: false }),
+      species: { 4: { ...freshSpeciesProgress(), unlocked: true, xp: 42 } },
+    })
+    const after = retireCompanion(before)
+    expect(after.species[4]).toMatchObject({ unlocked: true, xp: 12 })
+    expect(after.species[132]).toMatchObject({ unlocked: true, xp: 30 })
   })
 })
