@@ -39,6 +39,8 @@
   confirmation at the same 10% off.
 - **The PC box filters and both lists turn around.** Registered, still to register, shiny and
   region chips in the PC box, and an arrow beside every sort to reverse it.
+- **The Pokédex search finds every species by name**, met or not: the names are read once from
+  PokéAPI and kept on disk. A species not met yet still shows as a silhouette.
 
 ### Changed
 
@@ -70,7 +72,8 @@
 - Every experience and registration bar is the companion plate's EXP bar: Pokédex cells, the
   species card, the PC box, the catch card and the news. A registered species' bar turns green.
 - The species card opens over a veiled Pokédex: its facts and evolution line first, the game's
-  part next, its Pokédex text and base stats last.
+  part next, its Pokédex text and base stats last. Its registration reads on one line — the bar,
+  and the date the species was registered.
 
 ### Fixed
 
@@ -91,6 +94,10 @@
 - The Pokédex reads complete only when nothing is missing (646 of 649 used to show 100%).
 - A shiny caught before shiny bars existed now appears in the Shinydex.
 - A species card refreshes when what you own changes, and says so if its entry cannot be read.
+- A species card no longer flickers: it opens once at its full size, and pictures are kept
+  across repaints instead of reloading every time a button answers.
+- The companion on stage no longer shows up in the catch log, which records catches and
+  graduations only.
 
 ## [0.5.0] - 2026-10-20
 
