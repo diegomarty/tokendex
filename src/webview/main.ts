@@ -1675,7 +1675,7 @@ function entryPages(entry: PanelPokedexEntry | undefined, speciesID: number, ope
           <div class="dex-stats">${entry.stats
             .map(
               (stat) => `<span class="dex-stat-label">${escapeHTML(stat.label)}</span>
-                <b class="dex-stat-value">${stat.value}</b>
+                <b class="dex-stat-value">${escapeHTML(stat.valueText)}</b>
                 ${gameMeter(stat.percent, { surface: 'paper', size: 'thin', hidden: true })}`,
             )
             .join('')}</div>
@@ -3348,7 +3348,7 @@ function pcTools(state: PanelState): string {
   const status = box.filters
     .map(
       (f) =>
-        `<button class="chip" data-pc-filter="${f.id}" aria-pressed="${f.id === pcFilter}" ${f.count === 0 ? 'disabled' : ''}>${escapeHTML(f.label)}<span class="region-pct">${f.count}</span></button>`,
+        `<button class="chip" data-pc-filter="${f.id}" aria-pressed="${f.id === pcFilter}" ${f.count === 0 ? 'disabled' : ''}>${escapeHTML(f.label)}<span class="region-pct">${escapeHTML(f.countText)}</span></button>`,
     )
     .join('')
   const regions = state.dexSummary.regions

@@ -151,6 +151,18 @@ describe('the stylesheet', () => {
     expect(SCRIPT).not.toMatch(/isRaising \? ' raising'/)
   })
 
+  // [trigger branch] Plan 9.12 #15. A figure the player reads is the core's text, never a number
+  // the webview prints itself: `${stat.value}` and `${f.count}` were two, now `valueText` and
+  // `countText`. Machine values (`aria-valuenow`…) are numbers by nature and are not counted.
+  // What is left — the ×N of items and the log's filter counts — is a ratchet: it only falls.
+  it('prints no raw count or value as text, and the ones left only fall', () => {
+    const raw = [...SCRIPT.matchAll(/(aria-value\w+="|)\$\{[\w.?]+\.(count|value)\}/g)].filter(
+      (m) => m[1] === '',
+    )
+    expect(SCRIPT).not.toMatch(/\$\{stat\.value\}|\$\{f\.count\}/)
+    expect(raw.length, 'raw `${….count}` / `${….value}` printed as text').toBeLessThanOrEqual(7)
+  })
+
   // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
   // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
   it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {
