@@ -522,3 +522,15 @@ describe('companion choice copy', () => {
     expect(d.incubateEggText(lang)).not.toBe(d.resumeEggText(lang))
   })
 })
+
+describe('medal strings', () => {
+  // Walks the catalogue, so a medal added to `MEDALS` cannot ship nameless in some language.
+  it.each(APP_LANGUAGES)('names and describes every medal, in %s', async (lang) => {
+    const { MEDALS } = await import('../src/core/companion/medals.js')
+    for (const medal of MEDALS) {
+      expect(d.medalName(lang, medal.id)).not.toBe(medal.id)
+      expect(d.medalName(lang, medal.id).trim()).not.toBe('')
+      expect(d.medalDescription(lang, medal.id).trim()).not.toBe('')
+    }
+  })
+})

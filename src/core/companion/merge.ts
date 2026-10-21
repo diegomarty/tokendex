@@ -186,6 +186,10 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.language = local.language
   if (local.trainerID !== undefined) state.trainerID = local.trainerID
   else delete state.trainerID
+  // Medals only grow: one celebrated on either side stays celebrated, never announced twice.
+  const medals = new Set([...(local.medals ?? []), ...(remote.medals ?? [])])
+  if (medals.size > 0) state.medals = [...medals]
+  if (local.medalsSeeded === true || remote.medalsSeeded === true) state.medalsSeeded = true
   // A setting, like the language and the trainer: this machine's choice.
   if (local.keepCompletedCompanion === true) state.keepCompletedCompanion = true
   else delete state.keepCompletedCompanion

@@ -1887,6 +1887,20 @@ describe('companion choice, starters and the egg stock', () => {
     expect(s.snapshot().lure?.until).toBe(clock + EconomyBalance.lure.durationMs)
   })
 
+  // [trigger branch] Registering the first species earns the first medal, announced once. The
+  // save was seeded on its first fold, so this one is news.
+  it('announces a medal the first time it is met', async () => {
+    const s = await hatched()
+    s.drainEvents()
+    await s.update(obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0)))
+    expect(s.snapshot().medals).toContain('registered-1')
+    expect(s.drainEvents()).toContainEqual({ kind: 'medalEarned', medalID: 'registered-1' })
+    await s.update(
+      obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0) + 5),
+    )
+    expect(s.drainEvents().some((e) => e.kind === 'medalEarned')).toBe(false)
+  })
+
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {
     const s = await hatched()
     const companion = s.snapshot().active!.baseID

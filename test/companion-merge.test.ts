@@ -408,6 +408,18 @@ describe('the registry', () => {
   })
 
   // The lure is bought with the winner's wallet, so it travels with the winner's spend.
+  // Medals only grow: a medal celebrated on either side stays celebrated, so it is never
+  // announced twice after a sync.
+  it('keeps every medal either side celebrated', () => {
+    const { local, remote } = fork(
+      { medals: ['registered-1'], medalsSeeded: true },
+      { medals: ['shiny-1'], medalsSeeded: true },
+    )
+    const merged = mergeSaves(local, remote).state
+    expect(new Set(merged.medals)).toEqual(new Set(['registered-1', 'shiny-1']))
+    expect(merged.medalsSeeded).toBe(true)
+  })
+
   it('keeps the winner’s lure', () => {
     const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
     const local = save({ revision: { [A]: 4, [B]: 7 }, lure })

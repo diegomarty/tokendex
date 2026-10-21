@@ -1092,6 +1092,10 @@ export interface CompanionState {
   keepCompletedCompanion?: boolean
   /** The lure running, if any (`setLure` in `shop.ts`): one at a time, for a day. */
   lure?: Lure
+  /** Medals already celebrated (`medals.ts`): each is announced once. Only ever grows. */
+  medals?: string[]
+  /** Medals were seeded for this save: what it met before medals existed was given silently. */
+  medalsSeeded?: boolean
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**

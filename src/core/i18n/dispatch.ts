@@ -10,6 +10,7 @@ import { Pokeball, RareCandy, isBallKind } from '../companion/model.js'
 import type { TurnOutcome } from '../companion/encounters.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
+import type { RegionID } from '../companion/regions.js'
 
 const INDEX: Record<AppLanguage, 0 | 1 | 2 | 3> = { ko: 0, en: 1, ja: 2, es: 3 }
 const t = (lang: AppLanguage, ko: string, en: string, ja: string, es: string): string =>
@@ -1088,6 +1089,7 @@ export type CelebrationEvent =
   | { kind: 'graduated'; name: string }
   | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'shinyRegistered'; name: string }
+  | { kind: 'medalEarned'; medalID: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
@@ -1137,6 +1139,14 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `${event.name} graduated into the Pokédex!`,
         `${event.name}がずかんにとうろくされた！`,
         `¡${event.name} se ha graduado a la Pokédex!`,
+      )
+    case 'medalEarned':
+      return t(
+        lang,
+        `🏅 메달 획득: ${medalName(lang, event.medalID)}`,
+        `🏅 Medal earned: ${medalName(lang, event.medalID)}`,
+        `🏅 メダル かくとく: ${medalName(lang, event.medalID)}`,
+        `🏅 Medalla conseguida: ${medalName(lang, event.medalID)}`,
       )
     case 'shinyRegistered':
       return t(
@@ -1620,5 +1630,126 @@ export function lureFailedText(lang: AppLanguage): string {
     'That lure no longer fits. Nothing was charged.',
     'いまは おびきよせられない。なにも はらっていない。',
     'Ese señuelo ya no cabe. No se ha cobrado nada.',
+  )
+}
+
+// MARK: - Medals and regions (phase 7)
+
+/** A region's name, as each language's games call it. */
+export function regionName(lang: AppLanguage, region: RegionID): string {
+  switch (region) {
+    case 'kanto':
+      return t(lang, '관동', 'Kanto', 'カントー', 'Kanto')
+    case 'johto':
+      return t(lang, '성도', 'Johto', 'ジョウト', 'Johto')
+    case 'hoenn':
+      return t(lang, '호연', 'Hoenn', 'ホウエン', 'Hoenn')
+    case 'sinnoh':
+      return t(lang, '신오', 'Sinnoh', 'シンオウ', 'Sinnoh')
+    case 'unova':
+      return t(lang, '하나', 'Unova', 'イッシュ', 'Teselia')
+  }
+}
+
+/** A medal's name, from its id (`medals.ts`): the kind's title and the count it asks for. */
+export function medalName(lang: AppLanguage, medalID: string): string {
+  const [kind, arg] = medalID.split('-') as [string, string | undefined]
+  switch (kind) {
+    case 'registered':
+      return t(
+        lang,
+        `연구원 · ${arg}`,
+        `Researcher · ${arg}`,
+        `けんきゅういん · ${arg}`,
+        `Investigador · ${arg}`,
+      )
+    case 'shiny':
+      return t(
+        lang,
+        `빛나는 수집가 · ${arg}`,
+        `Shiny collector · ${arg}`,
+        `いろちがい コレクター · ${arg}`,
+        `Coleccionista shiny · ${arg}`,
+      )
+    case 'caught':
+      return t(
+        lang,
+        `포획왕 · ${arg}`,
+        `Catcher · ${arg}`,
+        `ほかくの たつじん · ${arg}`,
+        `Capturador · ${arg}`,
+      )
+    case 'line':
+      return t(lang, '첫 진화의 끝', 'Line complete', 'さいしょの しんかの はて', 'Línea completa')
+    case 'region':
+      return t(
+        lang,
+        `${regionName(lang, arg as RegionID)} 도감 완성`,
+        `${regionName(lang, arg as RegionID)} Pokédex`,
+        `${regionName(lang, arg as RegionID)} ずかん かんせい`,
+        `Pokédex de ${regionName(lang, arg as RegionID)}`,
+      )
+    default:
+      return medalID
+  }
+}
+
+/** What a medal asks for, in a sentence. */
+export function medalDescription(lang: AppLanguage, medalID: string): string {
+  const [kind, arg] = medalID.split('-') as [string, string | undefined]
+  switch (kind) {
+    case 'registered':
+      return t(
+        lang,
+        `${arg}종 등록하기`,
+        `Register ${arg} species`,
+        `${arg}しゅ とうろくする`,
+        `Registra ${arg} especies`,
+      )
+    case 'shiny':
+      return t(
+        lang,
+        `색이 다른 모습 ${arg}종 등록하기`,
+        `Register ${arg} shinies`,
+        `いろちがいを ${arg}しゅ とうろくする`,
+        `Registra ${arg} shinies`,
+      )
+    case 'caught':
+      return t(
+        lang,
+        `야생 포켓몬 ${arg}마리 잡기`,
+        `Catch ${arg} wild Pokémon`,
+        `やせいの ポケモンを ${arg}ひき つかまえる`,
+        `Captura ${arg} Pokémon salvajes`,
+      )
+    case 'line':
+      return t(
+        lang,
+        '진화 라인을 끝까지 키우기',
+        'Raise a line to its final form',
+        'しんかを さいごまで そだてる',
+        'Cría una línea hasta su forma final',
+      )
+    case 'region':
+      return t(
+        lang,
+        `${regionName(lang, arg as RegionID)}의 모든 종 등록하기`,
+        `Register every species of ${regionName(lang, arg as RegionID)}`,
+        `${regionName(lang, arg as RegionID)}の ぜんしゅを とうろくする`,
+        `Registra todas las especies de ${regionName(lang, arg as RegionID)}`,
+      )
+    default:
+      return ''
+  }
+}
+
+/** The medals section heading: "Medals (4 / 23)". */
+export function medalsHeading(lang: AppLanguage, earned: number, total: number): string {
+  return t(
+    lang,
+    `메달 (${earned} / ${total})`,
+    `Medals (${earned} / ${total})`,
+    `メダル (${earned} / ${total})`,
+    `Medallas (${earned} / ${total})`,
   )
 }

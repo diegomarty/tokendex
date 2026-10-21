@@ -24,6 +24,7 @@ import { EconomyBalance } from '../src/core/companion/economy.js'
 import { compact } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
+import { MEDALS } from '../src/core/companion/medals.js'
 import {
   StreakBalance,
   attackPermille,
@@ -977,5 +978,51 @@ describe('the lure in the panel', () => {
     expect(
       build({ state: state({ species: { 5: seen() }, lure: { ...lure, until: NOW } }) }).lure,
     ).toBeUndefined()
+  })
+})
+
+describe('medals and regions in the panel', () => {
+  it('lists every medal with its progress, formatted, and the count', () => {
+    const s = state({
+      medals: ['registered-1'],
+      medalsSeeded: true,
+      species: { 1: speciesEntry({ unlocked: true, registered: true }) },
+    })
+    const medals = build({ state: s }).medals
+    expect(medals.total).toBe(MEDALS.length)
+    expect(medals.earned).toBe(1)
+    expect(medals.headingText).toBe(D.medalsHeading('en', 1, MEDALS.length))
+    expect(medals.items.find((m) => m.id === 'registered-1')).toMatchObject({
+      earned: true,
+      progressText: '1 / 1',
+      percent: 100,
+      name: D.medalName('en', 'registered-1'),
+    })
+    expect(medals.items.find((m) => m.id === 'registered-10')).toMatchObject({
+      earned: false,
+      progressText: '1 / 10',
+      percent: 10,
+    })
+  })
+
+  // [trigger branch] Earned is what was celebrated, read from the save — not re-derived, so a
+  // medal never flickers back to unearned when a merge or a migration moves a count.
+  it('reads earned from the medals celebrated', () => {
+    const medals = build({ state: state({ medals: ['caught-10'], medalsSeeded: true }) }).medals
+    expect(medals.items.find((m) => m.id === 'caught-10')?.earned).toBe(true)
+  })
+
+  it('counts each region in the Pokédex summary', () => {
+    const s = state({ species: { 1: speciesEntry({ unlocked: true, registered: true }) } })
+    const kanto = build({ state: s }).dexSummary.regions[0]!
+    expect(kanto).toMatchObject({
+      id: 'kanto',
+      registered: 1,
+      total: 151,
+      from: 1,
+      to: 151,
+      progressText: '1 / 151',
+    })
+    expect(kanto.name).toBe(D.regionName('en', 'kanto'))
   })
 })

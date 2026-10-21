@@ -125,6 +125,7 @@ import {
 } from './registry.js'
 import { type IncubateOutcome, grantDailyEgg, incubateEgg, isFreshGame, setEggAside } from './eggs.js'
 import { isStarterID } from './starters.js'
+import { awardMedals } from './medals.js'
 import { boostShiny, setLure } from './shop.js'
 import { EconomyBalance } from './economy.js'
 
@@ -151,6 +152,8 @@ export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
   | { kind: 'evolved'; speciesID: number; name: string }
   | { kind: 'graduated'; name: string }
+  /** A medal newly met (`medals.ts`); its name is the dispatcher's, from the id. */
+  | { kind: 'medalEarned'; medalID: string }
   /** The companion filled its shiny bar: its shiny form is registered, and it wears it now. */
   | { kind: 'shinyRegistered'; speciesID: number; name: string }
   /**
@@ -738,6 +741,18 @@ export class CompanionStore {
 
     // Re-arms the "full" notice once expiry or the player has made room.
     this.noteQueueEdge()
+    this.awardMedalsNow()
+  }
+
+  /**
+   * Records the medals the save newly meets and announces each (`awardMedals`). Called at the end
+   * of every hold that can move a medal: the fold (registration, graduation), a turn (a catch), a
+   * boost (a shiny).
+   */
+  private awardMedalsNow(): void {
+    const { state, newly } = awardMedals(this.state)
+    this.state = state
+    for (const id of newly) this.pendingEvents.push({ kind: 'medalEarned', medalID: id })
   }
 
   /**
@@ -1093,6 +1108,7 @@ export class CompanionStore {
       // still runs so the status bar celebrates alongside.
       if (taken.outcome.kind === 'caught') this.eventUntil = this.now + EVENT_WINDOW_MS
       this.noteQueueEdge()
+      this.awardMedalsNow()
       return taken.outcome
     })
     if (!result.acquired) throw new SaveBusyError()
@@ -1163,6 +1179,7 @@ export class CompanionStore {
         this.pendingEvents.push({ kind: 'shinyRegistered', speciesID, name: this.speciesName(speciesID) })
         this.eventUntil = this.now + EVENT_WINDOW_MS
       }
+      this.awardMedalsNow()
       return true
     })
     if (!result.acquired) throw new SaveBusyError()

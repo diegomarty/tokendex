@@ -23,6 +23,7 @@ import type {
   PanelEncounterResult,
   PanelMoodMeter,
   PanelLure,
+  PanelMedals,
   PanelLureOffer,
   PanelShinyBar,
   PanelShopAction,
@@ -101,6 +102,8 @@ import { TRAINER_IDS, trainerIDOrDefault } from '../companion/trainers.js'
 import { progressOf, registrationPercent, shinyTarget } from '../companion/registry.js'
 import { EconomyBalance } from '../companion/economy.js'
 import { STARTERS, starterName, starterType } from '../companion/starters.js'
+import { MEDALS, medalProgress } from '../companion/medals.js'
+import { REGIONS, regionProgress } from '../companion/regions.js'
 import { eggIsPaused, eggOnStage, isFreshGame } from '../companion/eggs.js'
 import { todayKey } from '../usage/entry.js'
 import { compact, cost, grouped, percent } from '../tokenFormatter.js'
@@ -547,7 +550,8 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     shop,
     bag,
     dexSpecies: species,
-    dexSummary: dexSummary(species, dexLog.length, lang),
+    dexSummary: dexSummary(state, species, dexLog.length, lang),
+    medals: medalsPanel(state, lang),
     eggs: eggsPanel(state, lang),
     dexLog,
     dexLogFilters,
@@ -654,6 +658,7 @@ function eggsPanel(state: CompanionState, lang: AppLanguage): PanelEggs {
 
 /** The Pokédex's counts, formatted here so the webview paints them instead of counting. */
 function dexSummary(
+  state: CompanionState,
   species: readonly PanelDexSpecies[],
   logCount: number,
   lang: AppLanguage,
@@ -669,6 +674,19 @@ function dexSummary(
     progressText: D.dexProgressText(registered, total),
     speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
     logSegmentText: D.countedLabel(strings.segmentLog, logCount),
+    regions: regionProgress(state).map((r) => {
+      const region = REGIONS.find((x) => x.id === r.id)!
+      return {
+        id: r.id,
+        name: D.regionName(lang, r.id),
+        registered: r.registered,
+        total: r.total,
+        percent: Math.min(100, Math.round((100 * r.registered) / r.total)),
+        progressText: D.dexProgressText(r.registered, r.total),
+        from: region.from,
+        to: region.to,
+      }
+    }),
     shinyRegistered,
     shinyPercent: Math.min(100, Math.round((100 * shinyRegistered) / total)),
     shinyProgressText: D.dexProgressText(shinyRegistered, total),
@@ -719,6 +737,29 @@ function lureOffer(
 /** A lured species' name: its number, as the Pokédex names a species it has no name for. */
 function lureName(speciesID: number): string {
   return `#${speciesID}`
+}
+
+/**
+ * The medal catalogue with each medal's progress. Earned is what the save celebrated, not a
+ * fresh derivation, so a medal never flickers back when a merge or a migration moves a count.
+ */
+function medalsPanel(state: CompanionState, lang: AppLanguage): PanelMedals {
+  const celebrated = new Set(state.medals ?? [])
+  const items = MEDALS.map((medal) => {
+    const progress = medalProgress(state, medal.id)!
+    const earned = celebrated.has(medal.id)
+    const current = earned ? Math.max(progress.current, progress.target) : progress.current
+    return {
+      id: medal.id,
+      name: D.medalName(lang, medal.id),
+      description: D.medalDescription(lang, medal.id),
+      earned,
+      progressText: D.dexProgressText(Math.min(current, progress.target), progress.target),
+      percent: Math.min(100, Math.floor((100 * current) / progress.target)),
+    }
+  })
+  const earned = items.filter((m) => m.earned).length
+  return { earned, total: items.length, headingText: D.medalsHeading(lang, earned, items.length), items }
 }
 
 /**

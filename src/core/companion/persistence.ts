@@ -7,6 +7,7 @@
  * starts fresh.
  */
 
+import { MEDALS } from './medals.js'
 import {
   APP_LANGUAGES,
   COMPANION_STATE_SCHEMA,
@@ -499,6 +500,12 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   if (value['keepCompletedCompanion'] === true) state.keepCompletedCompanion = true
   const lure = decodeLure(value['lure'])
   if (lure !== undefined) state.lure = lure
+  // Only ids the catalogue holds: an unknown one would never be met, nor ever be shown.
+  if (Array.isArray(value['medals'])) {
+    const known = new Set(MEDALS.map((m) => m.id))
+    state.medals = value['medals'].filter((id): id is string => typeof id === 'string' && known.has(id))
+  }
+  if (value['medalsSeeded'] === true) state.medalsSeeded = true
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 

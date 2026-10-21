@@ -304,6 +304,15 @@ describe('CompanionState decoding', () => {
     expect(decode({ baseID: 4, stageIndex: 0, totalForms: 3, rarity: 'rare' })).toBeUndefined()
   })
 
+  it('keeps the medals celebrated, dropping what is not a medal', () => {
+    const state = decodeCompanionState({
+      medals: ['registered-1', 'nope', 7, 'shiny-1'],
+      medalsSeeded: true,
+    })
+    expect(state.medals).toEqual(['registered-1', 'shiny-1'])
+    expect(state.medalsSeeded).toBe(true)
+  })
+
   it('keeps a lure that is whole, and drops one that is not', () => {
     const lure = { speciesID: 5, baseID: 4, stageIndex: 1, until: 1_700_000_000_000 }
     expect(decodeCompanionState({ lure }).lure).toEqual(lure)

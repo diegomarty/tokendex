@@ -169,6 +169,41 @@ export interface PanelLureOffer {
   enabled: boolean
 }
 
+/** The medal catalogue, in its order. */
+export interface PanelMedals {
+  earned: number
+  total: number
+  /** Section heading with the count: "Medals (4 / 23)". */
+  headingText: string
+  items: PanelMedal[]
+}
+
+export interface PanelMedal {
+  id: string
+  name: string
+  description: string
+  earned: boolean
+  /** "37 / 50" — or the same at the target once earned. */
+  progressText: string
+  /** 0..100. */
+  percent: number
+}
+
+/** One region of the Pokédex: registered of its size. */
+export interface PanelRegion {
+  /** Style token and filter key (`kanto`…), never shown as text. */
+  id: string
+  name: string
+  registered: number
+  total: number
+  percent: number
+  /** "37 / 151". */
+  progressText: string
+  /** First and last Pokédex number, for the filter. */
+  from: number
+  to: number
+}
+
 /** The lure running, for Home: "Luring Charmander · 5 h left". */
 export interface PanelLure {
   speciesID: number
@@ -213,6 +248,8 @@ export interface PanelDexSummary {
   speciesSegmentText: string
   logSegmentText: string
   /** The Shinydex: shinies registered, "3 / 649", and its segment label "Shinydex (3)". */
+  /** The five regions' registration, in Pokédex order. */
+  regions: PanelRegion[]
   shinyRegistered: number
   /** 0..100 of the Shinydex, rounded as `percent` is. */
   shinyPercent: number
@@ -599,6 +636,8 @@ export interface PanelState {
   keepCompletedCompanion: boolean
   /** The lure running, if any. */
   lure?: PanelLure
+  /** Medals: the catalogue with what is earned, and the count. */
+  medals: PanelMedals
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */
