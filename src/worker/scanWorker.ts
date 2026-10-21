@@ -46,7 +46,7 @@ import {
   type Rarity,
   currentSpeciesID,
 } from '../core/companion/model.js'
-import { buyEgg, buyItem, consumeRareCandy, grantCandies, useMint } from '../core/companion/shop.js'
+import { buyEgg, buyItem, grantCandies, useMint } from '../core/companion/shop.js'
 import {
   type DevState,
   addOffset,
@@ -851,16 +851,9 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
 
     case 'useItem': {
       if (payload.item === 'rareCandy') {
-        // The debit and the XP it buys are one operation, so they share one hold: committing
-        // the spend and then growing outside it would let another window's write land between
-        // them and swallow the candy's effect while keeping the charge.
-        const result = await companion.mutate((tx) => {
-          const next = consumeRareCandy(tx.state)
-          if (next === undefined) return
-          tx.commit(next)
-          tx.applyCandy()
-        })
-        if (!result.committed) throw new SaveBusyError()
+        // The debit and the XP it buys are one operation in one hold (`useRareCandy`), and only
+        // when the line to grow with is still loaded after the re-read.
+        await companion.useRareCandy()
       } else if (payload.item === 'mint') {
         await commit((state) => useMint(state, () => Math.floor(Math.random() * 0x7fffffff))?.state)
       }

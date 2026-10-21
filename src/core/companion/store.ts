@@ -129,7 +129,7 @@ import { isStarterID } from './starters.js'
 import { awardMedals } from './medals.js'
 import { todayKey } from '../usage/entry.js'
 import { type Challenge, ensureChallenges, progressCatch, progressTokens } from './challenges.js'
-import { boostShiny, setLure } from './shop.js'
+import { boostShiny, canUseRareCandy, consumeRareCandy, setLure } from './shop.js'
 import { EconomyBalance } from './economy.js'
 
 export type SetCompanionOutcome = 'set' | 'locked' | 'unknown' | 'offline'
@@ -491,6 +491,24 @@ export class CompanionStore {
    * `{ committed: false }` means the lock was busy. For a user action that must be surfaced,
    * never swallowed.
    */
+  /**
+   * Spends one Rare Candy on the companion and grows it — in one hold, and only when it can grow:
+   * the line is loaded *after* the re-read, which drops it when another window switched the
+   * companion (code review 9.12 #14). `false` spent nothing. Throws when the save is busy.
+   */
+  async useRareCandy(): Promise<boolean> {
+    const result = await this.mutate((tx) => {
+      if (!canUseRareCandy(tx.state, this.line !== undefined)) return false
+      const next = consumeRareCandy(tx.state)
+      if (next === undefined) return false
+      tx.commit(next)
+      tx.applyCandy()
+      return true
+    })
+    if (!result.committed) throw new SaveBusyError()
+    return result.value
+  }
+
   async mutate<T>(fn: (tx: Mutation) => T | Promise<T>): Promise<CommitResult<T>> {
     await this.load()
     const result = await this.transact(() => fn(this.mutation()))

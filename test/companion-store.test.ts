@@ -2083,3 +2083,49 @@ describe('a save rewritten by a build before 1.0.0', () => {
     return fresh
   }
 })
+
+// Code review 9.12 #14. The panel offered the candy while a line was loaded; by the time the
+// hold re-read the save another window had switched the companion, the line was dropped, and the
+// candy was spent — one of the species' two allowed — for no experience at all.
+describe('using a Rare Candy', () => {
+  it('spends nothing when no evolution line is loaded to grow with', async () => {
+    const path = freshFile()
+    writeFileSync(
+      path,
+      encodeCompanionState({
+        ...freshCompanionState('en'),
+        species: { 25: { ...freshSpeciesProgress(), unlocked: true } },
+        inventory: { rareCandy: 2 },
+        active: {
+          baseID: 25,
+          pathIDs: [25],
+          plannedPathIDs: [25, 26],
+          stageIndex: 0,
+          usedAtStage: 0,
+          rarity: 'common',
+          totalForms: 2,
+          isShiny: false,
+          dittoRevealed: false,
+        },
+      }),
+      'utf8',
+    )
+    const s = store({ filePath: path })
+    await s.load() // no update yet: no line loaded
+    expect(await s.useRareCandy()).toBe(false)
+    expect(s.snapshot().inventory['rareCandy']).toBe(2)
+    expect(s.snapshot().species[25]?.candiesUsed).toBe(0)
+  })
+
+  it('spends one and grows the companion when the line is loaded', async () => {
+    const s = store()
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    const id = currentSpeciesID(s.snapshot().active!)
+    await s.mutate((tx) => tx.commit({ ...tx.state, inventory: { rareCandy: 1 } }))
+    expect(await s.useRareCandy()).toBe(true)
+    expect(s.snapshot().inventory['rareCandy']).toBe(0)
+    expect(s.snapshot().species[id]?.candiesUsed).toBe(1)
+    expect(s.snapshot().active!.usedAtStage).toBeGreaterThan(0)
+  })
+})
