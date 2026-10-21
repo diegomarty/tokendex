@@ -165,6 +165,35 @@ del PC, Pokédex, noticias. Una sola pieza (`gameMeter` en su variante EXP) y `s
    posición. 5. Una celda más vistosa y con más datos (rareza, porcentaje, compañero, criando; los
    tipos no, que exigirían una petición a PokéAPI por celda). 2–5: @helper.
 
+## 9.12 Lo que encontró la revisión de código (21 oct)
+
+`/code-review xhigh` sobre la rama. Cada arreglo con su test fallando primero.
+
+Yo (núcleo):
+1. Elegir una forma evolucionada no da por obtenidas las anteriores (`putOnStage`, `dexView`,
+   `graduate`).
+2. La migración del registro no vuelve a correr sobre una partida ya migrada que una ventana
+   vieja guardó sin `species` (versión del guardado + marca de migrado; nunca borrar progreso).
+3. Revelar un Ditto no quita una especie obtenida legítimamente.
+4. Retirar un Ditto disfrazado shiny no marca shiny la especie imitada.
+5. El relevo automático del compañero comprueba dentro del bloqueo que sigue siendo el mismo.
+6. Una garantía de huevo no se compra dos veces ni se rebaja.
+7. La fusión paga los retos que solo cobró la máquina perdedora.
+8. La ficha de especie (9.7) se refresca cuando cambia lo que tienes, y un fallo del host no la
+   deja cargando para siempre.
+12. El señuelo nunca hace menos probable la forma señuelada dentro de su línea.
+13. Los porcentajes de la Pokédex redondean hacia abajo (646/649 no es 100 %).
+14. Un Caramelo Raro no se gasta sin línea cargada.
+15. Los recuentos de los chips del PC y los valores de las estadísticas llegan formateados del
+    núcleo (`countText`, `valueText`).
+
+@helper (webview):
+9. Las celdas del compañero no vuelven a la marca «raising» (borde discontinuo).
+10. La cuadrícula de la Pokédex tiene un alto mínimo: en un panel bajo, la página vuelve a hacer
+    scroll.
+11. Dos diálogos escribiéndose a la vez no dejan uno en blanco.
+15 (UI). Pintar `countText`/`valueText` cuando estén en el núcleo.
+
 ## Orden
 
 1. 9.0 versión (yo). 2. Mando a @helper 9.2, 9.3, 9.5 (sin núcleo) en paralelo. 3. Núcleo de 9.1,
