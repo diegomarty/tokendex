@@ -528,7 +528,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
 
   const panel: PanelState = {
     drawers: [],
-    lid: { usageText: '', usageShortText: '', lights: [] },
+    lid: { usageText: '', usageShortText: '', lights: [], columns: [], toggleLabel: '' },
     totals: {
       todayText: compact(usage.totals.todayTokens),
       todayExactText: grouped(usage.totals.todayTokens, locale),
@@ -616,6 +616,21 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   panel.lid = {
     usageText: D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText),
     usageShortText: D.usageShortText(lang, panel.totals.todayText),
+    columns: [
+      {
+        label: D.usageColumnLabel(lang, 'today'),
+        tokensText: panel.totals.todayText,
+        exactText: panel.totals.todayExactText,
+        costText: panel.totals.todayCostText,
+      },
+      {
+        label: D.usageColumnLabel(lang, 'month'),
+        tokensText: panel.totals.monthText,
+        exactText: panel.totals.monthExactText,
+        costText: panel.totals.monthCostText,
+      },
+    ],
+    toggleLabel: D.lidToggleLabel(lang),
     lights: [0, 1, 2].map((i) => {
       const limit = panel.limits[i]
       if (limit === undefined) return 'off' as const

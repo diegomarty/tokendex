@@ -1214,6 +1214,20 @@ describe('the lid', () => {
 
   // [trigger branch] The three lights read the official limits: ok, warn at their warn
   // severity, crit at 100%; a light with no limit behind it is off.
+  // The expanded lid opens the line it shows folded: today and this month, with their costs.
+  it('opens into today and this month, tokens and cost', () => {
+    const lid = build().lid
+    expect(lid.columns.map((c) => c.label)).toEqual([
+      D.usageColumnLabel('en', 'today'),
+      D.usageColumnLabel('en', 'month'),
+    ])
+    expect(lid.columns[0]).toMatchObject({
+      tokensText: build().totals.todayText,
+      costText: build().totals.todayCostText,
+    })
+    expect(lid.toggleLabel).toBe(D.lidToggleLabel('en'))
+  })
+
   it('lights one LED per official limit, by its severity', () => {
     const limits = [
       { label: '5h', value: '42%', percent: 42, severity: 'normal' as const },

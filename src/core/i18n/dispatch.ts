@@ -1969,3 +1969,15 @@ export function nextEncounterShort(lang: AppLanguage, amount: string): string {
     `Siguiente en ${amount}`,
   )
 }
+
+/** The expanded lid's column headings: "Today", "This month". */
+export function usageColumnLabel(lang: AppLanguage, which: 'today' | 'month'): string {
+  return which === 'today'
+    ? t(lang, '오늘', 'Today', 'きょう', 'Hoy')
+    : t(lang, '이번 달', 'This month', 'こんげつ', 'Este mes')
+}
+
+/** The lid toggle's accessible name. */
+export function lidToggleLabel(lang: AppLanguage): string {
+  return t(lang, '사용량 자세히', 'Usage details', 'しようりょうの くわしく', 'Detalle de uso')
+}

@@ -177,6 +177,13 @@ export interface PanelLid {
   usageShortText: string
   /** One per light, left to right: the first three official limits' severity; `off` without one. */
   lights: ('off' | 'ok' | 'warn' | 'crit')[]
+  /**
+   * The expanded lid's screen (Diego): today and this month side by side, each with its tokens,
+   * the exact count for the hover, and its cost — the line above, opened, never repeated.
+   */
+  columns: { label: string; tokensText: string; exactText: string; costText: string }[]
+  /** Accessible name of the lid's toggle: "Usage details". */
+  toggleLabel: string
 }
 
 /** One of Home's drawers. Everything formatted in the core; open/closed is view state. */
