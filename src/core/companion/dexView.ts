@@ -117,8 +117,8 @@ export function activeDexEntry(state: CompanionState, line: EvoLine | undefined)
 }
 
 /**
- * Display order for the catch log: the Pokémon being raised pinned first, then graduates by
- * **most recently caught**.
+ * The catch log: its records — catches and graduations — **most recently caught** first. The
+ * companion on stage is not one (Diego: choosing it used to pin a "Raising" row on top).
  *
  * Rarity used to sort first, which is the *Pokédex*'s rule. A log is a chronological record,
  * so grouping by rarity buried a Pokémon that just graduated under a rarer one caught days
@@ -126,9 +126,7 @@ export function activeDexEntry(state: CompanionState, line: EvoLine | undefined)
  */
 export function dexEntriesSorted(state: CompanionState, line: EvoLine | undefined): DexEntry[] {
   // Entries with no caughtAt are older saves; they sort last, among themselves unordered.
-  const graduated = [...state.dex].sort((a, b) => (b.caughtAt ?? 0) - (a.caughtAt ?? 0))
-  const active = activeDexEntry(state, line)
-  return active === undefined ? graduated : [active, ...graduated]
+  return [...state.dex].sort((a, b) => (b.caughtAt ?? 0) - (a.caughtAt ?? 0))
 }
 
 // MARK: - Species Pokédex

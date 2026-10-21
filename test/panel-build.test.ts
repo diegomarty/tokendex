@@ -597,8 +597,8 @@ describe('catch-log rarity chips', () => {
     expect(panel.dexLog[0]).toMatchObject({ rarity: 'legendary', rarityText: 'Legendary' })
   })
 
-  // The active Pokémon is synthesised into the log, so it has to be counted like the rest.
-  it('counts the Pokémon being raised', () => {
+  // The log holds records only (Diego): the companion on stage is not counted in its chips.
+  it('does not count the Pokémon being raised', () => {
     const raising = state({
       active: {
         baseID: 25,
@@ -613,12 +613,8 @@ describe('catch-log rarity chips', () => {
       },
     })
     const panel = build({ state: raising })
-    expect(panel.dexLogFilters).toContainEqual({
-      id: 'uncommon',
-      label: 'Uncommon',
-      count: 1,
-      countText: '1',
-    })
+    expect(panel.dexLog).toEqual([])
+    expect(panel.dexLogFilters.map((f) => f.id)).toEqual(['all'])
   })
 })
 

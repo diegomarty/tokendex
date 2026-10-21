@@ -121,12 +121,15 @@ describe('catch log', () => {
     expect(s.dex).toEqual([]) // and it is not written into the persisted dex
   })
 
-  it('pins the active Pokémon first, then graduates newest-first', () => {
+  // [trigger branch] Diego: choosing a companion put it in the catch log, as a "Raising" row
+  // pinned on top. The log records what happened — catches and graduations — newest first; the
+  // companion on stage is the scene's and the Pokédex's, not a record.
+  it('lists only records, newest first, never the companion on stage', () => {
     const s = state({
       active: mon(),
       dex: [dexEntry({ id: 'old', caughtAt: 1000 }), dexEntry({ id: 'new', caughtAt: 5000 })],
     })
-    expect(dexEntriesSorted(s, line).map((e) => e.id)).toEqual(['active-1-1', 'new', 'old'])
+    expect(dexEntriesSorted(s, line).map((e) => e.id)).toEqual(['new', 'old'])
   })
 
   // Grouping by rarity first would bury a just-graduated Pokémon under a rarer, older one.
