@@ -408,6 +408,10 @@ export const statusOpenPanel = (lang: AppLanguage): string =>
 
 export const runAwayLabel = (lang: AppLanguage): string => t(lang, '도망가기', 'Run', 'にげる', 'Huir')
 
+/** The battle menu's Pokémon button, as the games print it: the companion's entry. */
+export const pokemonMenuLabel = (lang: AppLanguage): string =>
+  t(lang, '포켓몬', 'Pokémon', 'ポケモン', 'Pokémon')
+
 export const trainerLabel = (lang: AppLanguage): string =>
   t(lang, '트레이너', 'Trainer', 'トレーナー', 'Entrenador')
 

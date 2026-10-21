@@ -623,6 +623,8 @@ export interface PanelStrings {
   language: string
   /** The Run button in the wild scene. */
   run: string
+  /** The battle menu's Pokémon button: opens the companion's Pokédex entry. */
+  pokemonMenu: string
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */

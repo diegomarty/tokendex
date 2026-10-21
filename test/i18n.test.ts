@@ -588,3 +588,9 @@ describe('one word for one thing', () => {
     expect(d.celebrationText('en', { kind: 'graduated', name: 'Venusaur' })).toContain('registered')
   })
 })
+
+describe('the battle menu', () => {
+  it.each(APP_LANGUAGES)('names the Pokémon button, in %s', (lang) => {
+    expect(d.pokemonMenuLabel(lang).trim()).not.toBe('')
+  })
+})
