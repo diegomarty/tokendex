@@ -64,6 +64,11 @@
 - Home's Wild drawer lists the next three in rows with their party icons, then how many more
   wait. Bag pockets are never greyed out: an empty one says how it fills.
 - The battle dialog writes itself letter by letter in every encounter, not only the first.
+- The Shinydex shows only the shinies registered, its region chips count shinies, and the
+  Pokédex grid is a list of entry cards that scrolls on its own and keeps its place between
+  Collection and Shinydex.
+- Every experience and registration bar is the companion plate's EXP bar: Pokédex cells, the
+  species card, the PC box, the catch card and the news.
 
 ### Fixed
 
