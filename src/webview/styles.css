@@ -79,6 +79,8 @@
   --medal: #9aa3b0;
   /* The shadow a raised piece casts on itself. */
   --shade: rgb(0 0 0 / 0.2);
+  /* The veil behind a modal (the PC box): dark enough that the panel reads as set aside. */
+  --scrim: rgb(0 0 0 / 0.62);
   /* Text and marks drawn on a coloured fill: a badge, a check, a medal. */
   --on-fill: #fff;
   --gain: #2f8f4e;
@@ -5393,7 +5395,9 @@ body.vscode-dark .challenge-reward {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: color-mix(in srgb, var(--shade) 55%, transparent);
+  /* Dark and a little blurred, so the panel behind reads as set aside: a modal, not a card. */
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
 }
 .pc-box {
   position: fixed;
