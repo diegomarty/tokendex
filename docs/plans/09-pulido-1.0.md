@@ -135,6 +135,28 @@ estadísticas en barras (`gameMeter`); la línea evolutiva con sprites y silueta
 (clic abre esa ficha); y debajo la parte de juego que ya existe (registro, shiny, señuelo, elegir
 compañero). Mientras llega la entrada, un estado de carga; sin red, `unavailableText`.
 
+## 9.8 La caja del PC: más filtros y orden ascendente/descendente (Diego, 21 oct)
+
+Hoy la caja solo tiene buscador y orden. Núcleo (yo): `PanelPCBox.filters` (Registrados · Sin
+registrar · Shiny, con su texto), y `PanelStrings.sortAscending/sortDescending` para el botón de
+dirección; las regiones son las de la Pokédex (`dexSummary.regions`, con `from`/`to`). UI
+(@helper): en `listTools` (compartido por la Pokédex y la caja) un botón ▲▼ que invierte el orden
+elegido, con su `aria-label`; en la caja, los chips de región y de estado como en la Pokédex. La
+dirección se guarda como vista.
+
+## 9.9 Bug: la tarjeta de captura de una especie registrada (Diego, 21 oct)
+
+En «¡Nuevo en la Pokédex!» con la especie registrada, el texto verde que decía el registro es ahora
+una píldora verde vacía (se ve el fondo de `.tag` sin su texto). @helper: localizar qué campo de
+`catchBanner`/`PanelNews` pinta esa línea, devolverle su texto legible y fijarlo en un banco.
+
+## 9.10 Todas las barras de experiencia con el diseño de la placa del compañero (Diego, 21 oct)
+
+La barra de EXP de la placa del compañero en Inicio (marco oscuro, etiqueta «EXP», relleno azul)
+pasa a ser la de toda barra de experiencia o registro: tarjeta de captura, ficha de especie, caja
+del PC, Pokédex, noticias. Una sola pieza (`gameMeter` en su variante EXP) y `styles.test` lo fija.
+@helper; si hace falta texto nuevo del núcleo, me pasa el campo.
+
 ## Orden
 
 1. 9.0 versión (yo). 2. Mando a @helper 9.2, 9.3, 9.5 (sin núcleo) en paralelo. 3. Núcleo de 9.1,
