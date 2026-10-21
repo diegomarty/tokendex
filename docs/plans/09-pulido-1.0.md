@@ -58,7 +58,9 @@ multiplicador elegido se guarda como vista y se reinicia al comprar.
 (`renderHome` 383-423): lente + tres luces + título con el estilo de marca (`.brand-name`) +
 pantalla LCD a la derecha (`.wallet-badge.lcd`). Pokédex: el «21 / 649» va en la LCD y la barra
 de progreso fina bajo la fila, dentro de la carcasa. Tienda: el saldo en la LCD (ya está).
-Todo alineado al centro vertical con la misma altura y rellenos que la tapa (`.wallet-bar`
+Diego (21 oct): la cabecera de la Tienda también, y los títulos «TIENDA» y «POKÉDEX» con el estilo
+exacto de `.brand-name` (amarillo cursiva con trazo azul) y en mayúsculas (`text-transform`, el
+núcleo no cambia el texto). Todo alineado al centro vertical con la misma altura y rellenos que la tapa (`.wallet-bar`
 4065). Una sola regla de CSS compartida para las tres cabeceras; `test/styles.test.ts` lo fija.
 
 ## 9.3 Filtros de la Pokédex dentro del aparato (@helper)
