@@ -1093,6 +1093,22 @@ describe('medals and regions in the panel', () => {
     })
     expect(kanto.name).toBe(D.regionName('en', 'kanto'))
   })
+
+  // [trigger branch] Diego: the Shinydex's region chips counted the normal registrations
+  // (Kanto 6 / 151 with one shiny). Each region carries its shiny count too, formatted here.
+  it('counts each region’s shinies apart from its registrations', () => {
+    const s = state({
+      species: {
+        1: speciesEntry({ unlocked: true, registered: true, shinyRegistered: true }),
+        4: speciesEntry({ unlocked: true, registered: true }),
+        152: speciesEntry({ unlocked: true, registered: true }),
+      },
+    })
+    const [kanto, johto] = build({ state: s }).dexSummary.regions
+    expect(kanto).toMatchObject({ registered: 2, shinyRegistered: 1, shinyProgressText: '1 / 151' })
+    expect(kanto!.shinyPercent).toBe(Math.round(100 / 151))
+    expect(johto).toMatchObject({ registered: 1, shinyRegistered: 0, shinyProgressText: '0 / 100' })
+  })
 })
 
 describe('the challenges in the panel', () => {

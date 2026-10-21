@@ -157,6 +157,14 @@ pasa a ser la de toda barra de experiencia o registro: tarjeta de captura, ficha
 del PC, Pokédex, noticias. Una sola pieza (`gameMeter` en su variante EXP) y `styles.test` lo fija.
 @helper; si hace falta texto nuevo del núcleo, me pasa el campo.
 
+## 9.11 La Shinydex, rehecha (Diego, 21 oct, vía @helper)
+
+1. Los chips de región cuentan shinies, no registros (núcleo: `PanelRegion.shinyRegistered`,
+   `shinyPercent`, `shinyProgressText`; yo). 2. Solo se ven las shinies registradas; el resto,
+   silueta. 3. El scroll es solo de la lista. 4. Cambiar entre Colección y Shinydex conserva la
+   posición. 5. Una celda más vistosa y con más datos (rareza, porcentaje, compañero, criando; los
+   tipos no, que exigirían una petición a PokéAPI por celda). 2–5: @helper.
+
 ## Orden
 
 1. 9.0 versión (yo). 2. Mando a @helper 9.2, 9.3, 9.5 (sin núcleo) en paralelo. 3. Núcleo de 9.1,

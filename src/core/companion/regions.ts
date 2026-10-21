@@ -22,12 +22,20 @@ export function regionOf(speciesID: number): (typeof REGIONS)[number] | undefine
 /** Registered species per region, against the region's size. */
 export function regionProgress(
   state: CompanionState,
-): { id: RegionID; registered: number; total: number }[] {
+): { id: RegionID; registered: number; shinyRegistered: number; total: number }[] {
   const counts = new Map<RegionID, number>()
+  const shinies = new Map<RegionID, number>()
   for (const [id, p] of Object.entries(state.species)) {
-    if (!p.registered) continue
     const region = regionOf(Number(id))
-    if (region !== undefined) counts.set(region.id, (counts.get(region.id) ?? 0) + 1)
+    if (region === undefined) continue
+    if (p.registered) counts.set(region.id, (counts.get(region.id) ?? 0) + 1)
+    // The Shinydex's own count (Diego): a region's shinies, not its registrations.
+    if (p.shinyRegistered === true) shinies.set(region.id, (shinies.get(region.id) ?? 0) + 1)
   }
-  return REGIONS.map((r) => ({ id: r.id, registered: counts.get(r.id) ?? 0, total: r.to - r.from + 1 }))
+  return REGIONS.map((r) => ({
+    id: r.id,
+    registered: counts.get(r.id) ?? 0,
+    shinyRegistered: shinies.get(r.id) ?? 0,
+    total: r.to - r.from + 1,
+  }))
 }

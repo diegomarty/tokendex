@@ -741,6 +741,9 @@ function dexSummary(
         total: r.total,
         percent: Math.min(100, Math.round((100 * r.registered) / r.total)),
         progressText: D.dexProgressText(r.registered, r.total),
+        shinyRegistered: r.shinyRegistered,
+        shinyPercent: Math.min(100, Math.round((100 * r.shinyRegistered) / r.total)),
+        shinyProgressText: D.dexProgressText(r.shinyRegistered, r.total),
         from: region.from,
         to: region.to,
       }

@@ -297,6 +297,10 @@ export interface PanelRegion {
   percent: number
   /** "37 / 151". */
   progressText: string
+  /** The Shinydex's chips (Diego): the region's shinies registered, its percent and "1 / 151". */
+  shinyRegistered: number
+  shinyPercent: number
+  shinyProgressText: string
   /** First and last Pokédex number, for the filter. */
   from: number
   to: number
