@@ -4200,7 +4200,10 @@ button.btn.priced:not(:has(.verb)) .cost {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-/* The line stands centred in the card, as the games draw it (Diego). */
+/* The line stands centred in the card, as the games draw it, and its title over it (Diego). */
+.dex-entry-page:has(> .dex-line) > .dex-page-title {
+  justify-content: center;
+}
 .dex-line {
   display: flex;
   flex-wrap: wrap;
