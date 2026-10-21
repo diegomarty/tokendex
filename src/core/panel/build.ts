@@ -121,6 +121,28 @@ import { panelStrings } from '../i18n/panelStrings.js'
 export const REFRESH_PRESETS: readonly number[] = [30, 60, 120, 300, 600]
 
 /**
+ * When a species was registered, for its card (Diego: one descriptive date). The moment the
+ * registry stamped, else — a save from before it kept one — the graduation of that very form;
+ * otherwise nothing, never a guess.
+ */
+function registrationDate(
+  state: CompanionState,
+  speciesID: number,
+  lang: AppLanguage,
+  locale: string | undefined,
+): { registeredDateText?: string; registeredLabel?: string } {
+  const progress = state.species[speciesID]
+  if (progress?.registered !== true) return {}
+  const graduations = state.dex
+    .filter((e) => e.finalID === speciesID && e.source !== 'wild' && e.caughtAt !== undefined)
+    .map((e) => e.caughtAt!)
+  const at = progress.registeredAt ?? (graduations.length > 0 ? Math.min(...graduations) : undefined)
+  if (at === undefined) return {}
+  const dateText = D.registeredDateText(new Date(at), locale)
+  return { registeredDateText: dateText, registeredLabel: D.registeredOnText(lang, dateText) }
+}
+
+/**
  * A collection's completion, for its bar: rounded, but never 0 with something in it (four of 649
  * is a sliver, not an empty bar) and never 100 with something missing (646–648 of 649 used to
  * read complete; code review 9.12 #13).
@@ -421,6 +443,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
       percent: sp.percent,
       percentText: D.registrationText(lang, sp.percent, sp.status === 'registered'),
       percentShortText: percent(sp.percent),
+      ...registrationDate(state, sp.id, lang, locale),
       // Anything owned can be the companion — a seen species is not owned yet, and the one on
       // stage is already chosen.
       canChoose: sp.status !== 'seen' && !isCompanion,

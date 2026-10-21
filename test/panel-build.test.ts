@@ -1500,3 +1500,37 @@ describe('the counts the panel prints', () => {
     expect(panel.dexLogFilters[0]!.countText).toBe(String(panel.dexLogFilters[0]!.count))
   })
 })
+
+describe('the species card’s registration line', () => {
+  it('dates a registration from the moment stamped, else from its graduation', () => {
+    const graduatedAt = Date.parse('2026-10-20T10:00:00Z')
+    const s = state({
+      dex: [
+        {
+          id: 'g',
+          baseID: 1,
+          finalID: 2,
+          chainOrder: [1, 2],
+          rarity: 'common',
+          caughtAt: graduatedAt,
+          isShiny: false,
+        },
+      ],
+      species: {
+        1: speciesEntry({ unlocked: true, registered: true, registeredAt: NOW }),
+        2: speciesEntry({ unlocked: true, registered: true }),
+        3: speciesEntry({ unlocked: true, registered: true }),
+        4: speciesEntry({ unlocked: true, xp: 2, threshold: 10 }),
+      },
+    })
+    const cells = build({ state: s }).dexSpecies
+    const cell = (id: number) => cells.find((c) => c.id === id)!
+    const date = (t: number) => D.registeredDateText(new Date(t), 'en-US')
+    expect(cell(1).registeredDateText).toBe(date(NOW))
+    expect(cell(1).registeredLabel).toBe(D.registeredOnText('en', date(NOW)))
+    expect(cell(2).registeredDateText).toBe(date(graduatedAt))
+    // Registered with no moment known: no date rather than a guess.
+    expect(cell(3).registeredDateText).toBeUndefined()
+    expect(cell(4).registeredDateText).toBeUndefined()
+  })
+})

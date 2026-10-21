@@ -121,6 +121,7 @@ import {
   registerShiny,
   rareCandyXP,
   retireCompanion,
+  stampRegistrations,
   unlockSpecies,
   unlockedSpecies,
 } from './registry.js'
@@ -1335,7 +1336,8 @@ export class CompanionStore {
       this.rng,
       this.state.species,
     )
-    this.state = { ...this.state, active: result.mon, species: result.species }
+    const species = stampRegistrations(this.state.species, result.species, this.now)
+    this.state = { ...this.state, active: result.mon, species }
 
     // The form each evolution leaves behind — registered on the way — for the news to name.
     let leaving = currentSpeciesID(active)

@@ -808,6 +808,8 @@ export interface SpeciesProgress {
   seen: boolean
   /** The bar was filled once. Only ever set, never cleared. */
   registered: boolean
+  /** When it was registered (epoch ms) — absent before this was kept, and for a save from then. */
+  registeredAt?: number
   /** Wild catches of this species. */
   caught: number
   /** Rare Candies fed to this species, against `RareCandy.maxPerSpecies`. */

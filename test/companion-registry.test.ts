@@ -17,6 +17,7 @@ import {
   reconcileShinies,
   retireCompanion,
   seedRegistry,
+  stampRegistrations,
 } from '../src/core/companion/registry.js'
 import { decodeCompanionState, encodeCompanionState } from '../src/core/companion/persistence.js'
 
@@ -298,5 +299,22 @@ describe('a shiny obtained is a shiny registered', () => {
       ),
     )
     expect(decodeCompanionState(raw).species[7]).toMatchObject({ shinyRegistered: true })
+  })
+})
+
+// Diego: the species card says when a species was registered, once. The registry keeps the
+// moment its bar filled; an older save has none, and falls back to its Pokédex entry.
+describe('when a species was registered', () => {
+  it('stamps the moment a bar fills, and never moves it', () => {
+    const before = { 4: { ...freshSpeciesProgress(), unlocked: true } }
+    const after = {
+      4: { ...before[4], registered: true },
+      5: { ...freshSpeciesProgress(), unlocked: true },
+    }
+    const stamped = stampRegistrations(before, after, 1_000)
+    expect(stamped[4]?.registeredAt).toBe(1_000)
+    expect(stamped[5]?.registeredAt).toBeUndefined()
+    // Already registered: the first moment stays.
+    expect(stampRegistrations(stamped, stamped, 2_000)[4]?.registeredAt).toBe(1_000)
   })
 })

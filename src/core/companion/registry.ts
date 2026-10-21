@@ -217,6 +217,26 @@ export function reconcileShinies(state: CompanionState): CompanionState {
 }
 
 /**
+ * The moment each species newly registered between `before` and `after` filled its bar — the
+ * date the species card shows (Diego). A species already stamped keeps its first moment. The
+ * very same map when nothing was newly registered.
+ */
+export function stampRegistrations(
+  before: CompanionState['species'],
+  after: CompanionState['species'],
+  now: number,
+): CompanionState['species'] {
+  let stamped: CompanionState['species'] | undefined
+  for (const [key, progress] of Object.entries(after)) {
+    if (!progress.registered || progress.registeredAt !== undefined) continue
+    if (before[Number(key)]?.registered === true) continue
+    stamped ??= { ...after }
+    stamped[Number(key)] = { ...progress, registeredAt: now }
+  }
+  return stamped ?? after
+}
+
+/**
  * Marks a species as met in the wild. With the encounter's `line` (an index with forms), it also
  * records where the species sits and its line's rarity — the Pokédex knows what it saw, and a
  * lure has something to price — without obtaining it. Idempotent.

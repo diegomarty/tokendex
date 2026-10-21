@@ -4774,10 +4774,16 @@ body.paused .wallet-badge .coin {
    under the bar. Side by side, a long line ("52% registrado") squeezed the bar to nothing. */
 .dex-detail .reg-line {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 3px;
+  align-items: center;
+  gap: 8px;
   margin: 6px 0 2px;
+}
+.dex-detail .reg-figure {
+  flex: none;
+  font-size: var(--fs-s);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 .dex-detail .dex-choose {
   margin-top: 8px;

@@ -2271,3 +2271,13 @@ export function dexEntryUnavailableText(lang: AppLanguage): string {
 export function itemCountText(count: number): string {
   return `×${count}`
 }
+
+/** A registration's date, short and in the editor's locale: "Oct 21, 2026", "21 oct 2026". */
+export function registeredDateText(date: Date, locale: string | undefined): string {
+  return date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** The registration date as a sentence, for a tooltip and screen readers. */
+export function registeredOnText(lang: AppLanguage, date: string): string {
+  return t(lang, `${date} 등록`, `Registered on ${date}`, `${date}に とうろく`, `Registrado el ${date}`)
+}

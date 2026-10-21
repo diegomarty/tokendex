@@ -1677,19 +1677,6 @@ function speciesCard(
   inWindow = false,
   phase: CardPhase = { awaiting: false, opening: false },
 ): string {
-  const entries = state.dexLog
-    .filter((e) => e.finalID === sp.id)
-    .slice(0, 4)
-    .map((e) => {
-      // Escaped once, at the join below. Escaping here as well double-encodes anything a
-      // translation happens to contain (`&`, an apostrophe) into visible `&amp;#39;`.
-      const parts = [
-        e.isActive ? state.strings.raisingBadge : (e.caughtText ?? ''),
-        e.isWild ? state.strings.wildBadge : '',
-      ].filter((part) => part !== '')
-      return `<div class="desc">${parts.map(escapeHTML).join(' · ')}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>`
-    })
-    .join('')
   const entry = pokedexEntry(state, sp.id)
   return `
     <div class="dex-detail${sp.isShiny ? ' shiny' : ''}${cardClasses(phase)}">
@@ -1712,11 +1699,7 @@ function speciesCard(
         </div>
         ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'line')}
         <div class="dex-entry-game">
-          <div class="reg-line">
-            ${expMeter(sp.percent, { label: sp.percentText, done: sp.status === 'registered' })}
-            <span class="desc">${escapeHTML(sp.percentText)}</span>
-          </div>
-          ${entries}
+          ${registrationLine(sp)}
           ${sp.shinyBar === undefined ? '' : shinySection(sp.id, sp.shinyBar)}
           ${
             sp.isCompanion
@@ -1728,6 +1711,22 @@ function speciesCard(
         </div>
         ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'text')}
       </div>
+    </div>`
+}
+
+/**
+ * The registration on one line (Diego): the bar, and beside it the figure still to go — or, once
+ * registered, the date it happened. No "Registered" word: the green bar and the card in colour
+ * already say it, and the catch dates belong to the catch log. The sentence is the tooltip and
+ * what a screen reader hears.
+ */
+function registrationLine(sp: PanelState['dexSpecies'][number]): string {
+  const registered = sp.status === 'registered'
+  const label = (registered ? sp.registeredLabel : undefined) ?? sp.percentText
+  const figure = registered ? (sp.registeredDateText ?? '') : sp.percentShortText
+  return `<div class="reg-line" title="${escapeHTML(label)}">
+      ${expMeter(sp.percent, { label, done: registered })}
+      ${figure === '' ? '' : `<span class="reg-figure">${escapeHTML(figure)}</span>`}
     </div>`
 }
 

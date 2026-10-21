@@ -142,6 +142,9 @@ function mergeRegistries(
     if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
     if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
     if (a?.companionShiny || b?.companionShiny) merged.companionShiny = true
+    // Registered first on either machine: the earlier moment.
+    const stamps = [a?.registeredAt, b?.registeredAt].filter((t): t is number => t !== undefined)
+    if (stamps.length > 0) merged.registeredAt = Math.min(...stamps)
     const nature = a?.nature ?? b?.nature
     if (nature !== undefined) merged.nature = nature
     out[id] = merged

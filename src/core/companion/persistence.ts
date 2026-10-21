@@ -397,6 +397,8 @@ export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefin
   if (shinyBoosted !== undefined && shinyBoosted > 0) progress.shinyBoosted = shinyBoosted
   if (value['shinyUnlocked'] === true) progress.shinyUnlocked = true
   if (value['shinyRegistered'] === true) progress.shinyRegistered = true
+  const registeredAt = lenientOptional(value, 'registeredAt', isInt)
+  if (registeredAt !== undefined && registeredAt > 0) progress.registeredAt = registeredAt
   const nature = lenientOptional(value, 'nature', isNature)
   if (nature !== undefined) progress.nature = nature
   if (value['companionShiny'] === true) progress.companionShiny = true

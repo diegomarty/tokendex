@@ -158,6 +158,10 @@ export interface PanelDexSpecies {
   percentText: string
   /** The same figure alone, "45%", beside the card's bar (9.11). */
   percentShortText: string
+  /** A registered species' date, "Oct 21, 2026", beside its card's bar; absent when unknown. */
+  registeredDateText?: string
+  /** The same as a sentence for its tooltip and screen readers: "Registered on Oct 21, 2026". */
+  registeredLabel?: string
   /** Can be chosen as the companion (unlocked, and not already on stage). */
   canChoose: boolean
   /** 0 common … 3 legendary: what the Pokédex's rarity sort orders by. */
