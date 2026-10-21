@@ -1891,7 +1891,7 @@ export function drawerTitle(
     case 'incubator':
       return t(lang, '부화기', 'Incubator', 'ふか そうち', 'Incubadora')
     case 'challenges':
-      return t(lang, '도전', 'Challenges', 'チャレンジ', 'Retos')
+      return challengesHeading(lang) // the board's own heading: one name for one thing
     case 'trail':
       return t(lang, '전설의 흔적', 'Legendary trail', 'でんせつの あしあと', 'Rastro legendario')
     case 'wild':
@@ -1910,13 +1910,8 @@ export function incubatorSummary(
   lang: AppLanguage,
   egg: { percent?: number; paused?: boolean; stock: number },
 ): string {
-  const stock = t(
-    lang,
-    `보관 ${egg.stock}개`,
-    `${egg.stock} in stock`,
-    `ストック ${egg.stock}こ`,
-    `${egg.stock} en stock`,
-  )
+  // The egg stock's own sentence, the one Home's strip uses: one fact, one wording.
+  const stock = eggStockText(lang, egg.stock)
   if (egg.paused === true) {
     return `${t(lang, '알 일시정지', 'Egg paused', 'タマゴ いちじていし', 'Huevo en pausa')} · ${stock}`
   }
@@ -1952,17 +1947,4 @@ export function usageSummary(lang: AppLanguage, today: string, month: string): s
     `きょう ${today} · こんげつ ${month}`,
     `Hoy ${today} · Mes ${month}`,
   )
-}
-
-/** The finds folded: how many wait to be picked up. */
-export function findsSummary(lang: AppLanguage, count: number): string {
-  return count === 1
-    ? t(lang, '주울 물건 1개', '1 item to pick up', 'ひろえる どうぐ 1こ', '1 objeto por recoger')
-    : t(
-        lang,
-        `주울 물건 ${count}개`,
-        `${count} items to pick up`,
-        `ひろえる どうぐ ${count}こ`,
-        `${count} objetos por recoger`,
-      )
 }

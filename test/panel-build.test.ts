@@ -1185,7 +1185,7 @@ describe('Home’s drawers', () => {
       appearedAt: NOW,
     }
     expect(drawer(state({ finds: [find] }), 'finds')).toMatchObject({
-      summary: D.findsSummary('en', 1),
+      summary: D.findsText('en', 1),
       attention: true,
     })
     expect(drawer(state(), 'finds')).toBeUndefined()

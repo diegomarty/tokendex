@@ -793,7 +793,8 @@ function homeDrawers(state: CompanionState, panel: PanelState, lang: AppLanguage
 
   // Finds wait to be picked up: their own drawer, flagged while there is something to collect.
   const finds = state.finds.length
-  if (finds > 0) drawer('finds', D.findsSummary(lang, finds), true)
+  // The same sentence the Wild tab heads its finds with: one fact, one wording.
+  if (finds > 0) drawer('finds', D.findsText(lang, finds), true)
 
   drawer('streak', panel.wild.streak.text, false)
   drawer('usage', D.usageSummary(lang, panel.totals.todayText, panel.totals.monthText), false)
