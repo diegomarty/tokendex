@@ -12,13 +12,23 @@
 #             Eclipse Foundation Publisher Agreement). Open VSX serves VSCodium, Cursor,
 #             Windsurf and Gitpod — worth publishing to when releases are frequent.
 #
-# Run it by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+# `bump.yml` starts it: it pushes the `vX.Y.Z` tag and then dispatches this workflow on that tag
+# (`workflow_dispatch`, ref = the tag). The dispatch is what starts it, not the tag push: a push
+# made with the workflow's own `GITHUB_TOKEN` starts no run — that is how 0.5.0 and 1.0.0 were
+# tagged and never released — but a `workflow_dispatch` made with it does, by GitHub's own
+# exception. By hand, either works: `git push origin v0.1.0` (a push of yours starts it), or
+# Actions → release → Run workflow, choosing the tag.
+#
+# The release notes are the CHANGELOG's section for the version (`changelog.sh notes`), the
+# hand-written ones the release was gated on — never GitHub's generated list of pull requests.
 
 name: release
 
 on:
   push:
     tags: ['v*']
+  # Run on a tag ref: the tag check below refuses any other.
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -71,8 +81,15 @@ jobs:
         continue-on-error: true
         run: npx --yes ovsx publish *.vsix -p "$OVSX_PAT"
 
+      - name: Write the release notes from the CHANGELOG
+        run: .github/scripts/changelog.sh notes "${GITHUB_REF_NAME#v}" >release-notes.md
+
       - name: Attach the .vsix to the GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          # Explicit, because a dispatched run's ref is the tag but softprops reads the tag name
+          # from a push event's ref.
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
           files: '*.vsix'
-          generate_release_notes: true
+          body_path: release-notes.md
