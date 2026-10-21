@@ -86,24 +86,9 @@ export interface WildSpecies {
   types?: PokemonType[]
 }
 
-/**
- * A species' Pokédex entry as PokéAPI tells it (plan 9.7): what the species card shows beyond the
- * game's own progress. Texts are keyed by app language (`ko`, `en`, `ja`, `es`); Japanese is the
- * kana text (`ja-Hrkt`) the UI writes in, the kanji one only when there is no kana.
- */
-export interface DexDetails {
-  id: number
-  captureRate: number
-  /** "EleSpider Pokémon", by language. */
-  genus: Record<string, string>
-  /** The newest Pokédex text the games wrote in each language, on one line. */
-  flavor: Record<string, string>
-  /** PokéAPI units: decimetres and hectograms. Absent with the stats when `/pokemon` failed. */
-  heightDm?: number
-  weightHg?: number
-  types?: PokemonType[]
-  stats?: BaseStats
-}
+// The entry's shape lives with no Node in it, so the webview's type-check can read it too.
+export type { DexDetails } from './dexDetails.js'
+import type { DexDetails } from './dexDetails.js'
 
 /** Injectable so tests use a stub rather than the network. */
 export interface PokeProviding {

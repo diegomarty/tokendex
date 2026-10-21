@@ -8,7 +8,7 @@
 
 import type { BaseStats } from '../companion/encounters.js'
 import { type CompanionState, type EvoLine, type EvoNode, resolveName } from '../companion/model.js'
-import type { DexDetails } from '../pokeapi.js'
+import type { DexDetails } from '../dexDetails.js'
 import * as D from '../i18n/dispatch.js'
 import type { PanelPokedexEntry } from '../../webview/protocol.js'
 
