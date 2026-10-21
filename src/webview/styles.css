@@ -684,26 +684,186 @@ button.action.secondary {
 }
 
 /* ---- dex ---- */
+/* ---- the Pokédex grid: an entry card per species (Diego) ----
+   The list scrolls on its own, under the head that stays put: it takes the window from where it
+   starts down to the page's own bottom air (`--scroll-top`, set by fitScrollers() in main.ts). Each species is a paper card —
+   its number and rarity on top, the sprite on the device's little screen, its name, its bar and
+   the bar's line — with the rarity along its foot. Not had yet: the games' silhouette on a dark
+   screen; met: on a lit one. */
+.dex-scroll {
+  max-height: calc(100vh - var(--scroll-top, 0px));
+  margin: 0 -4px;
+  padding: 2px 4px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .dex {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
 }
-/* Cells are buttons now — every slot opens the detail card, locked ones included. */
 .dex .cell {
   position: relative;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--r-m);
-  padding: 8px 4px;
-  text-align: center;
-  background: transparent;
-  color: var(--vscode-foreground);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 5px 6px 7px;
+  border: 2px solid var(--paper-edge);
+  border-radius: var(--r-l);
+  background: var(--paper);
+  box-shadow: 0 2px 0 var(--paper-edge);
+  color: var(--ink);
   font: inherit;
+  text-align: center;
   cursor: pointer;
+  overflow: hidden;
 }
-.dex .cell:hover {
-  background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+.dex .cell:hover,
+.dex .cell.selected {
+  border-color: var(--ink);
 }
+.dex .cell:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.dex .cell-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 15px;
+}
+.dex .cell .num {
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+/* The device's little screen, the catch card's own: the sprite at native size in its window. */
+.dex .cell-screen {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 64px;
+  border: 2px solid var(--lcd-bezel);
+  border-radius: 4px 4px 4px 12px;
+  background:
+    repeating-linear-gradient(180deg, var(--shade) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 50% 45%, var(--lcd-light-hi), var(--lcd-light) 75%);
+  background-blend-mode: soft-light, normal;
+  box-shadow: inset 0 2px 4px var(--shade);
+  overflow: hidden;
+}
+.dex .cell-screen img {
+  width: 64px;
+  height: 64px;
+  object-fit: none;
+  image-rendering: pixelated;
+}
+.dex .cell .name {
+  font-size: var(--fs-s);
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dex .cell .game-meter {
+  margin-top: 1px;
+}
+.dex .cell .cell-line {
+  align-self: center;
+  max-width: 100%;
+  font-size: var(--fs-xs);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dex .cell .tag.cell-line {
+  opacity: 1;
+}
+/* The rarity along the card's foot. */
+.dex .cell.owned::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--rarity-common);
+}
+.dex .cell.rarity-uncommon::after {
+  background: var(--rarity-uncommon);
+}
+.dex .cell.rarity-rare::after {
+  background: var(--rarity-rare);
+}
+.dex .cell.rarity-legendary::after {
+  background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
+}
+/* A shiny: the gold edge, the star on the screen, the screen lit gold. */
+.dex .cell.shiny {
+  border-color: var(--shiny);
+}
+.dex .cell.shiny .cell-screen {
+  background: radial-gradient(circle at 50% 45%, var(--shiny-light), var(--lcd-light) 80%);
+}
+.dex .cell .star {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 1;
+  color: var(--shiny);
+  font-size: var(--fs-s);
+  line-height: 1;
+}
+.dex .cell .star.open {
+  opacity: 0.75;
+}
+.dex .cell.companion {
+  border-color: var(--exp);
+  box-shadow:
+    inset 0 0 0 1px var(--exp),
+    0 2px 0 var(--paper-edge);
+}
+/* A species held only by the Pokémon being raised is not permanent yet, and saying so stops a
+   shrinking count from looking like data loss. */
+.dex .cell.raising {
+  border-style: dashed;
+}
+.dex .cell.status-registered .name {
+  color: var(--ink);
+}
+.dex .cell.locked {
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  box-shadow: none;
+}
+.dex .cell.locked .cell-screen {
+  border-color: var(--lcd-edge);
+  background: radial-gradient(120% 140% at 30% 0%, var(--lcd-glass-hi), var(--lcd-glass) 70%);
+}
+.dex .cell.locked .cell-screen img {
+  filter: brightness(0) invert(0.28);
+  opacity: 0.75;
+}
+.dex .cell.locked .num {
+  opacity: 0.45;
+}
+/* Met in the wild: its silhouette on a lit screen, so the grid shows where the wild has been. */
+.dex .cell.locked.seen {
+  border-style: dashed;
+}
+.dex .cell.locked.seen .cell-screen {
+  border-color: var(--lcd-bezel);
+  background: radial-gradient(circle at 50% 45%, var(--lcd-light-hi), var(--lcd-light) 75%);
+}
+.dex .cell.locked.seen .cell-screen img {
+  filter: brightness(0);
+  opacity: 0.8;
+}
+/* Cells are buttons now — every slot opens the detail card, locked ones included. */
 /* Pokédex narrowing: a search field and toggle chips, sitting between the segments and the
    grid so the thing they act on is always the next thing you see. */
 .dex-controls {
@@ -778,59 +938,14 @@ button.action.secondary {
   outline-offset: 1px;
 }
 
-.dex .cell.selected {
-  border-color: var(--vscode-focusBorder);
-}
-.dex img {
-  width: 56px;
-  height: 56px;
-  image-rendering: pixelated;
-}
-.dex .cell .num {
-  font-size: 0.7em;
-  opacity: 0.45;
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
-}
-.dex .cell .name {
-  font-size: 0.78em;
-  opacity: 0.8;
-  margin-top: 1px;
-  word-break: break-word;
-}
-.dex .cell.shiny {
-  border-color: var(--vscode-charts-yellow, gold);
-}
 /* The shiny star, pinned to the cell's corner — the games' own marker. */
-.dex .cell .star,
 .star-inline {
   color: var(--vscode-charts-yellow, gold);
-}
-.dex .cell .star {
-  position: absolute;
-  top: 3px;
-  right: 6px;
-  font-size: 0.8em;
-  line-height: 1;
 }
 
 /* Not caught yet: the classic silhouette. `brightness(0)` flattens the sprite to a black
    shape; on dark themes an `invert` lifts it to a dark grey so it still reads against the
    editor background. VS Code stamps the theme class on the webview body (the bench mirrors it). */
-.dex .cell.locked {
-  border-color: color-mix(in srgb, var(--vscode-panel-border) 55%, transparent);
-}
-.dex .cell.locked img {
-  filter: brightness(0);
-  opacity: 0.8;
-}
-body.vscode-dark .dex .cell.locked img,
-body.vscode-high-contrast .dex .cell.locked img {
-  filter: brightness(0) invert(0.32);
-}
-.dex .cell.locked .num {
-  opacity: 0.35;
-}
 
 /* ---- dex detail: a bottom sheet ----
    Fixed to the viewport, not placed above the grid: the click that opens it can happen four
@@ -1016,17 +1131,6 @@ label.setting select {
 
 /* A species held only by the Pokémon being raised is not permanent yet, and saying so stops a
    shrinking count from looking like data loss. */
-.dex .cell.raising {
-  border-style: dashed;
-  opacity: 0.85;
-}
-.dex .cell .badge {
-  font-size: 0.68em;
-  opacity: 0.7;
-  margin-top: 2px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
 
 .row .thumb {
   width: 34px;
@@ -2215,13 +2319,16 @@ body.vscode-dark .exp-figures {
 }
 
 /* Already yours: the Poké Ball the games print beside a species you have caught — the same
-   mark the Pokédex puts on an owned cell (the shared rule is beside `.dex .cell.owned::before`),
+   mark the games print beside a species already caught (the rule is `.owned-ball`),
    drawn in CSS so no sprite is bundled. */
 .owned-ball {
   flex: none;
   align-self: center;
   width: 10px;
   height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--ink);
+  background: linear-gradient(180deg, var(--anger) 0 42%, var(--ink) 42% 58%, #fff 58%);
 }
 
 /* The catch's news, over the scene like a level-up: a ribbon that drops in once the catch
@@ -2379,6 +2486,11 @@ body.vscode-dark .exp-figures {
   align-items: flex-start;
   gap: 5px;
   min-width: 0;
+}
+/* The card is the device's light screen in every theme, so a state pill on it takes the device's
+   ink: the theme's, light in a dark theme, left "Charmander registered" pale on pale. */
+.catch-banner.rich .tag.state {
+  --tag-ink: color-mix(in srgb, var(--exp) 55%, var(--device-panel-ink));
 }
 .catch-banner.rich .catch-headline {
   font-size: var(--fs-l);
@@ -3344,10 +3456,6 @@ body.paused .stage.celebrate img {
   td {
     padding: 5px 4px;
   }
-  .dex {
-    grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-    gap: 6px;
-  }
   .row {
     gap: 8px;
     padding: 8px 9px;
@@ -3834,47 +3942,6 @@ button.btn.priced:not(:has(.verb)) .cost {
 }
 
 /* ---- the Pokédex ---- */
-/* A caught species: a lifted tile, a Poké Ball mark in its corner and its rarity along the
-   bottom edge. The silhouettes stay flat, which is what makes the caught ones read as caught. */
-.dex .cell.owned {
-  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
-  overflow: hidden;
-}
-.dex .cell.owned::before {
-  content: '';
-  position: absolute;
-  top: 5px;
-  left: 6px;
-  width: 9px;
-  height: 9px;
-}
-/* The Poké Ball mark, one drawing for both places it means "yours": an owned Pokédex cell and a
-   wild Pokémon whose species you already have. */
-.dex .cell.owned::before,
-.owned-ball {
-  border-radius: 50%;
-  border: 1px solid var(--ink);
-  background: linear-gradient(180deg, var(--anger) 0 42%, var(--ink) 42% 58%, #fff 58%);
-}
-.dex .cell.owned::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--rarity-common);
-}
-.dex .cell.rarity-uncommon::after {
-  background: var(--rarity-uncommon);
-}
-.dex .cell.rarity-rare::after {
-  background: var(--rarity-rare);
-}
-.dex .cell.rarity-legendary::after {
-  background: linear-gradient(90deg, var(--rarity-legendary-from), var(--rarity-legendary-to));
-}
-
 /* The detail sheet is an entry: the device's red band with number and name, the sprite on a
    pedestal, the facts beside it. */
 .dex-entry-head {
@@ -4656,26 +4723,6 @@ body.paused .wallet-badge .coin {
 /* ---- the registry in the Pokédex ----
    Two axes per cell: how far the species is (seen, unlocked with its bar, registered) and its
    shiny form (the corner star, hollow while only unlocked). */
-.dex .cell.locked.seen {
-  border-style: dashed;
-}
-.dex .cell.locked.seen img {
-  opacity: 0.55;
-}
-.dex .cell.locked.seen .num {
-  opacity: 0.7;
-}
-.dex .cell.status-registered .name {
-  font-weight: 600;
-  opacity: 1;
-}
-.dex .cell.companion {
-  border-color: var(--exp);
-  box-shadow: inset 0 0 0 1px var(--exp);
-}
-.dex .cell .star.open {
-  opacity: 0.75;
-}
 /* The registration bar drawn like the shiny one under it: the bar across the card, its line
    under the bar. Side by side, a long line ("52% registrado") squeezed the bar to nothing. */
 .dex-detail .reg-line {
@@ -5097,9 +5144,6 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
 }
 /* Where meters sit: under a Pokédex cell, beside a detail's percentage, along a catch line. */
-.dex .cell .game-meter {
-  margin: 4px 8px 0;
-}
 .dex-detail .reg-line .game-meter,
 .catch-reg .game-meter {
   flex: 1;

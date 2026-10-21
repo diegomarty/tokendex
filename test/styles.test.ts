@@ -132,6 +132,18 @@ describe('the stylesheet', () => {
     expect([...SCRIPT.matchAll(/deviceHead\(/g)].length).toBeGreaterThanOrEqual(3)
   })
 
+  // [trigger branch] One bar for a Pokémon's road (plan 09 §9.10): the companion plate's EXP bar,
+  // drawn by `expMeter()` — the only place the games' "EXP" is printed. A registration or
+  // experience bar drawn straight with `gameMeter` is a second look for the same thing.
+  it('draws every experience and registration bar as the plate’s EXP bar', () => {
+    expect([...SCRIPT.matchAll(/glyph: 'EXP'/g)].length, "`glyph: 'EXP'` outside expMeter()").toBe(1)
+    const straight = [
+      ...SCRIPT.matchAll(/gameMeter\(\s*(sp\.percent|reg\.toPercent|item\.percent|c\.expPercent)\b/g),
+    ].map((m) => m[1])
+    expect(straight, 'a road drawn with gameMeter instead of expMeter').toEqual([])
+    expect([...SCRIPT.matchAll(/expMeter\(/g)].length).toBeGreaterThanOrEqual(7)
+  })
+
   // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
   // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
   it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {

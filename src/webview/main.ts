@@ -218,6 +218,19 @@ function gameMeter(percent: number, o: MeterOptions): string {
   return `<div class="${classes.join(' ')}">${glyph}<div class="bar game-meter-track"${name}>${fill}</div></div>`
 }
 
+/**
+ * The one bar of experience and registration (plan 09 §9.10): the companion plate's EXP bar —
+ * the device's dark frame, the games' "EXP" at its left, the blue fill — wherever a Pokémon's
+ * road is drawn: the plate, the catch card, the Pokédex, the PC, the news. A registered form's
+ * is full and still blue: it is the same bar, at its end.
+ */
+function expMeter(
+  percent: number,
+  o: { label?: string; hidden?: boolean; inner?: string; size?: 'thin' | 'large' } = {},
+): string {
+  return gameMeter(percent, { surface: 'device', glyph: 'EXP', glyphClass: 'label', ...o })
+}
+
 /** Name, meta line, progress bar and evolution strip — everything about the companion except
  *  its portrait, which in the unified Home lives inside the scene beside the trainer. */
 function companionInfo(state: PanelState): string {
@@ -242,7 +255,7 @@ function companionInfo(state: PanelState): string {
           <span>${escapeHTML(c.toNextText)}</span>
           <span class="pct">${c.expPercent}%</span>
         </div>
-        ${gameMeter(c.expPercent, { surface: 'paper', size: 'thin', hidden: true })}
+        ${expMeter(c.expPercent, { size: 'thin', hidden: true })}
       </div>
       ${renderLine(c.line)}`
 }
@@ -759,8 +772,7 @@ function renderCatchBanner(): string {
         <div class="catch-body">
           <span class="catch-headline">${escapeHTML(banner.headline)}</span>
           <div class="catch-reg">
-            ${gameMeter(reg.toPercent, {
-              surface: 'device',
+            ${expMeter(reg.toPercent, {
               size: 'large',
               hidden: true,
               inner: `<i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
@@ -1045,7 +1057,7 @@ function expBar(c: NonNullable<PanelState['companion']>): string {
   const figures = [c.expText, c.expLeftText].filter((t): t is string => t !== undefined && t !== '')
   const label = figures.length === 0 ? c.toNextText : figures.join(' · ')
   return `<div class="exp-meter">
-      ${gameMeter(c.expPercent, { surface: 'device', glyph: 'EXP', glyphClass: 'label', label })}
+      ${expMeter(c.expPercent, { label })}
       ${
         figures.length === 0
           ? `<div class="exp-figures"><span>${escapeHTML(c.toNextText)}</span></div>`
@@ -1583,7 +1595,7 @@ function speciesCard(
         ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex')}
         <div class="dex-entry-game">
           <div class="reg-line">
-            ${gameMeter(sp.percent, { surface: 'paper', ...(sp.status === 'registered' ? { tone: 'done' as const } : {}), label: sp.percentText })}
+            ${expMeter(sp.percent, { label: sp.percentText })}
             <span class="desc">${escapeHTML(sp.percentText)}</span>
           </div>
           ${entries}
@@ -1828,8 +1840,15 @@ function renderDex(state: PanelState): string {
     // A region narrows the grid to its numbers and puts its own progress on the head.
     const region = summary.regions.find((r) => r.id === dexRegion)
     const scope =
-      region !== undefined && !shinydex
-        ? { text: region.progressText, percent: region.percent, label: region.name }
+      region !== undefined
+        ? shinydex
+          ? {
+              text: region.shinyProgressText,
+              percent: region.shinyPercent,
+              shiny: true,
+              label: region.name,
+            }
+          : { text: region.progressText, percent: region.percent, label: region.name }
         : shinydex
           ? { text: summary.shinyProgressText, percent: summary.shinyPercent, shiny: true }
           : { text: summary.progressText, percent: summary.percent }
@@ -1880,12 +1899,13 @@ function renderDex(state: PanelState): string {
       </div>
       <div class="dex-controls region-chips" role="group">
         ${summary.regions
-          .map(
-            (
-              r,
-            ) => `<button class="chip region region-${escapeHTML(r.id)}${r.percent >= 100 ? ' done' : ''}" data-dex-region="${escapeHTML(r.id)}"
-              aria-pressed="${r.id === dexRegion}" title="${escapeHTML(r.progressText)}">${escapeHTML(r.name)}<span class="region-pct">${escapeHTML(r.progressText)}</span></button>`,
-          )
+          .map((r) => {
+            // The Shinydex counts each region's shinies; the collection, its registered ones.
+            const text = shinydex ? r.shinyProgressText : r.progressText
+            const done = (shinydex ? r.shinyPercent : r.percent) >= 100
+            return `<button class="chip region region-${escapeHTML(r.id)}${done ? ' done' : ''}" data-dex-region="${escapeHTML(r.id)}"
+              aria-pressed="${r.id === dexRegion}" title="${escapeHTML(text)}">${escapeHTML(r.name)}<span class="region-pct">${escapeHTML(text)}</span></button>`
+          })
           .join('')}
       </div>
     </div>`
@@ -1912,55 +1932,14 @@ function renderDex(state: PanelState): string {
       })
     } else if (dexReverse) ids.reverse()
     for (const id of ids) {
-      const sp = byID.get(id)
-      const selected = id === dexSelected ? ' selected' : ''
       // Roving tabindex: 649 buttons must be ONE tab stop, not 649 — Tab enters the grid at the
       // open (or first) cell and the arrow keys move inside it; Tab again leaves it.
-      const tabIndex = ` tabindex="${id === (dexSelected ?? 1) ? 0 : -1}"`
-      const shinyOff =
-        shinydex && sp !== undefined && sp.status !== 'registered' && sp.shiny !== 'registered'
-      if (sp === undefined || sp.status === 'seen' || shinyOff) {
-        // Seen is still a silhouette — met, not owned — but lit, so the grid shows where the wild
-        // has already been.
-        cells.push(`
-        <button class="cell locked${sp?.status === 'seen' ? ' seen' : ''}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
-          <img src="${spriteURL(id, false, false)}" alt="" loading="lazy">
-          <div class="num">${dexNumber(id)}</div>
-        </button>`)
-      } else {
-        const shiny = sp.shiny === 'registered' || (!shinydex && sp.isShiny)
-        // A species whose line never loaded has no name yet, only the core's `#N` fallback —
-        // and the number is already on the cell.
-        cells.push(`
-        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
-                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.percentText)}">
-          ${shiny ? '<span class="star" title="shiny">★</span>' : sp.shiny === 'unlocked' ? '<span class="star open" title="shiny">☆</span>' : ''}
-          <img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy">
-          <div class="num">${dexNumber(id)}</div>
-          ${sp.name === `#${id}` ? '' : `<div class="name">${escapeHTML(sp.name)}</div>`}
-          ${
-            shinydex
-              ? gameMeter(sp.shinyBar?.percent ?? 0, {
-                  surface: 'paper',
-                  size: 'thin',
-                  tone: 'shiny',
-                  hidden: true,
-                })
-              : gameMeter(sp.percent, {
-                  surface: 'paper',
-                  size: 'thin',
-                  ...(sp.status === 'registered' ? { tone: 'done' as const } : {}),
-                  hidden: true,
-                })
-          }
-          ${sp.isCompanion ? `<div class="badge">${escapeHTML(state.strings.companionBadge)}</div>` : ''}
-        </button>`)
-      }
+      cells.push(dexCell(state, id, byID.get(id), shinydex, id === (dexSelected ?? 1)))
     }
     const grid =
       cells.length === 0
         ? `<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
-        : `<div class="dex">${cells.join('')}</div>`
+        : `<div class="dex-scroll" data-keep-scroll="dex-grid"><div class="dex">${cells.join('')}</div></div>`
     // The detail renders after the grid but floats fixed at the bottom of the view: a card at
     // the top of a 649-cell grid opens off-screen when the click happened four screens down.
     return `${dexHead(state, scope, segments + controls)}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
@@ -2004,6 +1983,70 @@ function renderDex(state: PanelState): string {
     )
     .join('')
   return `${head}${chips}<div class="log">${rows}</div>`
+}
+
+/**
+ * One Pokédex entry in the grid: a paper card with the number and the rarity on top, the sprite
+ * on the device's little screen, the name, the bar and its line. What is not had yet is the
+ * games' silhouette on a dark screen; met, on a lit one. In the Shinydex only a registered shiny
+ * shows itself — everything else is a silhouette, with the gold bar of the road to its shiny
+ * when that road has begun (Diego).
+ */
+function dexCell(
+  state: PanelState,
+  id: number,
+  sp: PanelDexSpecies | undefined,
+  shinydex: boolean,
+  focusable: boolean,
+): string {
+  const selected = id === dexSelected ? ' selected' : ''
+  const tabIndex = ` tabindex="${focusable ? 0 : -1}"`
+  const shown = sp !== undefined && sp.status !== 'seen' && (!shinydex || sp.shiny === 'registered')
+  if (!shown) {
+    const seen = sp !== undefined
+    const road =
+      shinydex && sp?.shinyBar !== undefined
+        ? gameMeter(sp.shinyBar.percent, { surface: 'paper', size: 'thin', tone: 'shiny', hidden: true })
+        : ''
+    return `
+        <button class="cell locked${seen ? ' seen' : ''}${selected}" data-dex="${id}"${tabIndex} title="${dexNumber(id)}">
+          <span class="cell-top"><span class="num">${dexNumber(id)}</span></span>
+          <span class="cell-screen"><img src="${spriteURL(id, false, false)}" alt="" loading="lazy"></span>
+          ${road}
+        </button>`
+  }
+  const shiny = sp.shiny === 'registered' || (!shinydex && sp.isShiny)
+  // A species whose line never loaded has no name yet, only the core's `#N` fallback — and the
+  // number is already on the card.
+  const name = sp.name === `#${id}` ? '' : `<span class="name">${escapeHTML(sp.name)}</span>`
+  const bar = shinydex
+    ? gameMeter(sp.shinyBar?.percent ?? 100, {
+        surface: 'paper',
+        size: 'thin',
+        tone: 'shiny',
+        hidden: true,
+      })
+    : expMeter(sp.percent, { size: 'thin', hidden: true })
+  const star = shiny
+    ? '<span class="star" title="shiny">★</span>'
+    : sp.shiny === 'unlocked'
+      ? '<span class="star open" title="shiny">☆</span>'
+      : ''
+  const line = sp.isCompanion
+    ? `<span class="tag xs state cell-line">${escapeHTML(state.strings.companionBadge)}</span>`
+    : `<span class="cell-line">${escapeHTML(shinydex ? (sp.shinyBar?.text ?? sp.percentText) : sp.percentText)}</span>`
+  return `
+        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
+                data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.percentText)}">
+          <span class="cell-top">
+            <span class="num">${dexNumber(id)}</span>
+            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+          </span>
+          <span class="cell-screen">${star}<img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy"></span>
+          ${name}
+          ${bar}
+          ${line}
+        </button>`
 }
 
 /**
@@ -2260,7 +2303,43 @@ function fitTight(): void {
   }
 }
 // A resize changes what fits without a render.
-new ResizeObserver(() => fitTight()).observe(document.body)
+new ResizeObserver(() => {
+  fitTight()
+  fitScrollers()
+}).observe(document.body)
+
+/**
+ * A list that scrolls on its own (`[data-keep-scroll]`, the Pokédex's grid): it keeps its place
+ * across a repaint, which recreates it, and the place is the list's, not the segment's — the
+ * collection and the Shinydex are the same 649 entries, so going from one to the other stays put.
+ */
+const keptScroll = new Map<string, number>()
+
+function keepScrolls(section: HTMLElement): void {
+  for (const list of section.querySelectorAll<HTMLElement>('[data-keep-scroll]'))
+    keptScroll.set(list.dataset['keepScroll'] ?? '', list.scrollTop)
+}
+
+/**
+ * Each such list takes the window's height from where it starts down, so the page above it —
+ * the head, its buttons and filters — stays put while only the list moves. Its place comes back
+ * here too, once it has its height (a list with no height cannot be scrolled into place).
+ */
+function fitScrollers(): void {
+  for (const list of document.querySelectorAll<HTMLElement>(
+    'main > section:not([hidden]) [data-keep-scroll]',
+  )) {
+    // Where it starts, plus the page's air under it: the list ends where the page would.
+    const below = Number.parseFloat(getComputedStyle(document.body).paddingBottom) || 0
+    list.style.setProperty(
+      '--scroll-top',
+      `${Math.round(list.getBoundingClientRect().top + window.scrollY + below)}px`,
+    )
+    const kept = keptScroll.get(list.dataset['keepScroll'] ?? '')
+    if (kept !== undefined && list.scrollTop !== kept) list.scrollTop = kept
+    keptScroll.delete(list.dataset['keepScroll'] ?? '')
+  }
+}
 
 function paintBars(root: HTMLElement): void {
   for (const fillElement of root.querySelectorAll<HTMLElement>('[data-fill]')) {
@@ -2306,6 +2385,7 @@ function render(): void {
     const kept = tab === 'home' ? sceneSprites(section) : new Map<string, HTMLImageElement>()
     const previousTerrain = section.querySelector<HTMLElement>('.wild-scene')?.dataset['terrain']
     const focused = focusInside(section)
+    keepScrolls(section)
     section.innerHTML = RENDERERS[tab](state)
     restoreFocus(focused)
     if (kept.size > 0) {
@@ -2355,6 +2435,7 @@ function render(): void {
   paintPCBox()
   typeDialogs()
   fitTight()
+  fitScrollers()
 }
 
 /**
@@ -3120,7 +3201,7 @@ function newsCard(n: PanelNews): string {
         <span class="catch-mon-wrap">${art}</span>
         <div class="catch-body">
           <span class="catch-headline">${escapeHTML(n.headline)}</span>
-          ${full ? `<div class="catch-reg">${gameMeter(100, { surface: 'device', size: 'large', tone: 'done', hidden: true })}</div>` : ''}
+          ${full ? `<div class="catch-reg">${expMeter(100, { size: 'large', hidden: true })}</div>` : ''}
           ${n.detail === undefined ? '' : `<span class="tag state catch-detail">${escapeHTML(n.detail)}</span>`}
         </div>
       </div>
@@ -3335,7 +3416,7 @@ function pcGrid(state: PanelState): string {
               aria-label="${escapeHTML(item.name)} · ${escapeHTML(item.percentText)}">
         <img src="${spriteURL(item.id, item.isShiny, false)}" alt="" loading="lazy">
         <span class="pc-name">${escapeHTML(item.name)}</span>
-        ${gameMeter(item.percent, { surface: 'paper', size: 'thin', hidden: true, ...(item.registered ? { tone: 'done' as const } : {}) })}
+        ${expMeter(item.percent, { size: 'thin', hidden: true })}
       </button>`,
     )
     .join('')}</div>`
