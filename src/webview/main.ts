@@ -1595,7 +1595,7 @@ function speciesCard(
             <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
           </div>
         </div>
-        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex')}
+        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'line')}
         <div class="dex-entry-game">
           <div class="reg-line">
             ${expMeter(sp.percent, { label: sp.percentText })}
@@ -1611,6 +1611,7 @@ function speciesCard(
                 : ''
           }
         </div>
+        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex', 'text')}
       </div>
     </div>`
 }
@@ -1703,10 +1704,17 @@ function entryFacts(entry: PanelPokedexEntry | undefined): string {
  * (`openAttr`: the Pokédex selects a cell, the window over Home reopens on it). A form never seen
  * is a silhouette with no name and no way in.
  */
-function entryPages(entry: PanelPokedexEntry | undefined, speciesID: number, openAttr: string): string {
+function entryPages(
+  entry: PanelPokedexEntry | undefined,
+  speciesID: number,
+  openAttr: string,
+  part: 'line' | 'text',
+): string {
   if (entry === undefined) return ''
   if (entry.unavailableText !== undefined) {
-    return `<p class="dex-entry-note desc">${escapeHTML(entry.unavailableText)}</p>`
+    return part === 'text'
+      ? `<p class="dex-entry-note desc">${escapeHTML(entry.unavailableText)}</p>`
+      : ''
   }
   const flavor =
     entry.flavorText === undefined
@@ -1748,7 +1756,11 @@ function entryPages(entry: PanelPokedexEntry | undefined, speciesID: number, ope
             })
             .join('')}</div>
         </div>`
-  return `${flavor}${locked}${stats}${line}`
+  // The line beside the facts, up top; the entry's text and stats close the card, under the
+  // game's own part (Diego: they read last).
+  if (part === 'line') return line
+  const text = `${flavor}${locked}${stats}`
+  return text === '' ? '' : `<div class="dex-entry-text">${text}</div>`
 }
 
 /**

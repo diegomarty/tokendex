@@ -4207,6 +4207,10 @@ button.dex-line-form:hover {
   opacity: 0.5;
   font-weight: 800;
 }
+.dex-entry-text {
+  padding-top: 12px;
+  border-top: 1px dashed color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+}
 .dex-entry-game {
   display: flex;
   flex-direction: column;
