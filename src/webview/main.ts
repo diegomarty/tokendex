@@ -2216,18 +2216,21 @@ function dexCell(
       ? '<span class="star open" title="shiny">☆</span>'
       : ''
   const road = shinydex && sp.shinyBar !== undefined ? sp.shinyBar.text : sp.percentText
-  // The companion says so in words — on its card, where the rarity would be, and in its name —
-  // not only with its blue edge; the rarity moves to the name then.
-  const label = [sp.name, sp.isCompanion ? state.strings.companionBadge : sp.rarityText, road].join(' · ')
-  const corner = sp.isCompanion
+  // The companion says so in words — the whole top row of its card, and its name — not only with
+  // its blue edge. "Tu compañero" beside the number ran the card off its edge (Diego); the number
+  // and the rarity move to the name then.
+  const label = sp.isCompanion
+    ? [sp.name, dexNumber(id), state.strings.companionBadge, sp.rarityText, road].join(' · ')
+    : [sp.name, sp.rarityText, road].join(' · ')
+  const top = sp.isCompanion
     ? `<span class="tag xs state">${escapeHTML(state.strings.companionBadge)}</span>`
-    : `<span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>`
+    : `<span class="num">${dexNumber(id)}</span>
+            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>`
   return `
         <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
                 data-dex="${id}"${tabIndex} title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">
           <span class="cell-top">
-            <span class="num">${dexNumber(id)}</span>
-            ${corner}
+            ${top}
           </span>
           <span class="cell-screen">${star}<img src="${spriteURL(sp.id, shiny, false)}" alt="" loading="lazy"></span>
           <span class="cell-bar">${bar}</span>

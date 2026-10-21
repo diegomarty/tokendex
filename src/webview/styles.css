@@ -712,6 +712,9 @@ button.action.secondary {
      holds: a Pokémon, a silhouette, or the Shinydex's view of either (Diego). */
   display: grid;
   grid-template-rows: 15px 100px 14px 17px;
+  /* One column no wider than the card: a long tag in a row once widened it, and the screen, the
+     bar and its figure were pushed off the card's edge with it. */
+  grid-template-columns: minmax(0, 1fr);
   row-gap: 4px;
   align-content: start;
   min-width: 0;
@@ -740,6 +743,12 @@ button.action.secondary {
   justify-content: space-between;
   gap: 4px;
   min-height: 15px;
+}
+/* The last word, never the card's edge: a tag too long for its row ends in an ellipsis. */
+.dex .cell-top .tag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dex .cell .num {
   font-size: var(--fs-xs);
