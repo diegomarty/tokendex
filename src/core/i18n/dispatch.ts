@@ -2048,6 +2048,11 @@ export function sortDirectionLabel(lang: AppLanguage, direction: 'ascending' | '
     : t(lang, '내림차순', 'Descending', 'こうじゅん', 'Descendente')
 }
 
+/** The Pokédex's filters toggle (plan 9.3): its accessible name and tooltip. */
+export function dexFiltersToggleLabel(lang: AppLanguage): string {
+  return t(lang, '필터', 'Filters', 'フィルター', 'Filtros')
+}
+
 /** The incubator with an empty stock: how the next egg arrives. */
 export function eggsEmptyText(lang: AppLanguage): string {
   return t(

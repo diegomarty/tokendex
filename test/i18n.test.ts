@@ -604,6 +604,12 @@ describe('one word for one thing', () => {
   })
 })
 
+describe('the Pokédex filters toggle', () => {
+  it.each(APP_LANGUAGES)('is named in %s', (lang) => {
+    expect(d.dexFiltersToggleLabel(lang).trim()).not.toBe('')
+  })
+})
+
 describe('the battle menu', () => {
   it.each(APP_LANGUAGES)('names the Pokémon button, in %s', (lang) => {
     expect(d.pokemonMenuLabel(lang).trim()).not.toBe('')

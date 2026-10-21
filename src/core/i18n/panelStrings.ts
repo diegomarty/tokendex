@@ -40,6 +40,7 @@ import {
   keepCompletedHint,
   wildCaughtBadge,
   sortDirectionLabel,
+  dexFiltersToggleLabel,
 } from './dispatch.js'
 import { s } from './strings.js'
 
@@ -81,6 +82,7 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     emptyBag: { ...emptyState(lang, 'bag'), action: emptyBagAction(lang) },
     sortAscending: sortDirectionLabel(lang, 'ascending'),
     sortDescending: sortDirectionLabel(lang, 'descending'),
+    dexFiltersToggle: dexFiltersToggleLabel(lang),
     emptyPocket: {
       balls: emptyState(lang, 'balls'),
       berries: emptyState(lang, 'berries'),

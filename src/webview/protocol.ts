@@ -664,6 +664,8 @@ export interface PanelStrings {
   /** The sort direction toggle beside every sort (plan 9.8), named for the order it shows. */
   sortAscending: string
   sortDescending: string
+  /** The chevron folding the Pokédex's filters into its device (plan 9.3), like `lid.toggleLabel`. */
+  dexFiltersToggle: string
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */
