@@ -29,6 +29,18 @@ export function currentIsShiny(mon: MonState | undefined): boolean {
   return mon.isShiny
 }
 
+/**
+ * The forms the companion really holds: the one on stage, and the earlier ones of its road the
+ * registry has obtained. `pathIDs` also carries the line's forms *before* a companion chosen at
+ * an evolved stage (a wild Charmeleon), to price its stage — never obtained, so never owned
+ * (code review 9.12 #1).
+ */
+export function reachedForms(state: CompanionState, mon: MonState): number[] {
+  const reached = mon.pathIDs.slice(0, mon.stageIndex + 1)
+  const current = reached[reached.length - 1]
+  return reached.filter((id) => id === current || state.species[id]?.unlocked === true)
+}
+
 export function isFinalStage(mon: MonState, line: EvoLine | undefined): boolean {
   if (line === undefined) return false
   return (evoNodeWithID(line.tree, currentSpeciesID(mon))?.children.length ?? 0) === 0
@@ -88,7 +100,7 @@ export function activeDexEntry(state: CompanionState, line: EvoLine | undefined)
     id: `active-${active.baseID}-${finalID}`,
     baseID: active.baseID,
     finalID,
-    chainOrder: active.pathIDs,
+    chainOrder: reachedForms(state, active),
     rarity: active.rarity,
     isShiny: currentIsShiny(active),
   }
@@ -181,7 +193,7 @@ export function dexSpecies(
   if (active !== undefined) {
     // Reached stages only. `stageIndex` is guaranteed in range by both entry points:
     // decoding clamps it, and importing a save normalises it.
-    for (const id of active.pathIDs.slice(0, active.stageIndex + 1)) {
+    for (const id of reachedForms(state, active)) {
       const a = acc.get(id) ?? { rarity: active.rarity, isShiny: false, isGraduated: false }
       const names = line?.names[id]
       if (names !== undefined) a.names = names

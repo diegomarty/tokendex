@@ -8,6 +8,7 @@ import {
   entryName,
   isFinalStage,
   lineItems,
+  reachedForms,
   realizedLineItems,
 } from '../src/core/companion/dexView.js'
 import {
@@ -22,6 +23,7 @@ import {
 } from '../src/core/companion/model.js'
 
 const node = (id: number, children: EvoNode[] = []): EvoNode => ({ speciesID: id, children })
+const sp = (over: Partial<SpeciesProgress>): SpeciesProgress => ({ ...freshSpeciesProgress(), ...over })
 
 const mon = (over: Partial<MonState> = {}): MonState => ({
   baseID: 1,
@@ -164,8 +166,23 @@ describe('species pokédex', () => {
 
   // [trigger branch] Using plannedPathIDs would list species that have not evolved yet.
   it('counts only the stages actually reached for the active Pokémon', () => {
-    const s = state({ active: mon({ pathIDs: [1, 2], plannedPathIDs: [1, 2, 3], stageIndex: 1 }) })
+    const s = state({
+      active: mon({ pathIDs: [1, 2], plannedPathIDs: [1, 2, 3], stageIndex: 1 }),
+      species: { 1: sp({ unlocked: true }), 2: sp({ unlocked: true }) },
+    })
     expect(dexSpecies(s, line).map((x) => x.id)).toEqual([1, 2])
+  })
+
+  // [trigger branch] Code review 9.12 #1: a companion chosen at an evolved form (a wild
+  // Charmeleon) carries its line's earlier forms in `pathIDs` to price its stage — they were
+  // never obtained, and must not read as owned, be offered as a companion, or be graduated.
+  it('never counts an earlier form the companion did not hold', () => {
+    const s = state({
+      active: mon({ pathIDs: [1, 2], plannedPathIDs: [1, 2, 3], stageIndex: 1 }),
+      species: { 2: sp({ unlocked: true, caught: 1 }) },
+    })
+    expect(reachedForms(s, s.active!)).toEqual([2])
+    expect(dexSpecies(s, line).map((x) => x.id)).toEqual([2])
   })
 
   // Without the marker, a species count that shrinks (fresh egg, Ditto reveal) looks like a bug.

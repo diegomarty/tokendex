@@ -69,6 +69,7 @@ import {
   rollShiny,
   type BurnTier,
 } from './display.js'
+import { reachedForms } from './dexView.js'
 import {
   applyUsage,
   companionIsDone,
@@ -1338,7 +1339,8 @@ export class CompanionStore {
       id: `${mon.baseID}-${finalID}-${this.now}`,
       baseID: mon.baseID,
       finalID,
-      chainOrder: mon.pathIDs,
+      // The forms it held, not every form before it (code review 9.12 #1).
+      chainOrder: reachedForms(this.state, mon),
       rarity: mon.rarity,
       caughtAt: this.now,
       isShiny: mon.isShiny,
