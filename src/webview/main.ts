@@ -1569,18 +1569,23 @@ const dexNumber = (id: number): string => `#${String(id).padStart(3, '0')}`
  * the silhouette and its number — enough to want it, not enough to spoil it.
  */
 function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number] | undefined): string {
-  if (dexSelected === undefined) return ''
+  if (dexSelected === undefined) {
+    cardShown.delete('dex')
+    return ''
+  }
   const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
+  // A never-met species has no entry to wait for; every other card waits for its own briefly.
+  const phase = cardPhase('dex', dexSelected, state, sp !== undefined)
   // The grid behind the sheet is veiled, as the window over Home veils the scene (Diego): the
   // card reads as open on top, and a click on the veil closes it.
-  const veil = '<div class="dex-backdrop" data-dex-close aria-hidden="true"></div>'
+  const veil = `<div class="dex-backdrop${phase.opening ? ' opening' : ''}" data-dex-close aria-hidden="true"></div>`
 
   if (sp === undefined || sp.status === 'seen') {
     // Seen, as in the games: the genus and the types, and the line saying the rest comes with
     // obtaining it (plan 9.7). Never met: the number and the silhouette, nothing to ask for.
     const entry = sp === undefined ? undefined : pokedexEntry(state, sp.id)
     return `${veil}
-    <div class="dex-detail locked">
+    <div class="dex-detail locked${cardClasses(phase)}">
       <div class="dex-entry-head device-casing flush">
         <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(dexSelected)}</span>
@@ -1598,8 +1603,66 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
     </div>`
   }
 
-  return veil + speciesCard(state, sp, close)
+  return veil + speciesCard(state, sp, close, false, phase)
 }
+
+/**
+ * Where a species card is in its life. `awaiting`: its entry was just asked for and is not here
+ * yet — the card stays unpainted for `ENTRY_GRACE_MS` rather than drawing its loading shapes and
+ * then growing into the entry a moment later (Diego: a flicker, then it expands). `opening`: its
+ * first painted frame, the only one that plays the entrance; a repaint (the entry arriving, a
+ * state push) must not play it again.
+ */
+interface CardPhase {
+  awaiting: boolean
+  opening: boolean
+}
+
+/** The species each card place last painted, for `opening`. */
+const cardShown = new Map<'dex' | 'window', number>()
+
+function cardPhase(
+  where: 'dex' | 'window',
+  speciesID: number,
+  state: PanelState,
+  hasEntry: boolean,
+): CardPhase {
+  const awaiting = hasEntry && entryAwaited(state, speciesID)
+  const opening = !awaiting && cardShown.get(where) !== speciesID
+  if (!awaiting) cardShown.set(where, speciesID)
+  return { awaiting, opening }
+}
+
+function cardClasses(phase: CardPhase): string {
+  return `${phase.awaiting ? ' awaiting' : ''}${phase.opening ? ' opening' : ''}`
+}
+
+/** How long a card waits unpainted for an entry the core answers from its disk cache. */
+const ENTRY_GRACE_MS = 400
+
+/**
+ * True while the species' entry was asked for less than `ENTRY_GRACE_MS` ago and has not come.
+ * The grace ending repaints, so a slow entry (the network's first read) shows its loading shapes.
+ */
+function entryAwaited(state: PanelState, speciesID: number): boolean {
+  const key = `${state.language}:${speciesID}`
+  if (dexEntries.has(key)) return false
+  pokedexEntry(state, speciesID)
+  const left = (entryAskedAt.get(key) ?? 0) + ENTRY_GRACE_MS - performance.now()
+  if (left <= 0) return false
+  if (!graceTimers.has(key)) {
+    graceTimers.add(key)
+    setTimeout(() => {
+      graceTimers.delete(key)
+      invalidate('dex')
+      render()
+    }, left + 10)
+  }
+  return true
+}
+
+const entryAskedAt = new Map<string, number>()
+const graceTimers = new Set<string>()
 
 /**
  * A species' card — one component wherever a species is shown in full: the Pokédex detail, and
@@ -1612,6 +1675,7 @@ function speciesCard(
   sp: PanelState['dexSpecies'][number],
   close: string,
   inWindow = false,
+  phase: CardPhase = { awaiting: false, opening: false },
 ): string {
   const entries = state.dexLog
     .filter((e) => e.finalID === sp.id)
@@ -1628,7 +1692,7 @@ function speciesCard(
     .join('')
   const entry = pokedexEntry(state, sp.id)
   return `
-    <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
+    <div class="dex-detail${sp.isShiny ? ' shiny' : ''}${cardClasses(phase)}">
       <div class="dex-entry-head device-casing flush">
         <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(sp.id)}</span>
@@ -1676,6 +1740,7 @@ function pokedexEntry(state: PanelState, speciesID: number): PanelPokedexEntry |
   const entry = dexEntries.get(key)
   if (entry === undefined && !entriesAsked.has(key)) {
     entriesAsked.add(key)
+    entryAskedAt.set(key, performance.now())
     vscode.postMessage({ type: 'dexEntry', speciesID })
     // An answer that never comes (the worker restarting, a request lost) must not leave the
     // card loading for good (code review 9.12 #8): it says so, and the next change asks again.
@@ -3572,19 +3637,22 @@ function paintPCBox(): void {
       document.body.append(layer)
     }
     const close = `<button class="dex-close" data-modal-close aria-label="${escapeHTML(current.strings.close)}">✕</button>`
-    // The entry arriving from the host repaints the card, like a new state does.
-    const signature = `card:${cardOpen}:${JSON.stringify(sp)}:${dexEntries.has(`${current.language}:${cardOpen}`)}`
+    // The entry arriving from the host repaints the card, like a new state does — and so does
+    // the end of its grace, when it is drawn without the entry.
+    const phase = cardPhase('window', cardOpen, current, sp !== undefined)
+    const signature = `card:${cardOpen}:${JSON.stringify(sp)}:${dexEntries.has(`${current.language}:${cardOpen}`)}:${phase.awaiting}`
     if (layer.dataset['state'] !== signature) {
       layer.dataset['state'] = signature
       layer.innerHTML =
         sp === undefined
           ? ''
           : `<div class="pc-backdrop" data-modal-close></div>
-             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(current, sp, close, true)}</div>`
+             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(current, sp, close, true, phase)}</div>`
     }
     paintBars(layer)
     return
   }
+  cardShown.delete('window')
   if (!pcOpen || current === undefined) {
     layer?.replaceChildren()
     if (layer) delete layer.dataset['state']
@@ -3808,9 +3876,12 @@ function remember(key: string): void {
 /** One element's line with `shown` letters written; the whole line for the screen reader. */
 function paintDialogLine(el: HTMLElement, shown: number): void {
   const text = el.dataset['line'] ?? ''
+  // The letters not written yet are laid out, unseen, so the box is its full size from the
+  // first letter: a dialog growing a line as it writes reads as the card jumping (Diego).
+  const letters = [...text]
   el.innerHTML = `<span class="visually-hidden">${escapeHTML(text)}</span><span aria-hidden="true">${escapeHTML(
-    [...text].slice(0, shown).join(''),
-  )}</span>`
+    letters.slice(0, shown).join(''),
+  )}<span class="dialog-unwritten">${escapeHTML(letters.slice(shown).join(''))}</span></span>`
 }
 
 function stepDialog(): void {

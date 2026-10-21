@@ -975,7 +975,15 @@ button.action.secondary {
   border-radius: var(--r-l);
   background: var(--vscode-editor-background);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+/* The entrance plays on the card's first painted frame only: a repaint (its entry arriving, a
+   state push) must not play it again. */
+.dex-detail.opening {
   animation: sheet-up 180ms ease-out;
+}
+/* Waiting, unpainted, a moment for its entry rather than growing into it (`ENTRY_GRACE_MS`). */
+.dex-detail.awaiting {
+  visibility: hidden;
 }
 @keyframes sheet-up {
   from {
@@ -984,7 +992,7 @@ button.action.secondary {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dex-detail {
+  .dex-detail.opening {
     animation: none;
   }
 }
@@ -2667,6 +2675,9 @@ body.vscode-dark .exp-figures {
   line-height: 1.45;
   font-weight: 600;
 }
+.dialog-text .dialog-unwritten {
+  visibility: hidden;
+}
 .dialog-text.empty {
   display: none;
 }
@@ -4189,9 +4200,11 @@ button.btn.priced:not(:has(.verb)) .cost {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* The line stands centred in the card, as the games draw it (Diego). */
 .dex-line {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 4px;
 }
@@ -5897,6 +5910,8 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   z-index: 9;
   background: var(--scrim);
   backdrop-filter: blur(2px);
+}
+.dex-backdrop.opening {
   animation: veil-in var(--t-mid) ease-out;
 }
 @keyframes veil-in {
@@ -5905,7 +5920,7 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dex-backdrop {
+  .dex-backdrop.opening {
     animation: none;
   }
 }
