@@ -17,6 +17,7 @@ import type {
   PanelDrawer,
   PanelMoodMeter,
   PanelNews,
+  PanelPokedexEntry,
   PanelWildEncounter,
   PanelWalletChange,
 } from './protocol.js'
@@ -52,6 +53,13 @@ let dexSelected: number | undefined
 let dexQuery = ''
 /** The Pokédex grid's order (view state): number by default, as a Pokédex reads. */
 let dexSort: SortID = 'number'
+/**
+ * Pokédex entries (plan 9.7), asked of the host when a card first shows a species and kept for the
+ * session, by language — the entry is localised text. `entriesAsked` stops a repaint from asking
+ * twice while the answer is on its way.
+ */
+const dexEntries = new Map<string, PanelPokedexEntry>()
+const entriesAsked = new Set<string>()
 /** The Pokédex's sort turned around (plan 9.8): its natural direction flipped. */
 let dexReverse = false
 let dexOwnedOnly = false
@@ -1502,17 +1510,25 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
   const close = `<button class="dex-close" data-dex-close aria-label="${escapeHTML(state.strings.close)}">✕</button>`
 
   if (sp === undefined || sp.status === 'seen') {
+    // Seen, as in the games: the genus and the types, and the line saying the rest comes with
+    // obtaining it (plan 9.7). Never met: the number and the silhouette, nothing to ask for.
+    const entry = sp === undefined ? undefined : pokedexEntry(state, sp.id)
     return `
     <div class="dex-detail locked">
       <div class="dex-entry-head device-casing flush">
+        <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(dexSelected)}</span>
         <span class="dex-entry-name">?????</span>
         ${close}
       </div>
       <div class="dex-entry-body">
-        <div class="portrait"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
-        ${sp?.lure === undefined ? '' : lureOffer(sp.id, sp.lure)}
+        <div class="portrait dex-screen"><img src="${spriteURL(dexSelected, false, false)}" alt=""></div>
+        <div class="body">
+          ${sp === undefined ? '' : entryFacts(entry)}
+          ${sp?.lure === undefined ? '' : lureOffer(sp.id, sp.lure)}
+        </div>
       </div>
+      ${entry?.lockedText === undefined ? '' : `<p class="dex-entry-note desc">${escapeHTML(entry.lockedText)}</p>`}
     </div>`
   }
 
@@ -1525,7 +1541,12 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
  * registration bar drawn like the shiny one (full width, its line under it), the catch log, the
  * shiny road and the companion action. `close` is the caller's: each place closes its own way.
  */
-function speciesCard(state: PanelState, sp: PanelState['dexSpecies'][number], close: string): string {
+function speciesCard(
+  state: PanelState,
+  sp: PanelState['dexSpecies'][number],
+  close: string,
+  inWindow = false,
+): string {
   const entries = state.dexLog
     .filter((e) => e.finalID === sp.id)
     .slice(0, 4)
@@ -1539,20 +1560,28 @@ function speciesCard(state: PanelState, sp: PanelState['dexSpecies'][number], cl
       return `<div class="desc">${parts.map(escapeHTML).join(' · ')}${e.isShiny ? ' <span class="star-inline">★</span>' : ''}</div>`
     })
     .join('')
+  const entry = pokedexEntry(state, sp.id)
   return `
     <div class="dex-detail${sp.isShiny ? ' shiny' : ''}">
       <div class="dex-entry-head device-casing flush">
+        <span class="device-lens small" aria-hidden="true"></span>
         <span class="num">${dexNumber(sp.id)}</span>
         <span class="dex-entry-name">${sp.name === `#${sp.id}` ? '' : escapeHTML(sp.name)}${sp.isShiny ? ' <span class="star-inline" title="shiny">★</span>' : ''}</span>
         ${close}
       </div>
-      <div class="dex-entry-body">
-        <div class="portrait">
-          <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
-               data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+      <div class="dex-entry-scroll">
+        <div class="dex-entry-body">
+          <div class="portrait dex-screen">
+            <img src="${spriteURL(sp.id, sp.isShiny, true)}" alt=""
+                 data-fallback="${spriteURL(sp.id, sp.isShiny, false)}">
+          </div>
+          <div class="body">
+            ${entryFacts(entry)}
+            <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+          </div>
         </div>
-        <div class="body">
-          <span class="tag xs rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
+        ${entryPages(entry, sp.id, inWindow ? 'data-dex-open' : 'data-dex')}
+        <div class="dex-entry-game">
           <div class="reg-line">
             ${gameMeter(sp.percent, { surface: 'paper', ...(sp.status === 'registered' ? { tone: 'done' as const } : {}), label: sp.percentText })}
             <span class="desc">${escapeHTML(sp.percentText)}</span>
@@ -1569,6 +1598,96 @@ function speciesCard(state: PanelState, sp: PanelState['dexSpecies'][number], cl
         </div>
       </div>
     </div>`
+}
+
+/**
+ * The species' Pokédex entry for this language, or `undefined` while it is on its way — asked of
+ * the host the first time a card shows it (plan 9.7). The answer repaints the card.
+ */
+function pokedexEntry(state: PanelState, speciesID: number): PanelPokedexEntry | undefined {
+  const key = `${state.language}:${speciesID}`
+  const entry = dexEntries.get(key)
+  if (entry === undefined && !entriesAsked.has(key)) {
+    entriesAsked.add(key)
+    vscode.postMessage({ type: 'dexEntry', speciesID })
+  }
+  return entry
+}
+
+/** Beside the portrait: genus, types, and the size readouts — or their shapes while loading. */
+function entryFacts(entry: PanelPokedexEntry | undefined): string {
+  if (entry === undefined) {
+    return `<div class="dex-entry-loading" aria-hidden="true"><i></i><i></i><i></i></div>`
+  }
+  const types = entry.types
+    .map(
+      (type) =>
+        `<span class="tag xs type-badge type-${escapeHTML(type.id)}">${escapeHTML(type.label)}</span>`,
+    )
+    .join('')
+  const measure = (label: string, value: string | undefined): string =>
+    value === undefined
+      ? ''
+      : `<span class="dex-measure lcd"><span class="dex-measure-label">${escapeHTML(label)}</span><b>${escapeHTML(value)}</b></span>`
+  const measures =
+    measure(entry.heightLabel, entry.heightText) + measure(entry.weightLabel, entry.weightText)
+  return `${entry.genusText === undefined ? '' : `<div class="dex-genus">${escapeHTML(entry.genusText)}</div>`}
+    ${types === '' ? '' : `<div class="dex-types">${types}</div>`}
+    ${measures === '' ? '' : `<div class="dex-measures">${measures}</div>`}`
+}
+
+/**
+ * Under the portrait: the entry's text in the dialog box (written letter by letter, as the games
+ * do), the base stats as bars, and the evolution line — each form a way to its own card
+ * (`openAttr`: the Pokédex selects a cell, the window over Home reopens on it). A form never seen
+ * is a silhouette with no name and no way in.
+ */
+function entryPages(entry: PanelPokedexEntry | undefined, speciesID: number, openAttr: string): string {
+  if (entry === undefined) return ''
+  if (entry.unavailableText !== undefined) {
+    return `<p class="dex-entry-note desc">${escapeHTML(entry.unavailableText)}</p>`
+  }
+  const flavor =
+    entry.flavorText === undefined
+      ? ''
+      : `<div class="dialog dex-flavor"><p class="dialog-text" data-line-context="dex-${speciesID}">${escapeHTML(entry.flavorText)}</p></div>`
+  const locked =
+    entry.lockedText === undefined
+      ? ''
+      : `<p class="dex-entry-note desc">${escapeHTML(entry.lockedText)}</p>`
+  const stats =
+    entry.stats === undefined
+      ? ''
+      : `<div class="dex-entry-page">
+          <div class="dex-page-title"><span>${escapeHTML(entry.statsTitle)}</span><span>${escapeHTML(entry.statTotalText ?? '')}</span></div>
+          <div class="dex-stats">${entry.stats
+            .map(
+              (stat) => `<span class="dex-stat-label">${escapeHTML(stat.label)}</span>
+                <b class="dex-stat-value">${stat.value}</b>
+                ${gameMeter(stat.percent, { surface: 'paper', size: 'thin', hidden: true })}`,
+            )
+            .join('')}</div>
+        </div>`
+  const line =
+    entry.line.length < 2
+      ? ''
+      : `<div class="dex-entry-page">
+          <div class="dex-page-title"><span>${escapeHTML(entry.lineTitle)}</span></div>
+          <div class="dex-line">${entry.line
+            .map((form, i) => {
+              const arrow =
+                i > 0 && form.stage > entry.line[i - 1]!.stage
+                  ? '<span class="dex-line-arrow" aria-hidden="true">›</span>'
+                  : ''
+              const icon = `<img src="${menuIconURL(form.id)}" alt="" data-fallback="${spriteURL(form.id, false, false)}">`
+              const known = form.status !== 'unknown'
+              const tag = known && !form.isThis ? 'button' : 'span'
+              const open = known && !form.isThis ? ` ${openAttr}="${form.id}"` : ''
+              return `${arrow}<${tag} class="dex-line-form status-${form.status}${form.isThis ? ' this' : ''}"${open}>${icon}<span>${escapeHTML(form.name)}</span></${tag}>`
+            })
+            .join('')}</div>
+        </div>`
+  return `${flavor}${locked}${stats}${line}`
 }
 
 /**
@@ -3043,9 +3162,15 @@ window.addEventListener(
       state?: PanelState
       result?: PanelEncounterResult
       items?: PanelNews[]
+      entry?: PanelPokedexEntry
     }>,
   ) => {
     if (event.data.type === 'news' && Array.isArray(event.data.items)) queueNews(event.data.items)
+    if (event.data.type === 'dexEntry' && event.data.entry !== undefined && current !== undefined) {
+      dexEntries.set(`${current.language}:${event.data.entry.speciesID}`, event.data.entry)
+      invalidate('dex')
+      render()
+    }
     if (event.data.type === 'state' && event.data.state !== undefined) {
       noteWalletChange(event.data.state)
       // Mid-throw, the fresh state already shows the outcome (the Pokémon gone, the ball
@@ -3237,14 +3362,15 @@ function paintPCBox(): void {
       document.body.append(layer)
     }
     const close = `<button class="dex-close" data-modal-close aria-label="${escapeHTML(current.strings.close)}">✕</button>`
-    const signature = `card:${cardOpen}:${JSON.stringify(sp)}`
+    // The entry arriving from the host repaints the card, like a new state does.
+    const signature = `card:${cardOpen}:${JSON.stringify(sp)}:${dexEntries.has(`${current.language}:${cardOpen}`)}`
     if (layer.dataset['state'] !== signature) {
       layer.dataset['state'] = signature
       layer.innerHTML =
         sp === undefined
           ? ''
           : `<div class="pc-backdrop" data-modal-close></div>
-             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(current, sp, close)}</div>`
+             <div class="species-modal" role="dialog" aria-modal="true" aria-label="${escapeHTML(sp.name)}">${speciesCard(current, sp, close, true)}</div>`
     }
     paintBars(layer)
     return
@@ -3431,7 +3557,9 @@ function lineKey(el: HTMLElement, text: string): string {
 function typeDialogs(): void {
   // Only the open tab's dialogs: a line left in a hidden section would take the typewriter from
   // the one on screen.
-  for (const el of document.querySelectorAll<HTMLElement>('main > section:not([hidden]) .dialog-text')) {
+  for (const el of document.querySelectorAll<HTMLElement>(
+    'main > section:not([hidden]) .dialog-text, #pc-layer .dialog-text',
+  )) {
     const text = el.dataset['line'] ?? el.textContent ?? ''
     el.dataset['line'] = text
     const key = lineKey(el, text)
