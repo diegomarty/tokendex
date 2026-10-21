@@ -573,6 +573,19 @@ describe('the lure in the wild draw', () => {
     expect(target).toBe(60)
   })
 
+  // [trigger branch] Code review 9.12 #12: a first form already draws 75% of a two-form
+  // line (65% of three). A flat 60% made the lured species *less* likely inside its line; the
+  // lure only ever raises its stage.
+  it('never lowers the lured stage below its own odds', () => {
+    const lure = { speciesID: 20, baseID: 20, stageIndex: 0 }
+    let target = 0
+    for (let r = 0; r < 100; r++) {
+      if (chooseWildFromIndex([line(20)], missing, rng(0, r, 0), undefined, lure)!.speciesID === 20)
+        target++
+    }
+    expect(target).toBe(75)
+  })
+
   it('leaves the draw alone without a lure', () => {
     let evolved = 0
     for (let r = 0; r < 100; r++)

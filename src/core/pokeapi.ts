@@ -752,13 +752,14 @@ export function chooseWildFromIndex(
 }
 
 /**
- * The stage odds under a lure: its stage takes `stageShare` (60%), the other stages share the
- * rest in proportion to their own odds. Unchanged without a lure, or with one on a stage the
- * line does not have.
+ * The stage odds under a lure: its stage takes `stageShare` (60%) — or its own odds, when they
+ * are higher already (a first form's 65% or 75%; a lure never lowers its stage, code review
+ * 9.12) — and the other stages share the rest in proportion to their own odds. Unchanged without
+ * a lure, or with one on a stage the line does not have.
  */
 function luredOdds(odds: number[], lure: Pick<Lure, 'stageIndex'> | undefined): number[] {
   if (lure === undefined || lure.stageIndex >= odds.length || odds.length < 2) return odds
-  const share = 100 * EconomyBalance.lure.stageShare
+  const share = Math.max(100 * EconomyBalance.lure.stageShare, odds[lure.stageIndex]!)
   const others = odds.reduce((sum, o, i) => (i === lure.stageIndex ? sum : sum + o), 0)
   // No other stage has any odds to share the rest: the lured stage takes all of it.
   if (others <= 0) return odds.map((_, i) => (i === lure.stageIndex ? 100 : 0))
