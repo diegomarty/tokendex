@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { sourceRoot } from './repoRoot.js'
 import {
   APP_LANGUAGES,
   BALL_KINDS,
@@ -542,5 +543,17 @@ describe('medal counts', () => {
     expect(d.medalDescription('es', 'shiny-1')).toBe('Registra un shiny')
     expect(d.medalDescription('en', 'registered-1')).toBe('Register a species')
     expect(d.medalDescription('en', 'shiny-10')).toBe('Register 10 shinies')
+  })
+})
+
+describe('one way to write a figure', () => {
+  // Every percentage in the game reads "40%", the way `registrationText` and the Pokédex write it.
+  // A second spelling ("40 %") crept in once with a new phase; this reads the source so it cannot
+  // again, in any language or string.
+  it('writes no space before a percent sign', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(join(sourceRoot(), 'core/i18n/dispatch.ts'), 'utf8')
+    expect(source.match(/[\d}] %/g) ?? []).toEqual([])
   })
 })

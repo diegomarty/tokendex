@@ -1921,7 +1921,7 @@ export function incubatorSummary(
     return `${t(lang, '알 일시정지', 'Egg paused', 'タマゴ いちじていし', 'Huevo en pausa')} · ${stock}`
   }
   if (egg.percent !== undefined) {
-    return `${t(lang, `알 ${egg.percent}%`, `Egg at ${egg.percent}%`, `タマゴ ${egg.percent}%`, `Huevo al ${egg.percent} %`)} · ${stock}`
+    return `${t(lang, `알 ${egg.percent}%`, `Egg at ${egg.percent}%`, `タマゴ ${egg.percent}%`, `Huevo al ${egg.percent}%`)} · ${stock}`
   }
   return stock
 }
