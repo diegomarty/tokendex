@@ -124,6 +124,49 @@ function renderLine(items: PanelLineItem[]): string {
   return `<div class="evoline">${slots}</div>`
 }
 
+/**
+ * The game's one bar (docs/plans/08-ui-unificada.md): every meter the game draws — EXP,
+ * registration, mood, shiny, medals, challenges, the road to the next encounter — is this
+ * markup, and only its surface, tone, cells and size change. The official limits are the
+ * counter's and keep their native bar.
+ */
+interface MeterOptions {
+  /** What it sits on: the device's dark track, paper, the dialog box, or the red casing. */
+  surface: 'device' | 'paper' | 'dialog' | 'casing'
+  /** Fill colour; EXP blue unless said. `mood` takes the row's own `--tone`. */
+  tone?: 'shiny' | 'done' | 'mood'
+  /** Cut into cells, as the mood gauges are. */
+  cells?: 10
+  size?: 'thin' | 'large'
+  /** A glyph at the track's left (★, the game's "EXP"). Decoration: the label names the bar. */
+  glyph?: string
+  glyphClass?: string
+  /** Accessible name. Omitted when the bar repeats text beside it, which is then `hidden`. */
+  label?: string
+  hidden?: boolean
+  /** The track's content when it is not one fill (the new-entry card's base and gain). */
+  inner?: string
+}
+
+function gameMeter(percent: number, o: MeterOptions): string {
+  const classes = ['game-meter', `on-${o.surface}`]
+  if (o.tone !== undefined) classes.push(`tone-${o.tone}`)
+  if (o.cells !== undefined) classes.push(`cells-${o.cells}`)
+  if (o.size !== undefined) classes.push(o.size)
+  const glyph =
+    o.glyph === undefined
+      ? ''
+      : `<span class="game-meter-glyph${o.glyphClass === undefined ? '' : ` ${o.glyphClass}`}" aria-hidden="true">${escapeHTML(o.glyph)}</span>`
+  const name =
+    o.hidden === true
+      ? ' aria-hidden="true"'
+      : o.label === undefined
+        ? ''
+        : ` aria-label="${escapeHTML(o.label)}"`
+  const fill = o.inner ?? `<i data-fill="${percent}"></i>`
+  return `<div class="${classes.join(' ')}">${glyph}<div class="bar game-meter-track"${name}>${fill}</div></div>`
+}
+
 /** Name, meta line, progress bar and evolution strip — everything about the companion except
  *  its portrait, which in the unified Home lives inside the scene beside the trainer. */
 function companionInfo(state: PanelState): string {
@@ -148,7 +191,7 @@ function companionInfo(state: PanelState): string {
           <span>${escapeHTML(c.toNextText)}</span>
           <span class="pct">${c.expPercent}%</span>
         </div>
-        <div class="bar"><i data-fill="${c.expPercent}"></i></div>
+        ${gameMeter(c.expPercent, { surface: 'paper', size: 'thin', hidden: true })}
       </div>
       ${renderLine(c.line)}`
 }
@@ -535,10 +578,13 @@ function renderCatchBanner(): string {
         <div class="catch-body">
           <span class="catch-headline">${escapeHTML(banner.headline)}</span>
           <div class="catch-reg">
-            <div class="catch-reg-bar">
-              <i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
-              <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>
-            </div>
+            ${gameMeter(reg.toPercent, {
+              surface: 'device',
+              size: 'large',
+              hidden: true,
+              inner: `<i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
+                <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>`,
+            })}
           </div>
           <span class="catch-detail">${escapeHTML(banner.detail)}</span>
         </div>
@@ -663,7 +709,7 @@ function renderGame(state: PanelState): string {
             <span>${escapeHTML(wild.nextText)}</span>
             <span class="pct">${wild.progressPercent}%</span>
           </div>
-          <div class="bar"><i data-fill="${wild.progressPercent}"></i></div>
+          ${gameMeter(wild.progressPercent, { surface: 'dialog', hidden: true })}
           ${streakRow(wild.streak)}
         </div>`
       : ''
@@ -707,7 +753,7 @@ function wildPlate(encounter: PanelWildEncounter): string {
       ) => `<div class="meter ${escapeHTML(m.key)}" data-tone="${escapeHTML(m.tone)}" title="${escapeHTML(m.label)}">
         <i class="codicon codicon-${MOOD_ICONS[m.key]} meter-icon" aria-hidden="true"></i>
         <span class="meter-label">${escapeHTML(m.label)}</span>
-        <div class="bar gauge" aria-label="${escapeHTML(m.label)}"><i data-fill="${Math.max(0, Math.min(100, Math.round(m.percent)))}"></i></div>
+        ${gameMeter(Math.max(0, Math.min(100, Math.round(m.percent))), { surface: 'paper', tone: 'mood', cells: 10, label: m.label })}
       </div>`,
     )
     .join('')
@@ -788,10 +834,7 @@ function expBar(c: NonNullable<PanelState['companion']>): string {
   const figures = [c.expText, c.expLeftText].filter((t): t is string => t !== undefined && t !== '')
   const label = figures.length === 0 ? c.toNextText : figures.join(' · ')
   return `<div class="exp-meter">
-      <div class="exp-line">
-        <span class="exp-label" aria-hidden="true">EXP</span>
-        <div class="bar exp-track" aria-label="${escapeHTML(label)}"><i data-fill="${c.expPercent}"></i></div>
-      </div>
+      ${gameMeter(c.expPercent, { surface: 'device', glyph: 'EXP', glyphClass: 'label', label })}
       ${
         figures.length === 0
           ? `<div class="exp-figures"><span>${escapeHTML(c.toNextText)}</span></div>`
@@ -1177,7 +1220,7 @@ function renderDexDetail(state: PanelState, sp: PanelState['dexSpecies'][number]
         <div class="body">
           <span class="rarity-badge ${escapeHTML(sp.rarity)}">${escapeHTML(sp.rarityText)}</span>
           <div class="reg-line">
-            <div class="reg-bar${sp.status === 'registered' ? ' full' : ''}"><i data-fill="${sp.percent}"></i></div>
+            ${gameMeter(sp.percent, { surface: 'paper', ...(sp.status === 'registered' ? { tone: 'done' as const } : {}), label: sp.percentText })}
             <span class="desc">${escapeHTML(sp.percentText)}</span>
           </div>
           ${entries}
@@ -1236,10 +1279,7 @@ function shinySection(speciesID: number, bar: NonNullable<PanelDexSpecies['shiny
     )
     .join('')
   return `<div class="shiny-section">
-      <div class="game-meter on-device tone-shiny">
-        <span class="game-meter-glyph" aria-hidden="true">★</span>
-        <div class="bar game-meter-track" aria-label="${escapeHTML(bar.text)}"><i data-fill="${bar.percent}"></i></div>
-      </div>
+      ${gameMeter(bar.percent, { surface: 'device', tone: 'shiny', glyph: '★', label: bar.text })}
       <div class="desc shiny-text">${escapeHTML(bar.text)}</div>
       ${boosts === '' ? '' : `<div class="shiny-boosts lcd-actions">${boosts}</div>`}
       ${bar.boostHint === undefined ? '' : `<div class="desc shiny-hint">${escapeHTML(bar.boostHint)}</div>`}
@@ -1261,9 +1301,7 @@ function renderMedals(state: PanelState): string {
           <span class="medal-name">${escapeHTML(m.name)}</span>
           <span class="desc">${escapeHTML(m.description)}</span>
           <div class="medal-progress">
-            <div class="game-meter on-paper${m.earned ? ' tone-shiny' : ''}">
-              <div class="bar game-meter-track" aria-label="${escapeHTML(m.progressText)}"><i data-fill="${m.percent}"></i></div>
-            </div>
+            ${gameMeter(m.percent, { surface: 'paper', ...(m.earned ? { tone: 'shiny' as const } : {}), label: m.progressText })}
             <span class="medal-count">${escapeHTML(m.progressText)}</span>
           </div>
         </div>
@@ -1290,9 +1328,7 @@ function renderChallenges(state: PanelState): string {
             <span class="challenge-text">${escapeHTML(c.text)}</span>
           </div>
           <div class="challenge-progress">
-            <div class="game-meter on-paper${c.done ? ' tone-done' : ''}">
-              <div class="bar game-meter-track" aria-label="${escapeHTML(c.progressText)}"><i data-fill="${c.percent}"></i></div>
-            </div>
+            ${gameMeter(c.percent, { surface: 'paper', ...(c.done ? { tone: 'done' as const } : {}), label: c.progressText })}
             <span class="challenge-count">${escapeHTML(c.progressText)}</span>
           </div>
         </div>
@@ -1342,18 +1378,18 @@ function renderDex(state: PanelState): string {
         ? `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(region.name)} · ${escapeHTML(region.progressText)}</span>
-        <div class="bar"><i data-fill="${region.percent}"></i></div>
+        ${gameMeter(region.percent, { surface: 'casing', hidden: true })}
       </div>`
         : shinydex
           ? `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(summary.shinyProgressText)}</span>
-        <div class="bar shiny"><i data-fill="${summary.shinyPercent}"></i></div>
+        ${gameMeter(summary.shinyPercent, { surface: 'casing', tone: 'shiny', hidden: true })}
       </div>`
           : `
       <div class="dex-progress">
         <span class="desc">${escapeHTML(summary.progressText)}</span>
-        <div class="bar"><i data-fill="${summary.percent}"></i></div>
+        ${gameMeter(summary.percent, { surface: 'casing', hidden: true })}
       </div>`
     const hint =
       summary.owned === 0
@@ -1427,8 +1463,18 @@ function renderDex(state: PanelState): string {
           ${sp.name === `#${id}` ? '' : `<div class="name">${escapeHTML(sp.name)}</div>`}
           ${
             shinydex
-              ? `<div class="reg-bar shiny${sp.shiny === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.shinyBar?.percent ?? 0}"></i></div>`
-              : `<div class="reg-bar${sp.status === 'registered' ? ' full' : ''}" aria-hidden="true"><i data-fill="${sp.percent}"></i></div>`
+              ? gameMeter(sp.shinyBar?.percent ?? 0, {
+                  surface: 'paper',
+                  size: 'thin',
+                  tone: 'shiny',
+                  hidden: true,
+                })
+              : gameMeter(sp.percent, {
+                  surface: 'paper',
+                  size: 'thin',
+                  ...(sp.status === 'registered' ? { tone: 'done' as const } : {}),
+                  hidden: true,
+                })
           }
           ${sp.isCompanion ? `<div class="badge">${escapeHTML(state.strings.companionBadge)}</div>` : ''}
         </button>`)

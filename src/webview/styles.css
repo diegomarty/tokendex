@@ -34,6 +34,7 @@
   --dialog: #22304d;
   --dialog-text: #f5f7fb;
   --dialog-rule: #8ea6d6;
+  --dialog-fill: #7fd1ff;
 
   /* Device: the Pokédex's casing, lens and lights. */
   --device-casing: #d4433b;
@@ -1928,55 +1929,12 @@ body.paused .wild-scene[data-terrain] {
   grid-template-columns: 12px minmax(0, 1fr);
   column-gap: 3px;
 }
-/* Five cells in the short gauge, so a cell stays a cell and not a 2px hairline. */
-.meters.calm .bar.gauge {
-  -webkit-mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0 calc(20% - 2px),
-    transparent calc(20% - 2px) 20%
-  );
-  mask-image: repeating-linear-gradient(90deg, #000 0 calc(20% - 2px), transparent calc(20% - 2px) 20%);
-}
 .meters.calm .meter-label {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
-}
-.plate .bar {
-  height: 6px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--ink) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent);
-  overflow: hidden;
-}
-.plate .bar i {
-  display: block;
-  height: 100%;
-  border-radius: 0;
-  transition: width 500ms ease;
-}
-/* The cells are cut by a mask, so the fill keeps its one width from paintBars() and still lands
-   on cell edges only as far as the core's percent says. */
-.plate .bar.gauge {
-  height: 7px;
-  border: none;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ink) 14%, transparent);
-  -webkit-mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0 calc(10% - 2px),
-    transparent calc(10% - 2px) 10%
-  );
-  mask-image: repeating-linear-gradient(90deg, #000 0 calc(10% - 2px), transparent calc(10% - 2px) 10%);
-}
-.plate .bar.gauge i {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--tone) 70%, #fff) 0 35%,
-    var(--tone) 35% 100%
-  );
 }
 /* Loud when it matters: a high anger flickers, high nerves tremble, a high trust beats. */
 .meter.anger[data-tone='high'] .meter-icon {
@@ -2021,12 +1979,9 @@ body.paused .meter .meter-icon {
 }
 /* Forced colours paint the track as canvas: the empty cells keep a system grey of their own. */
 @media (forced-colors: active) {
-  .plate .bar.gauge {
+  .game-meter.cells-10 .game-meter-track {
     forced-color-adjust: none;
     background: GrayText;
-  }
-  .plate .bar.gauge i {
-    background: CanvasText !important;
   }
 }
 /* Details behind a glyph beside a plate's name — the wild one's temperament, your companion's
@@ -2050,36 +2005,6 @@ body.paused .meter .meter-icon {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
-}
-.exp-line {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 3px 2px 2px;
-  border: 1.5px solid var(--track-edge);
-  border-radius: 6px;
-  background: var(--track-casing);
-}
-.exp-label {
-  flex: none;
-  padding: 0 3px;
-  color: var(--exp-label);
-  font-size: 8.5px;
-  font-weight: 900;
-  font-style: italic;
-  letter-spacing: 0.04em;
-  line-height: 1;
-}
-.plate .bar.exp-track {
-  flex: 1;
-  height: 6px;
-  border: none;
-  border-radius: 3px;
-  background: var(--track);
-}
-.plate .bar.exp-track i {
-  border-radius: 3px;
-  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
 }
 /* Two figures on one line where they fit; in a narrow plate the second wraps under, right-aligned,
    rather than being cut. */
@@ -2287,41 +2212,6 @@ body.vscode-dark .exp-figures {
   align-items: center;
   gap: 6px;
   width: 100%;
-}
-/* The registration bar, drawn like the EXP bar: a dark bordered track with the blue in it. */
-.catch-reg-bar {
-  position: relative;
-  flex: 1;
-  min-width: 110px;
-  height: 10px;
-  border: 1.5px solid var(--track-edge);
-  border-radius: 6px;
-  background: var(--track);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.5);
-  overflow: hidden;
-}
-.catch-reg-bar .base {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: block;
-  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
-}
-/* The share just earned: placed by the webview at [from, to] of the bar (CSSOM, never inline).
-   It lights up white, then the blue fills it from the left. */
-.catch-reg-bar .gain {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  display: block;
-  background: rgb(255 255 255 / 0.8);
-  box-shadow: 0 0 6px rgb(255 255 255 / 0.9);
-  transform-origin: left center;
-}
-.catch-reg-bar .gain b {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(180deg, var(--exp-light) 0 35%, var(--exp) 35% 100%);
 }
 /* "+5% registered" as a tag, the green of a good outcome. */
 .catch-banner.rich .catch-detail {
@@ -2544,12 +2434,6 @@ body.vscode-dark .exp-figures {
 .dialog .progress .meta {
   font-size: var(--fs-s);
   opacity: 0.85;
-}
-.dialog .bar {
-  background: rgba(255, 255, 255, 0.16);
-}
-.dialog .bar i {
-  background: #7fd1ff;
 }
 .dialog .streak {
   opacity: 0.9;
@@ -3136,7 +3020,7 @@ body.paused .stage.celebrate img {
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
 }
-.dex-progress .bar {
+.dex-progress .game-meter {
   width: 100%;
 }
 
@@ -3841,12 +3725,6 @@ body.compact .row-stat .label {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-.dex-head .dex-progress .bar {
-  background: rgba(255, 255, 255, 0.25);
-}
-.dex-head .dex-progress .bar i {
-  background: #fff;
-}
 
 /* A caught species: a lifted tile, a Poké Ball mark in its corner and its rarity along the
    bottom edge. The silhouettes stay flat, which is what makes the caught ones read as caught. */
@@ -4340,23 +4218,6 @@ body.paused .wallet-badge .coin {
 .dex .cell.locked.seen .num {
   opacity: 0.7;
 }
-/* The registration bar, thin, above the rarity edge. Full reads as registered at a glance. */
-.reg-bar {
-  height: 4px;
-  margin: 4px 8px 0;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
-  overflow: hidden;
-}
-.reg-bar i {
-  display: block;
-  height: 100%;
-  background: var(--exp);
-  transition: width 400ms ease;
-}
-.reg-bar.full i {
-  background: var(--trust);
-}
 .dex .cell.status-registered .name {
   font-weight: 600;
   opacity: 1;
@@ -4373,11 +4234,6 @@ body.paused .wallet-badge .coin {
   align-items: center;
   gap: 8px;
   margin: 6px 0 2px;
-}
-.dex-detail .reg-line .reg-bar {
-  flex: 1;
-  height: 6px;
-  margin: 0;
 }
 .dex-detail .dex-choose {
   margin-top: 8px;
@@ -4522,9 +4378,6 @@ body.paused .wallet-badge .coin {
   .starter[aria-pressed='true'] {
     border-color: Highlight;
   }
-  .reg-bar i {
-    background: CanvasText;
-  }
 }
 
 /* ---- Settings: a switch ----
@@ -4609,39 +4462,26 @@ body.paused .wallet-badge .coin {
   }
 }
 
-/* ---- the game meter (plan 08: one bar for the game) ----
-   A dark bordered track with a glyph at its left and the fill in the meter's tone: the EXP bar's
-   own look, as a piece. The shiny bar is its first user; EXP and registration move onto it. */
+/* ---- the game meter ----
+   The game's one bar (plan 08), drawn by `gameMeter()` in main.ts: a track with the fill in two
+   tones of its colour. Four surfaces it can sit on, a few tones, cells, two sizes — and that is
+   every bar the game has. The official limits are the counter's and keep their native bar. */
 .game-meter {
   --meter-tone: var(--exp);
-  --meter-tone-light: #8cc4ff;
+  --meter-tone-light: var(--exp-light);
+  --meter-track: var(--track);
   display: flex;
   align-items: center;
   gap: 3px;
 }
-.game-meter.on-device {
-  padding: 2px 3px 2px 2px;
-  border: 1.5px solid var(--track-edge);
-  border-radius: 6px;
-  background: var(--track-casing);
-}
-.game-meter.tone-shiny {
-  --meter-tone: #e0a91c;
-  --meter-tone-light: #ffe58a;
-}
-.game-meter-glyph {
-  flex: none;
-  padding: 0 3px;
-  color: var(--meter-tone-light);
-  font-size: var(--fs-xs);
-  line-height: 1;
-}
 .game-meter .bar.game-meter-track {
+  position: relative;
   flex: 1;
   height: 7px;
+  margin: 0;
   border: none;
   border-radius: 3px;
-  background: var(--track);
+  background: var(--meter-track);
   overflow: hidden;
 }
 .game-meter .bar.game-meter-track i {
@@ -4650,6 +4490,126 @@ body.paused .wallet-badge .coin {
   border-radius: 3px;
   background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
   transition: width 500ms ease;
+}
+/* Surfaces. On the device: the dark track set in its own casing, as the EXP bar. */
+.game-meter.on-device {
+  padding: 2px 3px 2px 2px;
+  border: 1.5px solid var(--track-edge);
+  border-radius: 6px;
+  background: var(--track-casing);
+}
+/* On paper: a track a shade of the ink, so it follows the theme with the card it sits on. */
+.game-meter.on-paper {
+  --meter-track: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+.game-meter.on-paper .bar.game-meter-track {
+  height: 6px;
+}
+/* In the dialog box: light on its blue. */
+.game-meter.on-dialog {
+  --meter-track: color-mix(in srgb, var(--dialog-text) 16%, transparent);
+  --meter-tone: var(--dialog-fill);
+  --meter-tone-light: var(--dialog-fill);
+}
+.game-meter.on-dialog .bar.game-meter-track {
+  height: 4px;
+}
+/* On the red casing: white, like the device's own counters. */
+.game-meter.on-casing {
+  --meter-track: rgb(255 255 255 / 0.25);
+  --meter-tone: var(--on-fill);
+  --meter-tone-light: var(--on-fill);
+}
+.game-meter.on-casing .bar.game-meter-track {
+  height: 4px;
+}
+/* Sizes. */
+.game-meter.thin .bar.game-meter-track {
+  height: 4px;
+}
+.game-meter.large .bar.game-meter-track {
+  height: 9px;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.5);
+}
+/* Tones. */
+.game-meter.tone-shiny {
+  --meter-tone: var(--shiny);
+  --meter-tone-light: var(--shiny-light);
+}
+.game-meter.tone-done {
+  --meter-tone: var(--gain);
+  --meter-tone-light: var(--trust);
+}
+/* A mood row's own colour (`--tone` on `.meter`). */
+.game-meter.tone-mood {
+  --meter-tone: var(--tone);
+  --meter-tone-light: color-mix(in srgb, var(--tone) 70%, #fff);
+}
+/* Cells: the track cut by a mask, so the fill keeps the one width paintBars() gives it and
+   lands on cell edges only as far as the core's percent says. */
+.game-meter.cells-10 .bar.game-meter-track {
+  border-radius: 2px;
+  -webkit-mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 calc(10% - 2px),
+    transparent calc(10% - 2px) 10%
+  );
+  mask-image: repeating-linear-gradient(90deg, #000 0 calc(10% - 2px), transparent calc(10% - 2px) 10%);
+}
+/* Five cells in the calm mood's short gauge, so a cell stays a cell and not a 2px hairline. */
+.meters.calm .game-meter.cells-10 .bar.game-meter-track {
+  -webkit-mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 calc(20% - 2px),
+    transparent calc(20% - 2px) 20%
+  );
+  mask-image: repeating-linear-gradient(90deg, #000 0 calc(20% - 2px), transparent calc(20% - 2px) 20%);
+}
+/* A glyph at the track's left: ★, or the games' own "EXP" label. */
+.game-meter-glyph {
+  flex: none;
+  padding: 0 3px;
+  color: var(--meter-tone-light);
+  font-size: var(--fs-xs);
+  line-height: 1;
+}
+.game-meter-glyph.label {
+  color: var(--exp-label);
+  font-size: 8.5px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.04em;
+}
+/* A gain on the track — the new entry's share: the bar that was (base), and the part just
+   earned, lit white, then filled in the meter's tone from the left. Placed by `placeSpans()`. */
+.game-meter-track .base {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
+}
+.game-meter-track .gain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  background: rgb(255 255 255 / 0.8);
+  box-shadow: 0 0 6px rgb(255 255 255 / 0.9);
+  transform-origin: left center;
+}
+.game-meter-track .gain b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, var(--meter-tone-light) 0 35%, var(--meter-tone) 35% 100%);
+}
+/* Where meters sit: under a Pokédex cell, beside a detail's percentage, along a catch line. */
+.dex .cell .game-meter {
+  margin: 4px 8px 0;
+}
+.dex-detail .reg-line .game-meter,
+.catch-reg .game-meter {
+  flex: 1;
 }
 
 /* ---- the shiny road in the Pokédex detail ---- */
@@ -4673,22 +4633,11 @@ body.paused .wallet-badge .coin {
 .shiny-hint {
   font-style: italic;
 }
-/* The Shinydex cell's bar: the same thin bar, in gold. */
-.reg-bar.shiny i {
-  background: var(--shiny);
-}
-.reg-bar.shiny.full i {
-  background: linear-gradient(90deg, var(--shiny), var(--shiny-light), var(--shiny));
-}
 @media (forced-colors: active) {
   .game-meter.on-device {
     forced-color-adjust: none;
     border-color: CanvasText;
   }
-}
-/* The Shinydex completion, on the casing like the Pokédex's, in gold. */
-.dex-head .dex-progress .bar.shiny i {
-  background: linear-gradient(90deg, var(--shiny-light), var(--shiny));
 }
 
 /* ---- the lure ----
@@ -4728,17 +4677,6 @@ body.paused .wallet-badge .coin {
 }
 .lure-text {
   min-width: 0;
-}
-
-/* The game meter on paper: the track a shade of the ink, for bars that sit on a card. */
-.game-meter.on-paper .bar.game-meter-track {
-  height: 6px;
-  background: color-mix(in srgb, var(--ink) 14%, transparent);
-}
-/* Done: the green of a good outcome. */
-.game-meter.tone-done {
-  --meter-tone: var(--gain);
-  --meter-tone-light: var(--trust);
 }
 
 /* ---- regions: the Pokédex narrowed to one generation ---- */

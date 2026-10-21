@@ -77,6 +77,16 @@ describe('the stylesheet', () => {
     expect(twice).toEqual([])
   })
 
+  // [trigger branch] One bar for the game: a bar drawn any other way is a second look for the
+  // same idea. The only `.bar` the webview may write by hand is the counter's (official limits);
+  // everything else goes through `gameMeter()`.
+  it('draws every game bar through gameMeter', () => {
+    for (const retired of ['.reg-bar', '.exp-track', '.catch-reg-bar', '.bar.gauge', '.exp-line'])
+      expect(CODE, retired).not.toContain(retired)
+    const handWritten = [...SCRIPT.matchAll(/class="bar"/g)].length
+    expect(handWritten, 'hand-written `class="bar"` in main.ts (the limits are the one allowed)').toBe(1)
+  })
+
   it('names the three layers at the top, before any rule', () => {
     const tokens = CSS.indexOf('---- tokens ----')
     expect(tokens).toBeGreaterThan(-1)
