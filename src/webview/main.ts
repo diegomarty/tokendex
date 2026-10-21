@@ -10,6 +10,7 @@
 import type {
   PanelLineItem,
   PanelShopAction,
+  PanelShopPack,
   PanelState,
   PanelEncounterResult,
   PanelDexSpecies,
@@ -59,6 +60,8 @@ let dexRegion: string | undefined
  * reaches the host, and it survives a reload through `vscode.setState`.
  */
 const openDrawers = new Set<string>()
+/** The shop's pack multiplier per row: an index into the core's `packs`. View state only. */
+const packSteps = new Map<string, number>()
 /** The shop opened its balls once, on its first showing (view state). */
 let shopDrawersSeen = false
 /** Each shop drawer's icon: a game item that stands for its group. */
@@ -1131,16 +1134,26 @@ function commandMenu(state: PanelState, encounter: PanelWildEncounter): string {
  */
 function renderWildQueue(state: PanelState): string {
   const wild = state.wild
+  // Plan 9.4: the one on stage is in the scene above, so the drawer starts behind it — the next
+  // few, a full row each, then one row counting the rest.
+  const more =
+    wild.queueMoreText === undefined
+      ? ''
+      : `<li class="queue-more">${escapeHTML(wild.queueMoreText)}</li>`
   const queue = wild.encounters
+    .slice(1, 1 + wild.queueShown)
     .map(
+      // The games' party icon: a list's own sprite, whole at its native size, where the 96px
+      // sheet cropped to the row cut heads and tails off. A shiny says so with its ✨.
       (e) => `<li class="queue-mon">
-          <img src="${spriteURL(e.speciesID, e.isShiny, false)}" alt="">
+          <img class="mon-icon" src="${menuIconURL(e.speciesID)}" alt=""
+               data-fallback="${spriteURL(e.speciesID, e.isShiny, false)}">
           <span class="queue-name">${escapeHTML(e.name)}${e.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
           <span class="tag xs rarity-badge ${escapeHTML(e.rarity)}">${escapeHTML(e.rarityText)}</span>
         </li>`,
     )
     .join('')
-  return `${queue === '' ? '' : `<ul class="wild-queue" aria-label="${escapeHTML(wild.waitingText)}">${queue}</ul>`}
+  return `${queue === '' ? '' : `<ul class="wild-queue" aria-label="${escapeHTML(wild.waitingText)}">${queue}${more}</ul>`}
     ${renderLure(state)}
     <div class="wild-next">
       <span class="wild-next-text">${escapeHTML(wild.nextText)}</span>
@@ -1263,6 +1276,50 @@ function shopAction(
         </button>`
 }
 
+/**
+ * The ten-pack with its multiplier (plan 09 §9.1): ▲▼ beside the ×10 walk the core's steps,
+ * ×10…×100, and the button becomes that step — its id, title, price, word and saving, every one
+ * the core's. Nothing is computed here. The arrow keys step it too; a purchase sets it back.
+ */
+function packStepper(
+  state: PanelState,
+  item: PanelState['shop'][number],
+  packs: PanelShopPack[],
+  withWord: boolean,
+): string {
+  const index = Math.min(packSteps.get(item.id) ?? 0, packs.length - 1)
+  const step = packs[index] ?? packs[0]
+  if (step === undefined) return ''
+  const up = packs[index + 1]
+  const down = packs[index - 1]
+  const button = shopAction(state, item, step, !item.owned, withWord).replace(
+    '<button class="btn',
+    `<button id="pack-${escapeHTML(item.id)}" data-pack-keys="${escapeHTML(item.id)}" class="btn`,
+  )
+  return `<div class="pack-stepper" data-pack-row="${escapeHTML(item.id)}">
+      ${button}
+      <div class="stepper" role="group">
+        <button id="pack-up-${escapeHTML(item.id)}" class="step up" data-pack-step="${escapeHTML(item.id)}" data-step="1"
+          aria-label="${escapeHTML(up?.text ?? step.text)}" ${up === undefined ? 'disabled' : ''}>
+          <i class="codicon codicon-triangle-up" aria-hidden="true"></i></button>
+        <button id="pack-down-${escapeHTML(item.id)}" class="step down" data-pack-step="${escapeHTML(item.id)}" data-step="-1"
+          aria-label="${escapeHTML(down?.text ?? step.text)}" ${down === undefined ? 'disabled' : ''}>
+          <i class="codicon codicon-triangle-down" aria-hidden="true"></i></button>
+      </div>
+    </div>`
+}
+
+/** Moves a row's pack multiplier one step, within the core's steps. */
+function stepPack(state: PanelState, itemID: string, by: number): void {
+  const packs = state.shop.find((i) => i.id === itemID)?.actions.find((a) => a.packs !== undefined)?.packs
+  if (packs === undefined) return
+  const next = Math.max(0, Math.min(packs.length - 1, (packSteps.get(itemID) ?? 0) + by))
+  if (next === (packSteps.get(itemID) ?? 0)) return
+  packSteps.set(itemID, next)
+  invalidate('shop')
+  render()
+}
+
 function renderShop(state: PanelState): string {
   if (state.shop.length === 0) return `<p class="empty">${escapeHTML(state.strings.empty)}</p>`
 
@@ -1291,7 +1348,11 @@ function renderShop(state: PanelState): string {
         ${itemIcon(item.sprite, item.emoji)}
         ${body}
         <div class="buys">${item.actions
-          .map((a) => shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1))
+          .map((a) =>
+            a.packs === undefined || a.packs.length < 2
+              ? shopAction(state, item, a, !item.owned, item.owned || item.actions.length > 1)
+              : packStepper(state, item, a.packs, item.owned || item.actions.length > 1),
+          )
           .join('')}</div>
       </div>`
   }
@@ -1368,18 +1429,29 @@ function renderBag(state: PanelState): string {
     { id: 'berries', label: state.strings.shopBerries },
     { id: 'items', label: state.strings.shopItems },
   ]
+  // Plan 9.6: no pocket is ever disabled. The bag opens on the first one with something in it,
+  // and an empty pocket, opened, says how it fills — the way out, not a greyed tab.
   const filled = pockets.filter((p) => state.bag.some((item) => item.pocket === p.id))
-  if (bagPocket === undefined || !filled.some((p) => p.id === bagPocket)) bagPocket = filled[0]?.id
+  bagPocket ??= filled[0]?.id ?? 'balls'
   const items = state.bag.filter((item) => item.pocket === bagPocket)
   const selected = items.find((item) => item.id === bagSelected) ?? items[0]
   bagSelected = selected?.id
 
   const tabs = pockets
-    .map((p) => {
-      const empty = !filled.some((f) => f.id === p.id)
-      return `<button class="pocket" data-pocket="${p.id}" aria-pressed="${p.id === bagPocket}" ${empty ? 'disabled' : ''}>${escapeHTML(p.label)}</button>`
-    })
+    .map(
+      (p) =>
+        `<button class="pocket" data-pocket="${p.id}" aria-pressed="${p.id === bagPocket}">${escapeHTML(p.label)}</button>`,
+    )
     .join('')
+  if (items.length === 0) {
+    return `<div class="bag">
+      <div class="pockets" role="group">${tabs}</div>
+      ${emptyState(
+        state.strings.emptyPocket[bagPocket],
+        `<button class="btn primary" data-tab="shop">${escapeHTML(state.strings.emptyBag.action)}</button>`,
+      )}
+    </div>`
+  }
   const rows = items
     .map(
       (
@@ -2442,9 +2514,20 @@ document.addEventListener('click', (event) => {
     }
     return
   }
+  const packStep = target.closest<HTMLElement>('[data-pack-step]')
+  if (packStep !== null && current !== undefined) {
+    stepPack(current, packStep.dataset['packStep'] ?? '', Number(packStep.dataset['step']) || 0)
+    return
+  }
   const buy = target.closest('[data-buy]')
   if (buy !== null) {
     const el = buy as HTMLElement
+    // A purchase sets the multiplier back to ×10: the next one starts from the pack.
+    const packRow = el.closest<HTMLElement>('[data-pack-row]')?.dataset['packRow']
+    if (packRow !== undefined && packSteps.delete(packRow)) {
+      invalidate('shop')
+      queueMicrotask(render)
+    }
     // The confirmation is a native VS Code modal, raised on the extension side: a webview
     // dialog would be trivially dismissable and this spends real progress.
     vscode.postMessage({
@@ -2629,6 +2712,15 @@ function applyDexQuery(field: HTMLInputElement): void {
   restored.focus()
   if (caret !== null) restored.setSelectionRange(caret, caret)
 }
+
+// The pack button steps its multiplier with the arrow keys, as a spin button does.
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+  const row = (event.target as HTMLElement | null)?.closest?.<HTMLElement>('[data-pack-keys]')
+  if (row === null || row === undefined || current === undefined) return
+  event.preventDefault()
+  stepPack(current, row.dataset['packKeys'] ?? '', event.key === 'ArrowUp' ? 1 : -1)
+})
 
 document.addEventListener('input', (event) => {
   const target = event.target as HTMLElement
