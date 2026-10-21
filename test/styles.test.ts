@@ -144,6 +144,13 @@ describe('the stylesheet', () => {
     expect([...SCRIPT.matchAll(/expMeter\(/g)].length).toBeGreaterThanOrEqual(7)
   })
 
+  // [trigger branch] Plan 9.12 #9. With the registry, the species of the Pokémon being raised is
+  // the player's for good; a dashed card said "not yours yet", the "seen" look, on something owned.
+  it('draws no "raising" marker on a Pokédex card', () => {
+    expect(CODE).not.toMatch(/\.dex \.cell\.raising/)
+    expect(SCRIPT).not.toMatch(/isRaising \? ' raising'/)
+  })
+
   // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
   // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
   it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {

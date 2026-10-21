@@ -691,7 +691,9 @@ button.action.secondary {
    the bar's line — with the rarity along its foot. Not had yet: the games' silhouette on a dark
    screen; met: on a lit one. */
 .dex-scroll {
-  max-height: calc(100vh - var(--scroll-top, 0px));
+  /* Never under 240px: in a short panel (the bottom one, ~300px) the window left under the head
+     is next to nothing, so the list keeps a usable height and the page scrolls to it instead. */
+  max-height: max(240px, calc(100vh - var(--scroll-top, 0px)));
   margin: 0 -4px;
   padding: 2px 4px 8px;
   overflow-y: auto;
@@ -700,7 +702,8 @@ button.action.secondary {
 }
 .dex {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  /* 108px is the narrowest card whose screen still holds the 96px sheet whole, at ×1. */
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
   gap: 8px;
 }
 .dex .cell {
@@ -709,7 +712,7 @@ button.action.secondary {
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: 5px 6px 7px;
+  padding: 5px 4px 7px;
   border: 2px solid var(--paper-edge);
   border-radius: var(--r-l);
   background: var(--paper);
@@ -741,12 +744,14 @@ button.action.secondary {
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
 }
-/* The device's little screen, the catch card's own: the sprite at native size in its window. */
+/* The device's little screen, as tall as the sprite sheet (96px) so no Pokémon is cut (Diego):
+   the sprite at its native size wherever the column is wide enough, and scaled down to the
+   column — whole — where it is not. */
 .dex .cell-screen {
   position: relative;
   display: grid;
   place-items: center;
-  height: 64px;
+  height: 100px;
   border: 2px solid var(--lcd-bezel);
   border-radius: 4px 4px 4px 12px;
   background:
@@ -757,9 +762,10 @@ button.action.secondary {
   overflow: hidden;
 }
 .dex .cell-screen img {
-  width: 64px;
-  height: 64px;
-  object-fit: none;
+  width: 100%;
+  max-width: 96px;
+  height: 96px;
+  object-fit: scale-down;
   image-rendering: pixelated;
 }
 .dex .cell .name {
@@ -827,11 +833,6 @@ button.action.secondary {
   box-shadow:
     inset 0 0 0 1px var(--exp),
     0 2px 0 var(--paper-edge);
-}
-/* A species held only by the Pokémon being raised is not permanent yet, and saying so stops a
-   shrinking count from looking like data loss. */
-.dex .cell.raising {
-  border-style: dashed;
 }
 .dex .cell.status-registered .name {
   color: var(--ink);

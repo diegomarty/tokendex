@@ -2036,7 +2036,7 @@ function dexCell(
     ? `<span class="tag xs state cell-line">${escapeHTML(state.strings.companionBadge)}</span>`
     : `<span class="cell-line">${escapeHTML(shinydex ? (sp.shinyBar?.text ?? sp.percentText) : sp.percentText)}</span>`
   return `
-        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${sp.isRaising ? ' raising' : ''}${selected}"
+        <button class="cell owned status-${sp.status} rarity-${escapeHTML(sp.rarity)}${shiny ? ' shiny' : ''}${sp.isCompanion ? ' companion' : ''}${selected}"
                 data-dex="${id}"${tabIndex} title="${escapeHTML(sp.name)} · ${escapeHTML(sp.percentText)}">
           <span class="cell-top">
             <span class="num">${dexNumber(id)}</span>
@@ -3647,10 +3647,9 @@ function typeDialogs(): void {
     el.dataset['lineKey'] = key
     if (text === '' || motionOff() || writtenLines.has(key)) continue
     if (typing === undefined || typing.key !== key) {
-      if (typing !== undefined) {
-        clearInterval(typing.timer)
-        writtenLines.add(typing.key)
-      }
+      // The line being written gives the typewriter up whole, never half-written: two dialogs on
+      // screen at once (Home's, and the species card's over it) each end readable (plan 9.12).
+      finishDialog()
       typing = { key, text, shown: 0, timer: setInterval(stepDialog, 1000 / DIALOG_CHARS_PER_SECOND) }
     }
     paintDialogLine(el, typing.shown)
