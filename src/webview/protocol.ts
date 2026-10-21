@@ -192,6 +192,11 @@ export interface PanelPCBox {
   searchPlaceholder: string
   /** Its sorts, the first the default (the order `items` comes in): progress, number, rarity. */
   sorts: { id: 'progress' | 'number' | 'rarity'; label: string }[]
+  /**
+   * Status chips (plan 9.8), beside the Pokédex's region chips (`dexSummary.regions`): an item
+   * matches `unregistered` / `registered` by `registered`, and `shiny` by `shinyRegistered`.
+   */
+  filters: { id: 'unregistered' | 'registered' | 'shiny'; label: string; count: number }[]
 }
 
 export interface PanelPCBoxItem {
@@ -204,6 +209,8 @@ export interface PanelPCBoxItem {
   /** "45% registered" / "Registered". */
   percentText: string
   registered: boolean
+  /** Its shiny form is registered: what the Shiny chip filters on. */
+  shinyRegistered: boolean
   /** 0 common … 3 legendary: what the rarity sort orders by. */
   rarityRank: number
 }
@@ -654,6 +661,9 @@ export interface PanelStrings {
   emptyBag: PanelEmpty & { action: string }
   /** Each bag pocket empty (plan 9.6: a pocket is never disabled); the way out is `emptyBag.action`. */
   emptyPocket: Record<'balls' | 'berries' | 'items', PanelEmpty>
+  /** The sort direction toggle beside every sort (plan 9.8), named for the order it shows. */
+  sortAscending: string
+  sortDescending: string
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */

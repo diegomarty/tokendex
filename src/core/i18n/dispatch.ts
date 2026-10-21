@@ -2026,6 +2026,28 @@ export function pcSortLabel(lang: AppLanguage, sort: 'progress' | 'number' | 'ra
   }
 }
 
+/** The PC box's status chips (plan 9.8). */
+export function pcFilterLabel(
+  lang: AppLanguage,
+  filter: 'unregistered' | 'registered' | 'shiny',
+): string {
+  switch (filter) {
+    case 'unregistered':
+      return t(lang, '미등록', 'Not registered', 'みとうろく', 'Sin registrar')
+    case 'registered':
+      return t(lang, '등록 완료', 'Registered', 'とうろくずみ', 'Registrados')
+    case 'shiny':
+      return t(lang, '색이 다른', 'Shiny', 'いろちがい', 'Shiny')
+  }
+}
+
+/** The sort direction toggle: the order it is showing, for its accessible name and tooltip. */
+export function sortDirectionLabel(lang: AppLanguage, direction: 'ascending' | 'descending'): string {
+  return direction === 'ascending'
+    ? t(lang, '오름차순', 'Ascending', 'しょうじゅん', 'Ascendente')
+    : t(lang, '내림차순', 'Descending', 'こうじゅん', 'Descendente')
+}
+
 /** The incubator with an empty stock: how the next egg arrives. */
 export function eggsEmptyText(lang: AppLanguage): string {
   return t(

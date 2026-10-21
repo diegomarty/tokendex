@@ -891,9 +891,16 @@ function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): Pan
       percent: sp.percent,
       percentText: sp.percentText,
       registered: sp.status === 'registered',
+      shinyRegistered: sp.shiny === 'registered',
       rarityRank: sp.rarityRank,
     }))
     .sort((a, b) => Number(a.registered) - Number(b.registered) || b.percent - a.percent || a.id - b.id)
+  const matches: Record<PanelPCBox['filters'][number]['id'], (item: (typeof items)[number]) => boolean> =
+    {
+      unregistered: (item) => !item.registered,
+      registered: (item) => item.registered,
+      shiny: (item) => item.shinyRegistered,
+    }
   return {
     title: D.pcBoxTitle(lang),
     items,
@@ -902,6 +909,11 @@ function pcBoxPanel(species: readonly PanelDexSpecies[], lang: AppLanguage): Pan
     sorts: (['progress', 'number', 'rarity'] as const).map((id) => ({
       id,
       label: D.pcSortLabel(lang, id),
+    })),
+    filters: (['unregistered', 'registered', 'shiny'] as const).map((id) => ({
+      id,
+      label: D.pcFilterLabel(lang, id),
+      count: items.filter(matches[id]).length,
     })),
   }
 }

@@ -1350,6 +1350,38 @@ describe('the PC box', () => {
   })
 })
 
+describe('the PC box filters (plan 9.8)', () => {
+  // Registered, still to register, and shiny: each chip labelled and counted here, and each item
+  // carrying what the chip filters on, so the webview never decides which is which.
+  it('offers status chips with their counts, and a direction for every sort', () => {
+    const s = state({
+      active: activeMon,
+      species: {
+        4: speciesEntry({ unlocked: true, xp: 2, threshold: 10 }),
+        7: speciesEntry({ unlocked: true }),
+        1: speciesEntry({ unlocked: true, registered: true }),
+        150: speciesEntry({ unlocked: true, registered: true, shinyRegistered: true }),
+      },
+    })
+    const panel = build({ state: s })
+    const box = panel.pcBox
+    expect(box.filters.map((f) => [f.id, f.count])).toEqual([
+      ['unregistered', 2],
+      ['registered', 2],
+      ['shiny', 1],
+    ])
+    expect(box.filters.map((f) => f.label)).toEqual([
+      D.pcFilterLabel('en', 'unregistered'),
+      D.pcFilterLabel('en', 'registered'),
+      D.pcFilterLabel('en', 'shiny'),
+    ])
+    expect(box.items.find((i) => i.id === 150)).toMatchObject({ registered: true, shinyRegistered: true })
+    expect(box.items.find((i) => i.id === 1)).toMatchObject({ shinyRegistered: false })
+    expect(panel.strings.sortAscending).toBe(D.sortDirectionLabel('en', 'ascending'))
+    expect(panel.strings.sortDescending).toBe(D.sortDirectionLabel('en', 'descending'))
+  })
+})
+
 describe('the Pokédex sorts', () => {
   // The Pokédex reads in number order by default, then progress and rarity — the same options
   // as the PC box, its own default first; each cell carries its rarity rank to sort by.

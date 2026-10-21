@@ -39,6 +39,7 @@ import {
   keepCompletedLabel,
   keepCompletedHint,
   wildCaughtBadge,
+  sortDirectionLabel,
 } from './dispatch.js'
 import { s } from './strings.js'
 
@@ -78,6 +79,8 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     emptyShinydex: emptyState(lang, 'shinydex'),
     emptyLog: emptyState(lang, 'log'),
     emptyBag: { ...emptyState(lang, 'bag'), action: emptyBagAction(lang) },
+    sortAscending: sortDirectionLabel(lang, 'ascending'),
+    sortDescending: sortDirectionLabel(lang, 'descending'),
     emptyPocket: {
       balls: emptyState(lang, 'balls'),
       berries: emptyState(lang, 'berries'),
