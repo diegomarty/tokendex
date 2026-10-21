@@ -689,6 +689,8 @@ export interface PanelStrings {
   sortDescending: string
   /** The chevron folding the Pokédex's filters into its device (plan 9.3), like `lid.toggleLabel`. */
   dexFiltersToggle: string
+  /** A species card whose entry never came back from the host (code review 9.12 #8). */
+  dexEntryUnavailable: string
   /** The trainer picker's label in Settings. */
   trainer: string
   /** Settings: the finished-companion toggle's label, and the sentence under it. */

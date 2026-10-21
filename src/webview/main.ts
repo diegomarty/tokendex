@@ -60,6 +60,9 @@ let dexSort: SortID = 'number'
  */
 const dexEntries = new Map<string, PanelPokedexEntry>()
 const entriesAsked = new Set<string>()
+/** Entries that timed out: shown as unavailable until the next state asks them again. */
+const entriesFailed = new Set<string>()
+let entriesOwnership = ''
 /** The Pokédex's sort turned around (plan 9.8): its natural direction flipped. */
 let dexReverse = false
 let dexOwnedOnly = false
@@ -1622,8 +1625,54 @@ function pokedexEntry(state: PanelState, speciesID: number): PanelPokedexEntry |
   if (entry === undefined && !entriesAsked.has(key)) {
     entriesAsked.add(key)
     vscode.postMessage({ type: 'dexEntry', speciesID })
+    // An answer that never comes (the worker restarting, a request lost) must not leave the
+    // card loading for good (code review 9.12 #8): it says so, and the next change asks again.
+    setTimeout(() => {
+      if (dexEntries.has(key) || current === undefined) return
+      dexEntries.set(key, {
+        speciesID,
+        types: [],
+        heightLabel: '',
+        weightLabel: '',
+        statsTitle: '',
+        lineTitle: '',
+        line: [],
+        unavailableText: current.strings.dexEntryUnavailable,
+      })
+      entriesFailed.add(key)
+      invalidate('dex')
+      render()
+    }, ENTRY_TIMEOUT_MS)
   }
   return entry
+}
+
+/** How long a card waits for its entry before saying it is unavailable. */
+const ENTRY_TIMEOUT_MS = 8_000
+
+/**
+ * What the entries depend on — which species are seen, obtained, registered, shiny. An entry
+ * cached while a species was only seen hides its text and stats, and the forms of its line not
+ * yet met are "???": when any of that changes, every entry is asked again (the core keeps them
+ * on disk, so this costs no network). Entries that never came back are retried too.
+ */
+function forgetEntriesOnChange(state: PanelState): boolean {
+  const ownership = state.dexSpecies.map((sp) => `${sp.id}${sp.status[0]}${sp.shiny[0]}`).join(',')
+  if (ownership === entriesOwnership && entriesFailed.size === 0) return false
+  if (ownership !== entriesOwnership) {
+    dexEntries.clear()
+    entriesAsked.clear()
+  } else {
+    for (const key of entriesFailed) {
+      dexEntries.delete(key)
+      entriesAsked.delete(key)
+    }
+  }
+  entriesFailed.clear()
+  entriesOwnership = ownership
+  // A card on screen asks again only if it is drawn again.
+  invalidate('dex')
+  return true
 }
 
 /** Beside the portrait: genus, types, and the size readouts — or their shapes while loading. */
@@ -3248,12 +3297,15 @@ window.addEventListener(
   ) => {
     if (event.data.type === 'news' && Array.isArray(event.data.items)) queueNews(event.data.items)
     if (event.data.type === 'dexEntry' && event.data.entry !== undefined && current !== undefined) {
-      dexEntries.set(`${current.language}:${event.data.entry.speciesID}`, event.data.entry)
+      const key = `${current.language}:${event.data.entry.speciesID}`
+      dexEntries.set(key, event.data.entry)
+      entriesFailed.delete(key)
       invalidate('dex')
       render()
     }
     if (event.data.type === 'state' && event.data.state !== undefined) {
       noteWalletChange(event.data.state)
+      const forgot = forgetEntriesOnChange(event.data.state)
       // Mid-throw, the fresh state already shows the outcome (the Pokémon gone, the ball
       // spent); rendering it now would spoil the animation still playing. It applies when the
       // ball lands.
@@ -3265,7 +3317,10 @@ window.addEventListener(
       // them made the page jump under the reader every two minutes — worst four screens deep
       // into the Pokédex. One string compare (~50KB, every ~2min) is far cheaper than a paint.
       const incoming = JSON.stringify(event.data.state)
-      if (incoming === lastRenderedState) return
+      if (incoming === lastRenderedState) {
+        if (forgot) render() // the same state, but a card's entry to ask for again
+        return
+      }
       applyState(event.data.state, incoming)
       render()
     }

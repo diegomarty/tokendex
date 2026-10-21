@@ -41,6 +41,7 @@ import {
   wildCaughtBadge,
   sortDirectionLabel,
   dexFiltersToggleLabel,
+  dexEntryUnavailableText,
 } from './dispatch.js'
 import { s } from './strings.js'
 
@@ -83,6 +84,7 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     sortAscending: sortDirectionLabel(lang, 'ascending'),
     sortDescending: sortDirectionLabel(lang, 'descending'),
     dexFiltersToggle: dexFiltersToggleLabel(lang),
+    dexEntryUnavailable: dexEntryUnavailableText(lang),
     emptyPocket: {
       balls: emptyState(lang, 'balls'),
       berries: emptyState(lang, 'berries'),
