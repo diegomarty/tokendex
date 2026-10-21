@@ -129,10 +129,14 @@ function mergeRegistries(
     if (totalForms !== undefined) merged.totalForms = totalForms
     const lineRarity = a?.lineRarity ?? b?.lineRarity
     if (lineRarity !== undefined) merged.lineRarity = lineRarity
+    // A share is owed only until a threshold settles it: once either side knows the threshold,
+    // the side that fixed it has already turned its share into experience, and carrying the
+    // other side's over would apply the same catch twice.
     const pendingShare = Math.max(a?.pendingShare ?? 0, b?.pendingShare ?? 0)
-    if (pendingShare > 0) merged.pendingShare = pendingShare
+    if (pendingShare > 0 && threshold === undefined) merged.pendingShare = pendingShare
     if (a?.shinyUnlocked || b?.shinyUnlocked) merged.shinyUnlocked = true
     if (a?.shinyRegistered || b?.shinyRegistered) merged.shinyRegistered = true
+    if (a?.companionShiny || b?.companionShiny) merged.companionShiny = true
     const nature = a?.nature ?? b?.nature
     if (nature !== undefined) merged.nature = nature
     out[id] = merged
@@ -177,6 +181,9 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   state.language = local.language
   if (local.trainerID !== undefined) state.trainerID = local.trainerID
   else delete state.trainerID
+  // A setting, like the language and the trainer: this machine's choice.
+  if (local.keepCompletedCompanion === true) state.keepCompletedCompanion = true
+  else delete state.keepCompletedCompanion
   if (local.lastEncounterToastAt !== undefined) state.lastEncounterToastAt = local.lastEncounterToastAt
   else delete state.lastEncounterToastAt
   // Whether this machine has already announced a full queue is about this machine's

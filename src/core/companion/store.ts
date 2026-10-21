@@ -71,6 +71,7 @@ import {
 } from './display.js'
 import {
   applyUsage,
+  companionIsDone,
   makeEvolutionPlan,
   normalizedEvolutionState,
   pathToSpecies,
@@ -85,6 +86,7 @@ import {
   type LegendaryAward,
 } from './ledger.js'
 import {
+  ANIMATED_SPECIES_MAX,
   type BallKind,
   type BerryKind,
   type CompanionState,
@@ -113,6 +115,7 @@ import { withRevision } from './merge.js'
 import {
   creditSpeciesXP,
   markSeen,
+  meterStart,
   rareCandyXP,
   retireCompanion,
   unlockSpecies,
@@ -144,6 +147,11 @@ export type CompanionEvent =
   | { kind: 'hatched'; speciesID: number; name: string; isShiny: boolean }
   | { kind: 'evolved'; speciesID: number; name: string }
   | { kind: 'graduated'; name: string }
+  /**
+   * A finished companion stepped aside on its own (`moveOnIfDone`): `to` names the species now on
+   * stage, or is absent when an egg from the stock took its place.
+   */
+  | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   /**
@@ -580,8 +588,69 @@ export class CompanionStore {
     if (this.state.active !== undefined && this.line === undefined && !this.hatching && networkAllowed) {
       await this.loadCurrentLine()
     }
+    if (networkAllowed && !this.hatching) await this.moveOnIfDone()
     if (networkAllowed && !this.spawning) await this.spawnEncountersIfNeeded()
     if (networkAllowed && !this.prefetching) await this.prefetchHatchIfNeeded()
+  }
+
+  /**
+   * A companion with nothing left to fill steps aside, so the tokens keep registering something:
+   * a random obtained species still unregistered takes the stage, or failing that an egg from
+   * the stock; with neither, it stays. Off when the player keeps finished companions
+   * (`keepCompletedCompanion`). The switch is `putOnStage`'s, line fetch and all — the same path
+   * as choosing one in the Pokédex.
+   */
+  private async moveOnIfDone(): Promise<void> {
+    // A background step like the fold: a save another window holds is a skip, never a throw at
+    // the scan. The next refresh finds the companion still finished and tries again.
+    try {
+      await this.moveOn()
+    } catch (error) {
+      if (!(error instanceof SaveBusyError)) throw error
+    }
+  }
+
+  private async moveOn(): Promise<void> {
+    const active = this.state.active
+    const line = this.line
+    if (active === undefined || line === undefined || this.state.keepCompletedCompanion === true) return
+    if (active.chosenWhenRegistered === true) return
+    // Not over a celebration: the graduation toast goes first, the switch on a later refresh.
+    if (this.now < this.eventUntil) return
+    if (!companionIsDone(active, line, this.state.species)) return
+    const from = localizedName(line, currentSpeciesID(active), this.state.language)
+
+    // Every candidate, in a random order: one whose line does not hold it ('unknown') is skipped
+    // for the next rather than re-drawn on every refresh. Offline stops here — nothing is wrong
+    // with the candidates, the network is.
+    const here = currentSpeciesID(active)
+    const pool = Object.entries(this.state.species)
+      .filter(([id, p]) => p.unlocked && !p.registered && Number(id) !== here)
+      .map(([id]) => Number(id))
+      .filter((id) => Number.isInteger(id) && id > 0 && id <= ANIMATED_SPECIES_MAX)
+      .sort((a, b) => a - b)
+    while (pool.length > 0) {
+      const next = pool.splice(this.rng() % pool.length, 1)[0]!
+      const outcome = await this.putOnStage(next, this.state.species[next]?.baseID, 'auto')
+      if (outcome === 'offline') return
+      if (outcome === 'set') {
+        const to = this.line === undefined ? '' : localizedName(this.line, next, this.state.language)
+        this.pendingEvents.push({ kind: 'companionSwitched', from, to })
+        return
+      }
+    }
+
+    // No species to move to: the egg set aside, or one from the stock.
+    const result = await this.transact(() => {
+      const still = this.state.active
+      if (still === undefined || !companionIsDone(still, line, this.state.species)) return false
+      const { state, outcome } = incubateEgg(this.state)
+      if (outcome !== 'started' && outcome !== 'resumed') return false
+      this.state = state
+      this.line = undefined
+      return true
+    })
+    if (result.acquired && result.value) this.pendingEvents.push({ kind: 'companionSwitched', from })
   }
 
   /**
@@ -891,19 +960,22 @@ export class CompanionStore {
     await this.load()
     const progress = this.state.species[speciesID]
     if (progress?.unlocked !== true) return 'locked'
-    return this.putOnStage(speciesID, progress.baseID, false)
+    return this.putOnStage(speciesID, progress.baseID, 'player')
   }
 
   /**
-   * The shared half of `setCompanion` and `chooseStarter`. With `starter`, the unlock happens in
-   * the same lock hold as the companion, and only on a game still fresh — so a failure (offline,
-   * a tree without the species) leaves the new game exactly as it was, starter screen and all.
+   * The shared half of `setCompanion`, `chooseStarter` and `moveOnIfDone`. For a `starter`, the
+   * unlock happens in the same lock hold as the companion, and only on a game still fresh — so a
+   * failure (offline, a tree without the species) leaves the new game exactly as it was, starter
+   * screen and all. A `player` choice of a species already registered is marked
+   * (`chosenWhenRegistered`), so the move-on rule does not undo it on the next refresh.
    */
   private async putOnStage(
     speciesID: number,
     knownBaseID: number | undefined,
-    starter: boolean,
+    by: 'player' | 'starter' | 'auto',
   ): Promise<SetCompanionOutcome> {
+    const starter = by === 'starter'
     const baseID = knownBaseID ?? this.baseFromHistory(speciesID) ?? speciesID
     let line: EvoLine
     try {
@@ -936,13 +1008,14 @@ export class CompanionStore {
         pathIDs: path,
         plannedPathIDs: plan,
         stageIndex,
-        usedAtStage: Math.min(current.xp, threshold),
+        usedAtStage: meterStart(current, threshold),
         rarity: line.rarity,
         totalForms,
-        isShiny: current.shinyUnlocked === true || current.shinyRegistered === true,
+        isShiny: current.companionShiny === true || current.shinyRegistered === true,
         nature: current.nature ?? NATURES[this.rng() % NATURES.length]!,
         dittoRevealed: false,
       }
+      if (by === 'player' && current.registered) mon.chosenWhenRegistered = true
       this.state = { ...stepping, active: mon }
       this.line = line
       this.eventUntil = 0
@@ -964,7 +1037,7 @@ export class CompanionStore {
   async chooseStarter(speciesID: number): Promise<SetCompanionOutcome> {
     await this.load()
     if (!isStarterID(speciesID) || !isFreshGame(this.state)) return 'locked'
-    return this.putOnStage(speciesID, speciesID, true)
+    return this.putOnStage(speciesID, speciesID, 'starter')
   }
 
   /** Puts an egg on the stage: the paused one, or one from the stock. */
@@ -1043,6 +1116,20 @@ export class CompanionStore {
       this.noteQueueEdge()
     })
     if (!result.acquired) throw new SaveBusyError()
+  }
+
+  /** The finished-companion setting. `true` once written; a busy lock throws like any user action. */
+  async setKeepCompletedCompanion(keep: boolean): Promise<boolean> {
+    await this.load()
+    const result = await this.transact(() => {
+      const next = { ...this.state }
+      if (keep) next.keepCompletedCompanion = true
+      else delete next.keepCompletedCompanion
+      this.state = next
+      return true
+    })
+    if (!result.acquired) throw new SaveBusyError()
+    return result.value
   }
 
   async setTrainer(trainerID: string): Promise<void> {

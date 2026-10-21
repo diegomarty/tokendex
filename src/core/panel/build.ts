@@ -20,6 +20,7 @@ import type {
   PanelDexSpecies,
   PanelDexSummary,
   PanelEggs,
+  PanelEncounterResult,
   PanelMoodMeter,
   PanelShopAction,
   PanelShopItem,
@@ -29,6 +30,9 @@ import type {
   PanelWild,
 } from '../../webview/protocol.js'
 import type { UsageSnapshot } from '../snapshot.js'
+import type { TurnOutcome } from '../companion/encounters.js'
+import { eggProgress, eggTokensToHatch } from '../companion/display.js'
+import { stageProgress, tokensToNext } from '../companion/growth.js'
 import {
   ANIMATED_SPECIES_MAX,
   APP_LANGUAGES,
@@ -42,6 +46,7 @@ import {
   type WildEncounter,
   ITEM_KINDS,
   Pokeball,
+  PokemonBalance,
   RARITIES,
   currentSpeciesID,
   isBallKind,
@@ -427,6 +432,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
           title: row.stolenText,
         })
       }
+      if (progressOf(state, e.speciesID).unlocked) row.ownedText = D.ownedText(lang)
       // Running from a common stays one click; discarding what hurts to lose asks first.
       if (e.rarity === 'rare' || e.rarity === 'legendary' || e.isShiny) {
         row.runConfirmText = D.runAwayConfirm(lang, row.name)
@@ -534,6 +540,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
     dexLogFilters,
     wild,
     trainerID: trainerIDOrDefault(state.trainerID),
+    keepCompletedCompanion: state.keepCompletedCompanion === true,
     trainers: [...TRAINER_IDS],
     language: lang,
     languages: APP_LANGUAGES.map((id) => ({ id, label: languageLabel(id) })),
@@ -544,6 +551,7 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
   const view = usage.companion
   if (view !== undefined) {
     const c: NonNullable<PanelState['companion']> = {
+      ...expBar(state, lang),
       isShiny: view.isShiny,
       progress: view.progress,
       toNextText: view.toNextText,
@@ -586,6 +594,37 @@ export function buildPanelState(inputs: PanelBuildInputs): PanelState {
 }
 
 /**
+ * The EXP bar, like the games': the stage meter against what the stage costs, or an egg toward
+ * its hatch. Both figures are formatted here; the webview paints them in the bar's colour.
+ */
+function expBar(
+  state: CompanionState,
+  lang: AppLanguage,
+): Pick<NonNullable<PanelState['companion']>, 'expPercent' | 'expText' | 'expLeftText'> {
+  // The progress and what is left come from the same helpers as the status bar's line
+  // (`eggProgress`/`eggTokensToHatch`, `stageProgress`/`tokensToNext`), so the two never disagree.
+  const mon = state.active
+  if (mon === undefined) {
+    if (isFreshGame(state)) return { expPercent: 0 }
+    const total = PokemonBalance.eggHatchThreshold
+    const left = eggTokensToHatch(state)
+    return {
+      expPercent: Math.floor(100 * eggProgress(state)),
+      expText: D.expProgressText(compact(total - left), compact(total)),
+      expLeftText: D.expLeftText(lang, compact(left)),
+    }
+  }
+  const total = PokemonBalance.phaseThreshold(mon.rarity, mon.totalForms, mon.stageIndex)
+  const left = tokensToNext(mon)
+  const full = left === 0 && progressOf(state, currentSpeciesID(mon)).registered
+  return {
+    expPercent: Math.floor(100 * stageProgress(mon)),
+    expText: D.expProgressText(compact(total - left), compact(total)),
+    expLeftText: full ? D.registrationText(lang, 100, true) : D.expLeftText(lang, compact(left)),
+  }
+}
+
+/**
  * The egg stock on Home. The incubate button exists only while a companion is on stage — with
  * none, the egg already is — and reads "Resume" for an egg set aside mid-incubation, which needs
  * no stock.
@@ -617,4 +656,25 @@ function dexSummary(
     speciesSegmentText: D.countedLabel(strings.segmentSpecies, owned),
     logSegmentText: D.countedLabel(strings.segmentLog, logCount),
   }
+}
+
+/**
+ * The banner a catch shows on the wild scene: `D.catchNews`' text, plus — for a first catch —
+ * the species and its bar before and after, so the reveal animates numbers it never derives.
+ * `before` is the state read before the turn, the one place the old percentage still exists.
+ */
+export function catchBanner(
+  lang: AppLanguage,
+  before: CompanionState,
+  speciesID: number,
+  outcome: Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>,
+): NonNullable<PanelEncounterResult['catchNews']> {
+  const news: NonNullable<PanelEncounterResult['catchNews']> = D.catchNews(lang, outcome)
+  if (news.isNew && outcome.registeredPercent !== undefined) {
+    const fromPercent = registrationPercent(progressOf(before, speciesID))
+    news.registration = { speciesID, fromPercent, toPercent: outcome.registeredPercent }
+    // What this catch added — the span the bar animates — not where the bar now stands.
+    news.detail = D.catchShareText(lang, Math.max(0, outcome.registeredPercent - fromPercent))
+  }
+  return news
 }

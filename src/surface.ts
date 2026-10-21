@@ -30,6 +30,7 @@ export type PanelRequestKind =
   | { kind: 'track'; trailID: string; title: string; priceText: string; confirmLabel?: string }
   | { kind: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { kind: 'setTrainer'; trainerID: string }
+  | { kind: 'setKeepCompleted'; keep: boolean }
   | { kind: 'setRefreshInterval'; seconds: number }
   | { kind: 'setCompanion'; speciesID: number }
   | { kind: 'chooseStarter'; speciesID: number }
@@ -163,6 +164,9 @@ export class PanelSurface {
       }
       case 'setTrainer':
         this.onRequest({ kind: 'setTrainer', trainerID: message.trainerID })
+        break
+      case 'setKeepCompleted':
+        this.onRequest({ kind: 'setKeepCompleted', keep: message.keep === true })
         break
       case 'setRefreshInterval':
         this.onRequest({ kind: 'setRefreshInterval', seconds: message.seconds })

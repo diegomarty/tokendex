@@ -54,14 +54,25 @@ function freshFile(): string {
 }
 
 /**
- * A game that has begun — something obtained before (#999, out of every stub's way) — so usage
+ * A game that has begun — something obtained before (#600, out of every stub's way) — so usage
  * goes to an egg on stage. The default: most of the store is about what happens after the start.
  */
+/** A game that has begun with #600 as given — registered, say, to leave nothing to move on to. */
+function begunFile(p600: ReturnType<typeof freshSpeciesProgress>): string {
+  const path = freshFile()
+  writeFileSync(
+    path,
+    encodeCompanionState({ ...freshCompanionState('en'), species: { 600: p600 } }),
+    'utf8',
+  )
+  return path
+}
+
 function tempFile(): string {
   const path = freshFile()
   const begun = {
     ...freshCompanionState('en'),
-    species: { 999: { ...freshSpeciesProgress(), unlocked: true } },
+    species: { 600: { ...freshSpeciesProgress(), unlocked: true } },
   }
   writeFileSync(path, encodeCompanionState(begun), 'utf8')
   return path
@@ -1572,6 +1583,24 @@ describe('companion choice, starters and the egg stock', () => {
 
   // [trigger branch] Switching away and back is free: the same nature (a Mint's included) and
   // the same shininess come back, not a fresh roll.
+  // [trigger branch] A shiny caught in the wild is the shiny *form* obtained, not the raised
+  // companion turned shiny: choosing the species brings back the one that was raised.
+  it('does not turn a companion shiny because a shiny of its species was caught', async () => {
+    const s = await hatched()
+    const base = s.snapshot().active!.baseID
+    await s.update(
+      obs(PokemonBalance.eggHatchThreshold + PokemonBalance.phaseThreshold('common', 2, 0) + 5),
+    )
+    await s.mutate((tx) =>
+      tx.commit({
+        ...tx.state,
+        species: { ...tx.state.species, [base]: { ...tx.state.species[base]!, shinyUnlocked: true } },
+      }),
+    )
+    expect(await s.setCompanion(base)).toBe('set')
+    expect(s.snapshot().active?.isShiny).toBe(false)
+  })
+
   it('brings a companion back with the nature and shininess it left with', async () => {
     const s = await hatched()
     const base = s.snapshot().active!.baseID
@@ -1585,6 +1614,109 @@ describe('companion choice, starters and the egg stock', () => {
     expect(await s.setCompanion(base)).toBe('set')
     expect(await s.setCompanion(base + 1)).toBe('set')
     expect(s.snapshot().active).toMatchObject({ isShiny: true, nature: 'bold' })
+  })
+
+  // [trigger branch] The last form's bar is full and nothing below it is left to register: by
+  // default the companion moves on to an obtained species still unregistered (#600 here), so
+  // the tokens keep filling a bar. Diego's setting keeps it on stage instead.
+  const finished = async (
+    keep: boolean,
+    opts: {
+      over?: Partial<ConstructorParameters<typeof CompanionStore>[0]>
+      before?: (s: CompanionStore) => Promise<void>
+    } = {},
+  ) => {
+    let clock = 1_700_000_000_000
+    const s = store({ now: () => clock, ...opts.over })
+    await s.update(obs(0))
+    await s.update(obs(PokemonBalance.eggHatchThreshold))
+    if (keep) expect(await s.setKeepCompletedCompanion(true)).toBe(true)
+    await opts.before?.(s)
+    const base = s.snapshot().active!.baseID
+    const both =
+      PokemonBalance.phaseThreshold('common', 2, 0) + PokemonBalance.phaseThreshold('common', 2, 1)
+    await s.update(obs(PokemonBalance.eggHatchThreshold + both))
+    expect(s.snapshot().species[base + 1]?.registered).toBe(true)
+    // Not while the graduation is being celebrated: one toast at a time.
+    expect(currentSpeciesID(s.snapshot().active!)).toBe(base + 1)
+    s.drainEvents()
+    clock += 60_000
+    await s.update(obs(PokemonBalance.eggHatchThreshold + both + 10))
+    const later = async (extra: number) => {
+      clock += 60_000
+      await s.update(obs(PokemonBalance.eggHatchThreshold + both + 10 + extra))
+    }
+    return { s, base, later }
+  }
+
+  it('moves a finished companion on to an unregistered species, and says so', async () => {
+    const { s } = await finished(false)
+    expect(s.snapshot().active && currentSpeciesID(s.snapshot().active!)).toBe(600)
+    expect(s.drainEvents().some((e) => e.kind === 'companionSwitched')).toBe(true)
+  })
+
+  it('keeps a finished companion on stage when the setting says so', async () => {
+    const { s, base } = await finished(true)
+    expect(currentSpeciesID(s.snapshot().active!)).toBe(base + 1)
+    expect(s.drainEvents().some((e) => e.kind === 'companionSwitched')).toBe(false)
+  })
+
+  // [trigger branch] Chosen by hand while already finished — to raise its shiny bar, say: the
+  // player asked for this one, so it is not switched away on the next refresh.
+  it('leaves alone a finished species the player chose', async () => {
+    const { s, base, later } = await finished(false)
+    expect(await s.setCompanion(base + 1)).toBe('set')
+    await later(5)
+    expect(currentSpeciesID(s.snapshot().active!)).toBe(base + 1)
+  })
+
+  // [trigger branch] No species left to move to, but an egg set aside: it is resumed, not
+  // ignored because it was not a fresh one from the stock.
+  it('resumes a paused egg when there is no species to move on to', async () => {
+    const { s } = await finished(false, {
+      over: { filePath: begunFile({ ...freshSpeciesProgress(), unlocked: true, registered: true }) },
+      before: async (st) => {
+        await st.mutate((tx) =>
+          tx.commit({ ...tx.state, eggUsage: 1_000, eggStock: { ...tx.state.eggStock, count: 0 } }),
+        )
+      },
+    })
+    expect(s.snapshot().active).toBeUndefined()
+    expect(s.snapshot().eggUsage).toBe(1_000)
+  })
+
+  // [trigger branch] A candidate whose line does not hold it is skipped for the next one — here
+  // none is left, so an egg from the stock takes the stage instead of the same failure each tick.
+  it('skips a species it cannot put on stage and falls back to an egg', async () => {
+    const provider = stubProvider({
+      line: async (baseID: number) =>
+        baseID === 600
+          ? makeEvoLine(600, node(601), 'common', {})
+          : makeEvoLine(baseID, node(baseID, [node(baseID + 1)]), 'common', {}),
+    })
+    const { s } = await finished(false, { over: { provider } })
+    expect(s.snapshot().active).toBeUndefined()
+  })
+
+  // [trigger branch] Another window holds the save while the switch waits for its line: a
+  // background refresh skips, it never throws `SaveBusyError` at the scan.
+  it('skips the switch when another window holds the save', async () => {
+    const filePath = tempFile()
+    let hold: LockHandle | undefined
+    const provider = stubProvider({
+      line: async (baseID: number) => {
+        if (baseID === 600 && hold === undefined) {
+          hold = await new FileLock({ path: lockPathFor(filePath) }).acquire(1_000)
+        }
+        return makeEvoLine(baseID, node(baseID, [node(baseID + 1)]), 'common', {})
+      },
+    })
+    try {
+      const { s, base } = await finished(false, { over: { filePath, provider, lockTimeoutMs: 40 } })
+      expect(currentSpeciesID(s.snapshot().active!)).toBe(base + 1)
+    } finally {
+      await hold?.release()
+    }
   })
 
   it('incubates from the stock, pauses the egg behind a companion, and resumes it', async () => {

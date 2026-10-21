@@ -289,6 +289,33 @@ describe('CompanionState decoding', () => {
     expect(state.species[5]?.nature).toBeUndefined()
   })
 
+  it('keeps that the companion on stage was chosen by hand while registered', () => {
+    const active = {
+      baseID: 1,
+      pathIDs: [1],
+      stageIndex: 0,
+      usedAtStage: 0,
+      rarity: 'common',
+      totalForms: 2,
+    }
+    expect(
+      decodeCompanionState({ active: { ...active, chosenWhenRegistered: true } }).active
+        ?.chosenWhenRegistered,
+    ).toBe(true)
+    expect(decodeCompanionState({ active }).active?.chosenWhenRegistered).toBeUndefined()
+  })
+
+  it('keeps that the companion raised as a species was shiny', () => {
+    const state = decodeCompanionState({
+      species: {
+        '4': { unlocked: true, companionShiny: true },
+        '5': { unlocked: true, companionShiny: 'yes' },
+      },
+    })
+    expect(state.species[4]?.companionShiny).toBe(true)
+    expect(state.species[5]?.companionShiny).toBeUndefined()
+  })
+
   it('reads the registry entry by entry and drops what it cannot read', () => {
     const state = decodeCompanionState({
       species: {

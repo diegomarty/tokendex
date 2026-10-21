@@ -7,6 +7,7 @@
 
 import type { AppLanguage, BallKind, BerryKind, ItemKind, Rarity } from '../companion/model.js'
 import { Pokeball, RareCandy, isBallKind } from '../companion/model.js'
+import type { TurnOutcome } from '../companion/encounters.js'
 import { compact } from '../tokenFormatter.js'
 import { s } from './strings.js'
 
@@ -687,7 +688,7 @@ export function fledText(lang: AppLanguage, name: string): string {
 export function turnResultText(
   lang: AppLanguage,
   outcome:
-    | { kind: 'caught'; refunded: number }
+    | Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>
     | { kind: 'broke'; shakes: number; attack?: { stolen: number } }
     | { kind: 'fed'; berry: BerryKind; attack?: { stolen: number } }
     | { kind: 'fled'; trailed: boolean }
@@ -706,7 +707,13 @@ export function turnResultText(
         name: context.name,
         isShiny: context.isShiny,
       })
-      return outcome.refunded > 0 ? `${line} ${refundedText(lang, compact(outcome.refunded))}` : line
+      const parts = [line]
+      if (outcome.registeredPercent !== undefined)
+        parts.push(caughtRegisteredText(lang, outcome.registeredPercent))
+      if (outcome.reward !== undefined) parts.push(duplicateRewardText(lang, compact(outcome.reward)))
+      if (outcome.refunded > 0) parts.push(refundedText(lang, compact(outcome.refunded)))
+      // Japanese runs sentences together after 。/！; the others separate them with a space.
+      return parts.join(lang === 'ja' ? '' : ' ')
     }
     case 'broke':
       return `${brokeFreeText(lang, outcome.shakes)}${attack(outcome.attack)}`
@@ -1079,6 +1086,7 @@ export type CelebrationEvent =
   | { kind: 'hatched'; name: string; isShiny: boolean }
   | { kind: 'evolved'; name: string }
   | { kind: 'graduated'; name: string }
+  | { kind: 'companionSwitched'; from: string; to?: string }
   | { kind: 'dittoRevealed'; disguisedAs: string; isShiny: boolean }
   | { kind: 'candyGranted'; count: number; windowName: string }
   | { kind: 'wildAppeared'; name: string; rarity: Rarity; isShiny: boolean }
@@ -1129,6 +1137,22 @@ export function celebrationText(lang: AppLanguage, event: CelebrationEvent): str
         `${event.name}がずかんにとうろくされた！`,
         `¡${event.name} se ha graduado a la Pokédex!`,
       )
+    case 'companionSwitched':
+      return event.to === undefined
+        ? t(
+            lang,
+            `${event.from}의 도감이 완성됐어요. 이제 알을 품어요.`,
+            `${event.from} is fully registered. An egg takes the stage.`,
+            `${event.from}のとうろくがかんりょう。つぎはタマゴをあたためよう。`,
+            `${event.from} está registrado del todo. Ahora toca incubar un huevo.`,
+          )
+        : t(
+            lang,
+            `${event.from}의 도감이 완성됐어요. 이제 ${event.to}이(가) 함께해요.`,
+            `${event.from} is fully registered. ${event.to} joins you now.`,
+            `${event.from}のとうろくがかんりょう。こんどは${event.to}がいっしょだ。`,
+            `${event.from} está registrado del todo. Ahora te acompaña ${event.to}.`,
+          )
     case 'dittoRevealed': {
       const text = t(
         lang,
@@ -1338,5 +1362,117 @@ export function noEggsText(lang: AppLanguage): string {
     'No eggs to incubate. One arrives each day you work.',
     'タマゴがありません。作業した日に1つ手に入ります。',
     'No hay huevos que incubar. Cada día de trabajo llega uno.',
+  )
+}
+
+// MARK: - Catching registers (phase 3)
+
+/** A first catch: how far the species' registration reads now. */
+export function caughtRegisteredText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `도감 등록 ${percent}%!`,
+    `Registered at ${percent}%!`,
+    `ずかん登録 ${percent}%!`,
+    `¡Registrado al ${percent}%!`,
+  )
+}
+
+/** A duplicate catch: the species was already obtained, so it pays tokens instead. */
+export function duplicateRewardText(lang: AppLanguage, amount: string): string {
+  return t(
+    lang,
+    `이미 가진 포켓몬이라 토큰 +${amount}.`,
+    `Already had it: +${amount} tokens.`,
+    `もう持っているのでトークン+${amount}。`,
+    `Ya lo tenías: +${amount} tokens.`,
+  )
+}
+
+/** The EXP bar's figure: what it has of what the stage costs, both already compact. */
+export function expProgressText(done: string, total: string): string {
+  return `${done} / ${total}`
+}
+
+/** What is left to the next stage (or the hatch), beside the EXP bar. */
+export function expLeftText(lang: AppLanguage, amount: string): string {
+  return t(lang, `${amount} 남음`, `${amount} to go`, `あと${amount}`, `faltan ${amount}`)
+}
+
+/** Tooltip of the Poké Ball on a wild plate: the species is already obtained. */
+export function ownedText(lang: AppLanguage): string {
+  return t(lang, '이미 가진 포켓몬', 'Already obtained', 'つかまえたことがある', 'Ya lo tienes')
+}
+
+/** A catch's banner headline: the species is new to the Pokédex. */
+export function newInDexText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '도감에 새로 등록!',
+    'New in the Pokédex!',
+    'ずかんに あたらしく とうろく!',
+    '¡Nuevo en la Pokédex!',
+  )
+}
+
+/** A catch's banner headline: a duplicate. */
+export function alreadyOwnedText(lang: AppLanguage): string {
+  return t(lang, '이미 가진 포켓몬', 'Already had it', 'もう もっている', 'Ya lo tenías')
+}
+
+/** A catch's banner detail: the registration share it added. */
+export function catchShareText(lang: AppLanguage, percent: number): string {
+  return t(
+    lang,
+    `등록 +${percent}%`,
+    `+${percent}% registered`,
+    `とうろく +${percent}%`,
+    `+${percent}% de registro`,
+  )
+}
+
+/** A catch's banner detail: the tokens a duplicate paid. */
+export function rewardTokensText(lang: AppLanguage, amount: string): string {
+  return t(lang, `토큰 +${amount}`, `+${amount} tokens`, `トークン +${amount}`, `+${amount} tokens`)
+}
+
+/** The scene's banner for a catch, or nothing for any other turn. */
+export function catchNews(
+  lang: AppLanguage,
+  outcome: Omit<Extract<TurnOutcome, { kind: 'caught' }>, 'shakes'>,
+): { isNew: boolean; headline: string; detail: string } {
+  if (outcome.reward !== undefined) {
+    return {
+      isNew: false,
+      headline: alreadyOwnedText(lang),
+      detail: rewardTokensText(lang, compact(outcome.reward)),
+    }
+  }
+  return {
+    isNew: true,
+    headline: newInDexText(lang),
+    detail: catchShareText(lang, outcome.registeredPercent ?? 0),
+  }
+}
+
+/** Settings: the finished-companion toggle. */
+export function keepCompletedLabel(lang: AppLanguage): string {
+  return t(
+    lang,
+    '등록을 마친 포켓몬과 계속 함께하기',
+    'Keep a fully registered companion',
+    'とうろくを おえた ポケモンと いっしょに いる',
+    'Mantener al compañero registrado del todo',
+  )
+}
+
+/** Settings: what the toggle changes, under it. */
+export function keepCompletedHint(lang: AppLanguage): string {
+  return t(
+    lang,
+    '끄면 마지막 진화의 막대가 가득 찼을 때 아직 등록하지 않은 포켓몬으로 바뀌어요. 켜면 그대로 남고 토큰은 색이 다른 모습을 위해 모여요.',
+    'Off: when its last form’s bar is full, it switches to one of yours still unregistered. On: it stays, and its tokens wait for the shiny.',
+    'オフ: さいごの しんかの バーが いっぱいに なると、まだ とうろくしていない ポケモンに かわる。オン: そのまま のこり、トークンは いろちがいの ために たまる。',
+    'Desactivado: cuando su última forma llena la barra, cambia a uno tuyo aún sin registrar. Activado: se queda, y sus tokens esperan al shiny.',
   )
 }

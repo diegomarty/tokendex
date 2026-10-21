@@ -346,6 +346,7 @@ export function sanitized(state: CompanionState): CompanionState {
   // An unknown slug would render as a broken image on every repaint. Falling back to absent
   // (the roster default) is invisible and correct.
   if (next.trainerID !== undefined && !isTrainerID(next.trainerID)) delete next.trainerID
+  if (next.keepCompletedCompanion !== true) delete next.keepCompletedCompanion
 
   if (next.active !== undefined) {
     const active = { ...next.active }

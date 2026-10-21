@@ -33,6 +33,8 @@ import {
   starterPromptText,
   starterTitleText,
   trainerLabel,
+  keepCompletedLabel,
+  keepCompletedHint,
   wildCaughtBadge,
 } from './dispatch.js'
 import { s } from './strings.js'
@@ -72,6 +74,8 @@ export function panelStrings(lang: AppLanguage): PanelStrings {
     language: s(lang, 'language'),
     run: runAwayLabel(lang),
     trainer: trainerLabel(lang),
+    keepCompleted: keepCompletedLabel(lang),
+    keepCompletedHint: keepCompletedHint(lang),
     wildBadge: wildCaughtBadge(lang),
     getBalls: getBallsCta(lang),
     refreshInterval: refreshIntervalLabel(lang),

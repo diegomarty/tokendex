@@ -41,12 +41,12 @@ function stubProvider(): PokeProviding {
   }
 }
 
-/** A game that has begun (#999 obtained before), so usage hatches an egg rather than waiting for a starter. */
+/** A game that has begun (#600 obtained before), so usage hatches an egg rather than waiting for a starter. */
 function begunFile(): string {
   const path = join(mkdtempSync(join(tmpdir(), 'ptb-candy-')), 'companion-state.json')
   const begun = {
     ...freshCompanionState('en'),
-    species: { 999: { ...freshSpeciesProgress(), unlocked: true } },
+    species: { 600: { ...freshSpeciesProgress(), unlocked: true } },
   }
   writeFileSync(path, encodeCompanionState(begun), 'utf8')
   return path

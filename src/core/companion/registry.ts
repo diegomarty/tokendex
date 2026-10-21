@@ -34,13 +34,32 @@ export function registerXP(rarity: Rarity, totalForms: number, stageIndex: numbe
 
 /**
  * 0..100. A registered species reads 100 whatever its xp says (the flag is the truth); before
- * the threshold is known there is nothing to measure against, so it reads 0 rather than a
- * guess.
+ * the threshold is known there is nothing to measure against, so it reads the share owed (a
+ * catch's) rather than a guess.
  */
 export function registrationPercent(progress: SpeciesProgress): number {
   if (progress.registered) return 100
-  if (progress.threshold === undefined || progress.threshold <= 0) return 0
+  if (progress.threshold === undefined || progress.threshold <= 0) {
+    return Math.min(100, Math.floor(100 * (progress.pendingShare ?? 0)))
+  }
   return Math.min(100, Math.floor((100 * progress.xp) / progress.threshold))
+}
+
+/**
+ * Experience a share of a bar is worth, rounded **up**: rounded to nearest, 5% of 16_666_667
+ * lands a token short and `registrationPercent`'s floor reads 4%.
+ */
+export function shareXP(share: number, threshold: number): number {
+  return Math.ceil(share * threshold)
+}
+
+/**
+ * Where a companion's stage meter starts on a species: where its bar already is. One rule for
+ * `setCompanion` and for the growth that settles a hatch or an evolution — the meter never lags
+ * the bar.
+ */
+export function meterStart(progress: SpeciesProgress, threshold: number): number {
+  return Math.min(progress.xp, threshold)
 }
 
 /** What one Rare Candy is worth to this companion: a share of its current stage. */
@@ -96,7 +115,10 @@ export function retireCompanion(state: CompanionState): CompanionState {
   const current = progressOf(state, id)
   const next: SpeciesProgress = { ...current }
   if (mon.nature !== undefined) next.nature = mon.nature
-  if (mon.isShiny) next.shinyUnlocked = true
+  if (mon.isShiny) {
+    next.shinyUnlocked = true
+    next.companionShiny = true
+  }
   return { ...state, species: { ...state.species, [id]: next } }
 }
 

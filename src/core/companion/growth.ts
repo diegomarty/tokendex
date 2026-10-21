@@ -18,6 +18,7 @@ import {
   evoNodeWithID,
   freshSpeciesProgress,
 } from './model.js'
+import { meterStart, shareXP } from './registry.js'
 
 /** Injectable randomness. Returns a non-negative integer. */
 export type RNG = () => number
@@ -177,6 +178,25 @@ function branchHasUnregistered(node: EvoNode, species: Record<number, SpeciesPro
   return !(species[node.speciesID]?.registered ?? false) || subtreeHasUnregistered(node, species)
 }
 
+/**
+ * The companion has nothing left to fill: its form is registered, its meter full, and nothing
+ * below it in the line is unregistered. What `CompanionStore` moves on from, unless the player
+ * keeps it (`keepCompletedCompanion`). A disguised Ditto is never done — its reveal is pending.
+ */
+export function companionIsDone(
+  mon: MonState,
+  line: EvoLine,
+  species: Record<number, SpeciesProgress>,
+): boolean {
+  if (mon.dittoDisguise !== undefined && !mon.dittoRevealed) return false
+  const id = currentSpeciesID(mon)
+  if (species[id]?.registered !== true) return false
+  if (mon.usedAtStage < PokemonBalance.phaseThreshold(mon.rarity, mon.totalForms, mon.stageIndex))
+    return false
+  const node = evoNodeWithID(line.tree, id)
+  return node !== undefined && !subtreeHasUnregistered(node, species)
+}
+
 /** Guard against a malformed tree spinning the evolution loop forever. */
 const MAX_EVOLUTION_STEPS = 50
 
@@ -225,11 +245,12 @@ export function applyUsage(
       p.lineRarity === of.rarity &&
       p.baseID === of.baseID &&
       p.stageIndex === of.stageIndex &&
-      p.totalForms === of.totalForms
+      p.totalForms === of.totalForms &&
+      p.pendingShare === undefined
     ) {
       return
     }
-    put(id, {
+    const fixed: SpeciesProgress = {
       ...p,
       unlocked: true,
       threshold,
@@ -237,16 +258,39 @@ export function applyUsage(
       baseID: of.baseID,
       stageIndex: of.stageIndex,
       totalForms: of.totalForms,
-    })
+    }
+    // A share owed by a catch made before the line was known becomes experience now that there
+    // is a threshold to take it from.
+    if (p.pendingShare !== undefined) {
+      fixed.xp = Math.max(p.xp, Math.min(threshold, p.xp + shareXP(p.pendingShare, threshold)))
+      delete fixed.pendingShare
+    }
+    put(id, fixed)
   }
   const register = (id: number, threshold: number, overflow: number): void => {
     const p = entry(id)
     put(id, { ...p, xp: Math.max(threshold, p.xp - overflow), registered: true, unlocked: true })
   }
+  /**
+   * Fixes the species the companion is on, then lifts the meter to where its bar already is (a
+   * catch's share, an earlier life): `meterStart`, the rule `setCompanion` follows. Runs on
+   * every form the companion lands on — the first and each one evolved into. Not for a disguised
+   * Ditto (the disguise species' bar is another Pokémon's) nor once registered (the meter is
+   * pinned there).
+   */
+  const settle = (of: MonState): MonState => {
+    const id = currentSpeciesID(of)
+    fix(id, of)
+    const p = entry(id)
+    if (p.registered || p.threshold === undefined) return of
+    if (of.dittoDisguise !== undefined && !of.dittoRevealed) return of
+    const start = meterStart(p, p.threshold)
+    return start > of.usedAtStage ? { ...of, usedAtStage: start } : of
+  }
   credit(currentSpeciesID(mon), delta)
 
   if (line === undefined) return { mon: current, events, graduated: false, notes, species }
-  fix(currentSpeciesID(current), current)
+  current = settle(current)
 
   for (let steps = 0; steps < MAX_EVOLUTION_STEPS; steps++) {
     const threshold = PokemonBalance.phaseThreshold(
@@ -268,7 +312,12 @@ export function applyUsage(
       // had from a real life of its own stays where it was.
       const moved = Math.min(entry(disguisedAsSpeciesID).xp, current.usedAtStage)
       const prior = entry(disguisedAsSpeciesID)
-      put(disguisedAsSpeciesID, { ...prior, xp: prior.xp - moved })
+      // The hatch unlocked the disguise species; if nothing else ever did — no catch, no bar of
+      // its own — the reveal takes that unlock back, or the first real one caught would be paid
+      // as a duplicate of a Pokémon the player never had.
+      const left = prior.xp - moved
+      const onlyByDisguise = left === 0 && prior.caught === 0 && !prior.registered
+      put(disguisedAsSpeciesID, { ...prior, xp: left, unlocked: prior.unlocked && !onlyByDisguise })
       current = revealedDitto(current)
       credit(PokemonOdds.dittoSpeciesID, moved)
       fix(PokemonOdds.dittoSpeciesID, current)
@@ -325,6 +374,8 @@ export function applyUsage(
 
     const overflow = current.usedAtStage - threshold
     register(currentSpeciesID(current), threshold, overflow)
+    // A new form is not the one the player chose by hand: the move-on rule applies to it again.
+    delete current.chosenWhenRegistered
     current = {
       ...current,
       pathIDs: [...current.pathIDs.slice(0, current.stageIndex + 1), next.speciesID],
@@ -333,7 +384,7 @@ export function applyUsage(
       usedAtStage: overflow,
     }
     credit(next.speciesID, overflow)
-    fix(next.speciesID, current)
+    current = settle(current)
     events.push({ kind: 'evolved', toSpeciesID: next.speciesID })
   }
 

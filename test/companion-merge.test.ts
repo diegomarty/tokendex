@@ -375,6 +375,17 @@ describe('the registry', () => {
 
   // A nature only one side recorded survives the merge: it was set by a switch (or a Mint) on
   // that side, and dropping it would roll a new one next time the species is chosen.
+  // [trigger branch] One side already turned the share into experience (threshold fixed, share
+  // gone); the other still owes it. Carrying the owed share over would apply the catch twice.
+  it('drops a share the side with the threshold already settled', () => {
+    const { local, remote } = fork(
+      { species: { 4: progress({ xp: 50, threshold: 1_000 }) } },
+      { species: { 4: progress({ pendingShare: 0.05 }) } },
+    )
+    expect(mergeSaves(local, remote).state.species[4]?.pendingShare).toBeUndefined()
+    expect(mergeSaves(remote, local).state.species[4]?.pendingShare).toBeUndefined()
+  })
+
   it('keeps a recorded nature either side knew', () => {
     const { local, remote } = fork(
       { species: { 4: progress() } },

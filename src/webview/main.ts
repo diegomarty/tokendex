@@ -53,6 +53,18 @@ let dexLogFilter = 'all'
  * kept standing under the *next* Pokémon that stepped up.
  */
 let wildResult: { text: string; encounterID: string } | undefined
+/**
+ * A catch's news, shown over the scene like a level-up once the catch animation is over. Kept
+ * as view state because the scene is rebuilt right after (the caught Pokémon leaves the stage);
+ * `played` stops the entrance from replaying on every later paint.
+ */
+let catchBanner:
+  (NonNullable<PanelEncounterResult['catchNews']> & { until: number; played: boolean }) | undefined
+let catchBannerTimer: ReturnType<typeof setTimeout> | undefined
+/** How long the banner stays: long enough to read two lines, short enough not to linger. */
+const CATCH_BANNER_MS = 2800
+/** A new species plays its reveal and its bar filling first (~1.9 s), so it stays longer. */
+const NEW_SPECIES_BANNER_MS = 4200
 /** Which level of the battle menu is open, and for which encounter. View state only. */
 let wildMenu: 'main' | 'bag' = 'main'
 /** The starter picked on the first-run screen, before it is confirmed. View state only. */
@@ -122,18 +134,17 @@ function companionInfo(state: PanelState): string {
     .map(escapeHTML)
     .join(' · ')
 
-  // The registration bar is the figure; a still-hatching egg has none and keeps the stage progress.
-  const percent = c.registrationPercent ?? Math.round(c.progress * 100)
-
+  // The figure beside the bar is that bar's own — EXP, as on the scene's plate — so the number
+  // and the fill can never tell two stories.
   return `
       <h1 class="hero-name">${escapeHTML(name)}${c.isShiny ? ' <span class="shiny-mark" title="shiny">✨</span>' : ''}</h1>
       ${meta === '' ? '' : `<div class="hero-meta">${meta}</div>`}
       <div class="progress">
         <div class="meta">
           <span>${escapeHTML(c.toNextText)}</span>
-          <span class="pct">${percent}%</span>
+          <span class="pct">${c.expPercent}%</span>
         </div>
-        <div class="bar"><i data-fill="${percent}"></i></div>
+        <div class="bar"><i data-fill="${c.expPercent}"></i></div>
       </div>
       ${renderLine(c.line)}`
 }
@@ -487,6 +498,42 @@ async function playThrow(result: PanelEncounterResult): Promise<void> {
   finishThrow(result)
 }
 
+/** The catch banner over the scene, while it lasts; its entrance plays on the first paint only. */
+function renderCatchBanner(): string {
+  const banner = catchBanner
+  if (banner === undefined || performance.now() >= banner.until) return ''
+  const entering = banner.played ? '' : ' entering'
+  banner.played = true
+  // Hidden from assistive tech: the result line under the scene, which is live, says the same.
+  const reg = banner.registration
+  if (reg === undefined) {
+    return `<div class="catch-banner${banner.isNew ? ' new' : ''}${entering}" aria-hidden="true">
+      <span class="catch-headline">${escapeHTML(banner.headline)}</span>
+      <span class="catch-detail">${escapeHTML(banner.detail)}</span>
+    </div>`
+  }
+  // A new species: the Pokémon itself, and its registration bar with the share just earned
+  // marked as a span [from, to] — placed by `placeSpans` after the paint, since the CSP allows
+  // no inline style.
+  return `<div class="catch-banner new rich${entering}" aria-hidden="true">
+      <span class="catch-shine"></span>
+      <span class="catch-mon-wrap">
+        <img class="catch-mon" src="${sceneSpriteURL(reg.speciesID, false)}" alt=""
+             data-fallback="${spriteURL(reg.speciesID, false, false)}">
+      </span>
+      <div class="catch-body">
+        <span class="catch-headline">${escapeHTML(banner.headline)}</span>
+        <div class="catch-reg">
+          <div class="catch-reg-bar">
+            <i class="base" data-span-from="0" data-span-to="${reg.fromPercent}"></i>
+            <i class="gain" data-span-from="${reg.fromPercent}" data-span-to="${reg.toPercent}"><b></b></i>
+          </div>
+        </div>
+        <span class="catch-detail">${escapeHTML(banner.detail)}</span>
+      </div>
+    </div>`
+}
+
 /** It lunged at you: a short lunge and a red flash. Its duration is mirrored in styles.css. */
 const STRIKE_MS = 500
 async function strikeBack(scene: HTMLElement): Promise<void> {
@@ -503,6 +550,19 @@ function finishThrow(result?: PanelEncounterResult): void {
   throwing = undefined
   if (result !== undefined && result.resultText !== '') {
     wildResult = { text: result.resultText, encounterID: result.encounterID }
+  }
+  if (result?.catchNews !== undefined) {
+    const lasts = result.catchNews.registration === undefined ? CATCH_BANNER_MS : NEW_SPECIES_BANNER_MS
+    // One banner at a time, with its own timer: a catch soon after another replaces the banner,
+    // and the earlier timer must not take the new one down with it.
+    clearTimeout(catchBannerTimer)
+    const banner = { ...result.catchNews, until: performance.now() + lasts, played: false }
+    catchBanner = banner
+    catchBannerTimer = setTimeout(() => {
+      if (catchBanner !== banner) return
+      catchBanner = undefined
+      document.querySelector('.catch-banner')?.remove()
+    }, lasts)
   }
   if (flight.deferred !== undefined) applyState(flight.deferred)
   // Even with nothing deferred: the result line is panel-owned view state, not part of a push.
@@ -577,6 +637,7 @@ function renderGame(state: PanelState): string {
       <img class="trainer" src="${trainerURL(state.trainerID)}" alt="">
       ${follower}
       ${playerPlate(state)}
+      ${renderCatchBanner()}
     </div>`
 
   // The dialog box: what just happened, or the question the games ask. Idle, it carries the
@@ -642,6 +703,12 @@ function wildPlate(encounter: PanelWildEncounter): string {
       <div class="plate-head">
         <span class="plate-name">${escapeHTML(encounter.name)}${encounter.isShiny ? ' <span class="shiny-mark">✨</span>' : ''}</span>
         ${
+          // Already yours: the games mark it with a Poké Ball beside the name.
+          encounter.ownedText === undefined
+            ? ''
+            : `<span class="owned-ball" role="img" title="${escapeHTML(encounter.ownedText)}" aria-label="${escapeHTML(encounter.ownedText)}"></span>`
+        }
+        ${
           // Nature and traits are flavour more than a decision, so they wait behind a glyph by the
           // name instead of taking a line of the plate.
           encounter.temperamentText === undefined
@@ -678,8 +745,8 @@ const RISK_ICONS: Record<PanelWildEncounter['risk']['items'][number]['key'], str
 function playerPlate(state: PanelState): string {
   const c = state.companion
   if (c === undefined) return ''
-  // The registration bar is the figure; a still-hatching egg has none and keeps the stage progress.
-  const percent = c.registrationPercent ?? Math.round(c.progress * 100)
+  // The registration bar is the figure; a still-hatching egg has none and shows its EXP instead.
+  const percent = c.registrationPercent ?? c.expPercent
   const meta = [c.stageText, c.rarityText, c.natureText].filter(
     (part): part is string => part !== undefined && part !== '',
   )
@@ -695,11 +762,29 @@ function playerPlate(state: PanelState): string {
         }
         <span class="plate-pct">${percent}%</span>
       </div>
-      <div class="exp-row">
-        <i class="codicon codicon-sparkle meter-icon" aria-hidden="true"></i>
-        <div class="bar exp gauge"><i data-fill="${percent}"></i></div>
+      ${expBar(c)}
+    </div>`
+}
+
+/**
+ * The EXP bar the games draw under a Pokémon's HP: a dark track with "EXP" at its left and the
+ * blue fill, and under it — in the same blue — what it has of the stage and what is left. Every
+ * figure is the core's; "EXP" is the games' own glyph, printed untranslated in every version, so
+ * it is decoration and the bar is named by the figures instead.
+ */
+function expBar(c: NonNullable<PanelState['companion']>): string {
+  const figures = [c.expText, c.expLeftText].filter((t): t is string => t !== undefined && t !== '')
+  const label = figures.length === 0 ? c.toNextText : figures.join(' · ')
+  return `<div class="exp-meter">
+      <div class="exp-line">
+        <span class="exp-label" aria-hidden="true">EXP</span>
+        <div class="bar exp-track" aria-label="${escapeHTML(label)}"><i data-fill="${c.expPercent}"></i></div>
       </div>
-      <div class="plate-sub to-next">${escapeHTML(c.toNextText)}</div>
+      ${
+        figures.length === 0
+          ? `<div class="exp-figures"><span>${escapeHTML(c.toNextText)}</span></div>`
+          : `<div class="exp-figures" aria-hidden="true">${c.expText === undefined ? '' : `<span>${escapeHTML(c.expText)}</span>`}${c.expLeftText === undefined ? '' : `<span class="exp-left">${escapeHTML(c.expLeftText)}</span>`}</div>`
+      }
     </div>`
 }
 
@@ -1285,6 +1370,14 @@ function renderSettings(state: PanelState): string {
         ${refresh}
       </div>
     </div>
+    <label class="setting toggle-setting">
+      <input type="checkbox" role="switch" id="keep-completed"${state.keepCompletedCompanion ? ' checked' : ''}
+             aria-describedby="keep-completed-hint">
+      <span class="toggle-text">
+        <span class="toggle-label">${escapeHTML(state.strings.keepCompleted)}</span>
+        <span class="toggle-hint" id="keep-completed-hint">${escapeHTML(state.strings.keepCompletedHint)}</span>
+      </span>
+    </label>
     <h2 class="section">${escapeHTML(state.strings.trainer)}</h2>
     <div class="setting trainer-setting">
       <div class="trainer-grid">${trainers}</div>
@@ -1402,6 +1495,19 @@ function applyState(state: PanelState, serialized?: string): void {
  * this same pair of elements, and a progress bar with no role is invisible to a screen reader
  * however many of them there are.
  */
+/**
+ * Places every `[data-span-from][data-span-to]` element over its bar as a segment, in percent.
+ * Like `paintBars`, through the CSSOM: the CSP forbids inline `style` attributes.
+ */
+function placeSpans(root: HTMLElement): void {
+  for (const span of root.querySelectorAll<HTMLElement>('[data-span-from][data-span-to]')) {
+    const from = Math.max(0, Math.min(100, Number(span.dataset['spanFrom']) || 0))
+    const to = Math.max(from, Math.min(100, Number(span.dataset['spanTo']) || 0))
+    span.style.left = `${from}%`
+    span.style.width = `${to - from}%`
+  }
+}
+
 function paintBars(root: HTMLElement): void {
   for (const fillElement of root.querySelectorAll<HTMLElement>('[data-fill]')) {
     const raw = Number(fillElement.dataset['fill'])
@@ -1455,6 +1561,7 @@ function render(): void {
     changeTerrain(section, previousTerrain)
     painted.add(tab)
     paintBars(section)
+    placeSpans(section)
   }
 
   // Home wears the waiting count: the scene with the queue lives there now.
@@ -1867,6 +1974,9 @@ document.addEventListener('change', (event) => {
   const target = event.target as HTMLElement
   if (target.id === 'language') {
     vscode.postMessage({ type: 'setLanguage', language: (target as HTMLSelectElement).value })
+  }
+  if (target.id === 'keep-completed') {
+    vscode.postMessage({ type: 'setKeepCompleted', keep: (target as HTMLInputElement).checked })
   }
   if (target.id === 'refresh-interval') {
     const seconds = Number((target as HTMLSelectElement).value)

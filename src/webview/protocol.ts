@@ -47,6 +47,12 @@ export interface PanelCompanion {
   line: PanelLineItem[]
   /** 0..100 of this species' registration bar; 100 once registered. Absent for an egg. */
   registrationPercent?: number
+  /** 0..100 the EXP bar is filled: the stage meter, or the egg toward its hatch. */
+  expPercent: number
+  /** What it has of what the stage costs: "4.2M / 16.7M". Absent before the starter. */
+  expText?: string
+  /** What is left — "12.5M to go" — or the registered word once there is nothing left. */
+  expLeftText?: string
 }
 
 /** An official limit window as the panel draws it: a name, a percentage and a bar. */
@@ -244,6 +250,11 @@ export interface PanelWildEncounter {
    * condition: `text` is the chip, `title` the sentence behind it. `key` is a style token.
    */
   statuses: { key: 'primed' | 'stolen'; text: string; title: string }[]
+  /**
+   * Present when the species is already obtained: the plate shows a Poké Ball, as the games
+   * mark what you have caught. The text is its tooltip and accessible name.
+   */
+  ownedText?: string
 }
 
 /** One mood bar. `tone` is a style token, never text — `label` is what is read. */
@@ -378,6 +389,20 @@ export interface PanelEncounterResult {
   animation: 'throw' | 'feed' | 'none'
   /** It struck back this turn — the scene flashes. */
   attacked: boolean
+  /**
+   * A catch's news for the scene's banner, like a level-up: new to the Pokédex with its share,
+   * or a duplicate with its reward. Present only on a catch.
+   */
+  catchNews?: {
+    isNew: boolean
+    headline: string
+    detail: string
+    /**
+     * A first catch's bar, for the banner's reveal: the species (its sprite) and its registration
+     * before and after the catch, 0..100. Absent on a duplicate.
+     */
+    registration?: { speciesID: number; fromPercent: number; toPercent: number }
+  }
 }
 
 /** Tab labels. `dev` is a literal: that surface is developer-only and never localised. */
@@ -423,6 +448,9 @@ export interface PanelStrings {
   run: string
   /** The trainer picker's label in Settings. */
   trainer: string
+  /** Settings: the finished-companion toggle's label, and the sentence under it. */
+  keepCompleted: string
+  keepCompletedHint: string
   /** Badge on a wild caught from an encounter, in the catch log. */
   wildBadge: string
   /** CTA under an empty ball rack, jumping to the shop. */
@@ -507,6 +535,11 @@ export interface PanelState {
   dexLogFilters: PanelDexFilter[]
   /** The Wild tab. */
   wild: PanelWild
+  /**
+   * Settings: a companion whose last bar is full stays on stage (`true`) instead of moving on to
+   * an obtained species still unregistered (`false`, the default).
+   */
+  keepCompletedCompanion: boolean
   /** The player's avatar: a Showdown trainer slug from the core's roster. */
   trainerID: string
   /** The whole roster, for the Settings picker. */
@@ -542,6 +575,7 @@ export type PanelMessage =
   | { type: 'run'; encounterID: string; confirmText?: string; confirmLabel?: string }
   | { type: 'setRefreshInterval'; seconds: number }
   | { type: 'setTrainer'; trainerID: string }
+  | { type: 'setKeepCompleted'; keep: boolean }
   /** Choose an unlocked species (by id) as the companion; the core refuses anything else. */
   | { type: 'setCompanion'; speciesID: number }
   | { type: 'chooseStarter'; speciesID: number }

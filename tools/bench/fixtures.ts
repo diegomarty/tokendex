@@ -17,7 +17,13 @@
  * the extension no longer sends.
  */
 
-import type { PanelDev, PanelDevControl, PanelState } from '../../src/webview/protocol.js'
+import type {
+  PanelDev,
+  PanelDevControl,
+  PanelEncounterResult,
+  PanelState,
+  PanelWalletChange,
+} from '../../src/webview/protocol.js'
 import {
   type AppLanguage,
   type CompanionState,
@@ -39,8 +45,9 @@ import {
 } from '../../src/core/companion/model.js'
 import { DEV_GROUPS, DEV_SCENARIOS } from '../../src/core/dev/scenarios.js'
 import { registerXP } from '../../src/core/companion/registry.js'
+import { EconomyBalance } from '../../src/core/companion/economy.js'
 import * as D from '../../src/core/i18n/dispatch.js'
-import { buildPanelState } from '../../src/core/panel/build.js'
+import { buildPanelState, catchBanner } from '../../src/core/panel/build.js'
 import { todayKey } from '../../src/core/usage/entry.js'
 import {
   type CompanionView,
@@ -100,14 +107,27 @@ const NAMES: Record<number, string> = {
   494: 'Victini',
 }
 
-/** One line is translated, which is all the Japanese fixture needs to show its typography. */
-const JA_NAMES: Record<number, string> = { 4: 'ヒトカゲ', 5: 'リザード', 6: 'リザードン' }
+/**
+ * One line is translated, which is all the Japanese fixture needs to show its typography — plus
+ * the Pokémon of the longest catch line, measured in every language.
+ */
+const JA_NAMES: Record<number, string> = {
+  4: 'ヒトカゲ',
+  5: 'リザード',
+  6: 'リザードン',
+  150: 'ミュウツー',
+}
+const KO_NAMES: Record<number, string> = { 150: '뮤츠' }
+/** Spanish keeps the English names; listed only where a fixture renders in Spanish. */
+const ES_NAMES: Record<number, string> = { 150: 'Mewtwo' }
 
 /** The per-language name map the core stores on a save and resolves at render time. */
 function names(id: number): Record<string, string> {
-  const en = NAMES[id] ?? `#${id}`
-  const ja = JA_NAMES[id]
-  return ja === undefined ? { en } : { en, ja }
+  const out: Record<string, string> = { en: NAMES[id] ?? `#${id}` }
+  if (JA_NAMES[id] !== undefined) out['ja'] = JA_NAMES[id]
+  if (KO_NAMES[id] !== undefined) out['ko'] = KO_NAMES[id]
+  if (ES_NAMES[id] !== undefined) out['es'] = ES_NAMES[id]
+  return out
 }
 
 /** The flavour rule the fixtures have always used, so the same ids keep reading the same. */
@@ -293,6 +313,8 @@ interface SceneOptions extends UsageOptions {
   eggUsage?: number
   /** A brand-new save: nothing at all, so the panel asks for a starter. */
   fresh?: boolean
+  /** The balance before this panel, so the builder emits the wallet chip for the change. */
+  walletFrom?: number
 }
 
 /** The registry a fixture implies, with the bar of the form on stage at `progress`. */
@@ -350,7 +372,12 @@ function scene(options: SceneOptions = {}): PanelState {
   if (options.awardDaysAgo !== undefined) {
     state.lastStreakAwardDate = todayKey(EPOCH - options.awardDaysAgo * DAY)
   }
-  if (options.mon !== undefined) state.active = options.mon
+  if (options.mon !== undefined) {
+    // The stage meter at the view's progress, so the EXP bar reads what the fixture says.
+    const mon = options.mon
+    const threshold = registerXP(mon.rarity, mon.totalForms, mon.stageIndex)
+    state.active = { ...mon, usedAtStage: Math.round((options.companion?.progress ?? 0.5) * threshold) }
+  }
   if (options.eggStock !== undefined) state.eggStock = options.eggStock
   if (options.fresh !== true) {
     state.species = options.species ?? impliedSpecies(state, options.companion?.progress ?? 0.5)
@@ -399,6 +426,9 @@ function scene(options: SceneOptions = {}): PanelState {
     locale: LOCALE,
     // The host's own default (`tokendex.refreshInterval`), so Settings shows its picker here too.
     refreshSeconds: 120,
+    ...(options.walletFrom === undefined
+      ? {}
+      : { walletChange: { previous: options.walletFrom, id: 1 } }),
     ...(options.dev === undefined ? {} : { dev: options.dev }),
   })
 }
@@ -439,10 +469,74 @@ function devSection(): PanelDev {
   }
 }
 
+/**
+ * A catch, before and after: the scene with `species` on stage, and what the host replies — the
+ * core's own result line, and for a duplicate the panel rebuilt with the reward in the wallet,
+ * so the chip is the builder's, not a mock-up.
+ */
+function catchFixture(
+  id: string,
+  label: string,
+  lang: AppLanguage,
+  species: number,
+  rarity: Rarity,
+  outcome: { registeredPercent?: number; reward?: number; refunded?: number },
+): Fixture {
+  const spendable = 1_204_000_000
+  const encounter = wild(species, { rarity })
+  const base: SceneOptions = {
+    lang,
+    spendable,
+    inventory: { pokeBall: 7, greatBall: 2, ultraBall: 3, masterBall: 1 },
+    wild: [encounter, wild(10)],
+    mon: mon([4, 5, 6], 1),
+    line: evoLine([4, 5, 6]),
+    companion: { progress: 0.35, stageText: D.stage(lang, 2, 3), toNextText: '11M' },
+  }
+  const state = scene(base)
+  const name = state.wild.encounters[0]!.name
+  const resultText = D.turnResultText(
+    lang,
+    { kind: 'caught', refunded: outcome.refunded ?? 0, ...outcome },
+    { name, isShiny: false, item: 'ultraBall', trailHours: 0 },
+  )
+  // The core's own banner, from the save as it was before the catch: nothing of this species yet.
+  const catchNews = catchBanner(lang, freshCompanionState(lang), species, {
+    kind: 'caught',
+    refunded: outcome.refunded ?? 0,
+    ...outcome,
+  })
+  const gained = (outcome.reward ?? 0) + (outcome.refunded ?? 0)
+  if (gained === 0) return { id, label, state, throwResult: { resultText, catchNews } }
+  const after = scene({ ...base, spendable: spendable + gained, walletFrom: spendable })
+  return {
+    id,
+    label,
+    state,
+    throwResult: {
+      resultText,
+      catchNews,
+      spendableText: after.spendableText,
+      ...(after.walletChange === undefined ? {} : { walletChange: after.walletChange }),
+    },
+  }
+}
+
 export interface Fixture {
   id: string
   label: string
   state: PanelState
+  /**
+   * What the bench's stand-in host replies to a `?throw=` on this fixture: the result line and,
+   * when the catch pays, the wallet's new balance and the chip that animates the rise. Absent:
+   * a plain "Gotcha!".
+   */
+  throwResult?: {
+    resultText: string
+    catchNews?: PanelEncounterResult['catchNews']
+    spendableText?: string
+    walletChange?: PanelWalletChange
+  }
 }
 
 /** Every case worth eyeballing after a UI change. Add one rather than editing another. */
@@ -697,6 +791,77 @@ export const FIXTURES: Fixture[] = [
       line: evoLine([4, 5, 6]),
       companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
       eggUsage: 2_400_000,
+    }),
+  },
+  catchFixture('catch-first', 'Catch: a first catch registers the species at 5%', 'en', 147, 'rare', {
+    registeredPercent: 5,
+  }),
+  catchFixture('catch-duplicate', 'Catch: a duplicate pays tokens into the wallet', 'en', 10, 'common', {
+    reward: EconomyBalance.duplicateReward.common,
+  }),
+  // The longest result line there is: a legendary duplicate that also refunds a theft.
+  ...(['en', 'ko', 'ja', 'es'] as const).map((lang) =>
+    catchFixture(
+      `catch-longest-${lang}`,
+      `Catch: the longest result line (${lang})`,
+      lang,
+      150,
+      'legendary',
+      {
+        reward: EconomyBalance.duplicateReward.legendary,
+        refunded: 3_000_000,
+      },
+    ),
+  ),
+  {
+    id: 'plate-quarter',
+    label: 'Player plate: the EXP bar a quarter of the way through its stage',
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: {
+        progress: 0.25,
+        stageText: D.stage('en', 2, 3),
+        toNextText: '12.5M to next evolution',
+      },
+      wild: [wild(147)],
+    }),
+  },
+  {
+    id: 'plate-registered',
+    label: 'Player plate: a final form registered, its bar full',
+    state: scene({
+      mon: mon([4, 5, 6], 2),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 1, stageText: D.stage('en', 3, 3), toNextText: '' },
+      wild: [wild(147)],
+      species: {
+        4: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+        5: { ...freshSpeciesProgress(), unlocked: true, registered: true },
+        6: {
+          ...freshSpeciesProgress(),
+          unlocked: true,
+          registered: true,
+          xp: 25_000_000,
+          threshold: 25_000_000,
+        },
+      },
+    }),
+  },
+  {
+    id: 'plate-egg',
+    label: 'Player plate: an egg on its way to hatching',
+    state: scene({ companion: { progress: 0.4, toNextText: '3M to hatch' }, wild: [wild(147)] }),
+  },
+  {
+    id: 'wild-owned',
+    label: 'Wild plate: a species you already have carries the Poké Ball',
+    state: scene({
+      mon: mon([4, 5, 6], 1),
+      line: evoLine([4, 5, 6]),
+      companion: { progress: 0.35, stageText: D.stage('en', 2, 3), toNextText: '11M to next evolution' },
+      wild: [wild(129), wild(147)],
+      dex: [caught([129, 130], 6)],
     }),
   },
   {

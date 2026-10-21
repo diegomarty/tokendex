@@ -434,6 +434,40 @@ describe('turn results', () => {
       }
     }
   })
+
+  // [trigger branch] Each half of a catch's news on its own: the share of a first catch, the
+  // tokens of a duplicate, each formatted here and never in the webview.
+  it.each(APP_LANGUAGES)('tells a first catch its share and a duplicate its reward, in %s', (lang) => {
+    const ball = context('pokeBall')
+    const first = d.turnResultText(lang, { kind: 'caught', refunded: 0, registeredPercent: 5 }, ball)
+    expect(first).toContain(d.caughtRegisteredText(lang, 5))
+    expect(first).toContain('5')
+    const duplicate = d.turnResultText(lang, { kind: 'caught', refunded: 0, reward: 2_000_000 }, ball)
+    expect(duplicate).toContain(d.duplicateRewardText(lang, '2M'))
+    expect(duplicate).not.toContain(d.caughtRegisteredText(lang, 5))
+    // The news the scene shows on a catch: new to the Pokédex with its share, or a duplicate
+    // with its reward — each with a headline and a detail of its own.
+    const isNew = d.catchNews(lang, { kind: 'caught', refunded: 0, registeredPercent: 5 })
+    expect(isNew).toEqual({
+      isNew: true,
+      headline: d.newInDexText(lang),
+      detail: d.catchShareText(lang, 5),
+    })
+    const dup = d.catchNews(lang, { kind: 'caught', refunded: 0, reward: 2_000_000 })
+    expect(dup).toEqual({
+      isNew: false,
+      headline: d.alreadyOwnedText(lang),
+      detail: d.rewardTokensText(lang, '2M'),
+    })
+    expect(new Set([isNew.headline, dup.headline, isNew.detail, dup.detail]).size).toBe(4)
+    // The same number the Pokédex row shows, formatted the same way.
+    expect(d.registrationText(lang, 5, false)).toContain(
+      d.caughtRegisteredText(lang, 5).match(/5\s?%/)![0],
+    )
+    if (lang === 'ja') expect(first).not.toMatch(/[。！!] /)
+    const plain = d.turnResultText(lang, { kind: 'caught', refunded: 0 }, ball)
+    expect(first.length).toBeGreaterThan(plain.length)
+  })
 })
 
 describe('save import strings', () => {

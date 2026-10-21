@@ -1886,35 +1886,63 @@ body.paused .meter .meter-icon {
   opacity: 1;
   outline: none;
 }
-.plate .bar.exp {
-  margin: 4px 0 3px;
-}
-.plate .bar.exp i {
-  background: var(--exp);
-}
-/* The companion's road: the same rule and cells as the wild plate's mood, in EXP blue. */
-.exp-row {
-  --tone: var(--exp);
-  display: grid;
-  grid-template-columns: 14px minmax(0, 1fr);
-  align-items: center;
-  gap: 5px;
+/* The EXP bar, the games' own: a dark track with "EXP" in yellow at its left and the blue fill,
+   and under it, in the same blue, what the stage has and what is left. Drawn in the
+   illustration's palette in every editor theme — it is part of the plate, not of the editor. */
+.exp-meter {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
 }
-.exp-row .meter-icon {
-  opacity: 1;
+.exp-line {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 3px 2px 2px;
+  border: 1.5px solid #10151d;
+  border-radius: 6px;
+  background: #2a313c;
 }
-.plate .exp-row .bar.exp {
-  margin: 0;
+.exp-label {
+  flex: none;
+  padding: 0 3px;
+  color: #f7cf4a;
+  font-size: 8.5px;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
-.plate .bar.exp.gauge i {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--tone) 70%, #fff) 0 35%,
-    var(--tone) 35% 100%
-  );
+.plate .bar.exp-track {
+  flex: 1;
+  height: 6px;
+  border: none;
+  border-radius: 3px;
+  background: #11161e;
+}
+.plate .bar.exp-track i {
+  border-radius: 3px;
+  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+}
+/* Two figures on one line where they fit; in a narrow plate the second wraps under, right-aligned,
+   rather than being cut. */
+.exp-figures {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 6px;
+  margin-top: 3px;
+  color: color-mix(in srgb, var(--exp) 70%, var(--ink));
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.exp-figures .exp-left {
+  margin-left: auto;
+}
+body.vscode-dark .exp-figures {
+  color: color-mix(in srgb, var(--exp) 65%, #fff);
 }
 .plate-player .plate-pct {
   padding: 0 6px;
@@ -1923,9 +1951,305 @@ body.paused .meter .meter-icon {
   color: color-mix(in srgb, var(--exp) 55%, var(--ink));
   font-size: 10.5px;
 }
-.plate-sub.to-next {
-  margin-top: 2px;
-  font-size: 10px;
+
+/* Already yours: the Poké Ball the games print beside a species you have caught — the same
+   mark the Pokédex puts on an owned cell (the shared rule is beside `.dex .cell.owned::before`),
+   drawn in CSS so no sprite is bundled. */
+.owned-ball {
+  flex: none;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+}
+
+/* The catch's news, over the scene like a level-up: a ribbon that drops in once the catch
+   animation is over, gold for something new to the Pokédex, quieter for a duplicate. */
+.catch-banner {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 42%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  /* Its own width, not the half of the scene an absolutely placed box at left: 50% gets. */
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 7px 16px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow:
+    0 2px 0 var(--paper-edge),
+    0 6px 18px rgb(0 0 0 / 0.25);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.catch-headline {
+  font-size: 13px;
+  font-weight: 800;
+}
+.catch-detail {
+  font-size: 11px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--exp) 70%, var(--ink));
+  font-variant-numeric: tabular-nums;
+}
+.catch-banner.new {
+  border-color: #b8860b;
+  background: linear-gradient(180deg, #fff7d6, #ffe58a);
+  color: #4a3500;
+  box-shadow:
+    0 2px 0 #c99a1e,
+    0 0 0 4px rgb(255 214 90 / 0.35),
+    0 8px 22px rgb(0 0 0 / 0.3);
+}
+.catch-banner.new .catch-headline {
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+.catch-banner.new .catch-detail {
+  color: #2f8f4e;
+}
+.catch-banner.new::before,
+.catch-banner.new::after {
+  content: '✨';
+  position: absolute;
+  top: -10px;
+  font-size: 14px;
+}
+.catch-banner.new::before {
+  left: -8px;
+}
+.catch-banner.new::after {
+  right: -8px;
+}
+/* A new species, told in three beats: the Pokémon steps out of its silhouette, "+5%" appears,
+   and the share it earned lights up white on its registration bar before settling into EXP blue
+   — the bar that was, the part that is new, and then what it is now. Every beat is gated on
+   `.entering`, so a later repaint shows the end state at once. */
+.catch-banner.rich {
+  flex-direction: row;
+  gap: 10px;
+  padding: 9px 14px 10px 9px;
+  text-align: left;
+  /* The double rule of the games' dialog boxes, in gold. */
+  outline: 2px solid rgb(255 255 255 / 0.65);
+  outline-offset: -6px;
+}
+/* The Pokémon on a spotlight, as a new entry is shown in the games' Pokédex. */
+.catch-mon-wrap {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    rgb(255 255 255 / 0.95),
+    rgb(255 255 255 / 0.35) 70%,
+    transparent
+  );
+}
+/* The animated Gen-V frame at native ×1 in a 64px window: cropped if it is larger, never
+   scaled — a fractional scale of pixel art is mush. */
+.catch-mon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  object-fit: none;
+  image-rendering: pixelated;
+}
+/* The burst of light the silhouette steps out of. */
+.catch-mon-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 214 90 / 0.9);
+  opacity: 0;
+}
+.catch-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+.catch-banner.rich .catch-headline {
+  font-size: 14px;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.catch-reg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+/* The registration bar, drawn like the EXP bar: a dark bordered track with the blue in it. */
+.catch-reg-bar {
+  position: relative;
+  flex: 1;
+  min-width: 110px;
+  height: 10px;
+  border: 1.5px solid #10151d;
+  border-radius: 6px;
+  background: #11161e;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.5);
+  overflow: hidden;
+}
+.catch-reg-bar .base {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+}
+/* The share just earned: placed by the webview at [from, to] of the bar (CSSOM, never inline).
+   It lights up white, then the blue fills it from the left. */
+.catch-reg-bar .gain {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  background: rgb(255 255 255 / 0.8);
+  box-shadow: 0 0 6px rgb(255 255 255 / 0.9);
+  transform-origin: left center;
+}
+.catch-reg-bar .gain b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(180deg, #8cc4ff 0 35%, var(--exp) 35% 100%);
+}
+/* "+5% registered" as a tag, the green of a good outcome. */
+.catch-banner.rich .catch-detail {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(47 143 78 / 0.14);
+  color: #23703c;
+  font-size: 11px;
+}
+/* A glint sweeping the card once as it lands. Clipped by its own box, so the card's corner
+   sparkles can still stand outside it. */
+.catch-shine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.catch-shine::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgb(255 255 255 / 0.7) 50%, transparent 65%);
+  transform: translateX(-120%);
+}
+.catch-banner.rich.entering .catch-shine::before {
+  animation: catch-shine 900ms ease-out 200ms;
+}
+.catch-banner.rich.entering .catch-mon {
+  animation: catch-reveal 600ms ease-out 250ms backwards;
+}
+.catch-banner.rich.entering .catch-mon-wrap::after {
+  animation: catch-burst 700ms ease-out 650ms;
+}
+.catch-banner.rich.entering .catch-detail {
+  animation: catch-detail-in 260ms ease-out 700ms backwards;
+}
+.catch-banner.rich.entering .gain {
+  animation: catch-gain-in 320ms ease-out 760ms backwards;
+}
+.catch-banner.rich.entering .gain b {
+  animation: catch-gain-fill 650ms ease-in-out 1250ms backwards;
+}
+@keyframes catch-shine {
+  to {
+    transform: translateX(120%);
+  }
+}
+@keyframes catch-burst {
+  0% {
+    opacity: 1;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@keyframes catch-reveal {
+  from {
+    filter: brightness(0);
+  }
+}
+@keyframes catch-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes catch-gain-in {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes catch-gain-fill {
+  from {
+    width: 0;
+  }
+}
+.catch-banner.entering {
+  animation: catch-banner-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.3) backwards;
+}
+.catch-banner.new.entering {
+  animation: catch-banner-new 640ms cubic-bezier(0.2, 0.9, 0.3, 1.4) backwards;
+}
+@keyframes catch-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -30%);
+  }
+}
+@keyframes catch-banner-new {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .catch-banner.entering,
+  .catch-banner.new.entering,
+  .catch-banner.rich.entering .catch-mon,
+  .catch-banner.rich.entering .catch-detail,
+  .catch-banner.rich.entering .gain,
+  .catch-banner.rich.entering .gain b,
+  .catch-banner.rich.entering .catch-shine::before,
+  .catch-banner.rich.entering .catch-mon-wrap::after {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .catch-banner,
+  .catch-banner.new {
+    background: Canvas;
+    color: CanvasText;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+  .owned-ball {
+    forced-color-adjust: none;
+  }
 }
 
 /* The dialog box: double rule, white on deep blue, in every editor theme. The question and
@@ -3416,6 +3740,11 @@ body.compact .row-stat .label {
   left: 6px;
   width: 9px;
   height: 9px;
+}
+/* The Poké Ball mark, one drawing for both places it means "yours": an owned Pokédex cell and a
+   wild Pokémon whose species you already have. */
+.dex .cell.owned::before,
+.owned-ball {
   border-radius: 50%;
   border: 1px solid var(--ink);
   background: linear-gradient(180deg, var(--anger) 0 42%, var(--ink) 42% 58%, #fff 58%);
@@ -4152,5 +4481,87 @@ body.paused .wallet-badge .coin {
   }
   .reg-bar i {
     background: CanvasText;
+  }
+}
+
+/* ---- Settings: a switch ----
+   A native checkbox with `role="switch"`, drawn as a switch: the keyboard, the screen reader and
+   the form state are the platform's, only the look is ours. */
+.toggle-setting {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0 4px;
+  cursor: pointer;
+}
+.toggle-setting input[type='checkbox'] {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 1px 0 0;
+  border-radius: 999px;
+  border: 1px solid var(--vscode-checkbox-border, var(--vscode-panel-border));
+  background: var(
+    --vscode-checkbox-background,
+    color-mix(in srgb, var(--vscode-foreground) 18%, transparent)
+  );
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.toggle-setting input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--vscode-foreground);
+  transition: transform 150ms ease;
+}
+.toggle-setting input[type='checkbox']:checked {
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+.toggle-setting input[type='checkbox']:checked::after {
+  transform: translateX(14px);
+  background: var(--vscode-button-foreground);
+}
+.toggle-setting input[type='checkbox']:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.toggle-label {
+  font-weight: 600;
+}
+.toggle-hint {
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toggle-setting input[type='checkbox'],
+  .toggle-setting input[type='checkbox']::after {
+    transition: none;
+  }
+}
+@media (forced-colors: active) {
+  .toggle-setting input[type='checkbox'] {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+    background: Canvas;
+  }
+  .toggle-setting input[type='checkbox']::after {
+    background: CanvasText;
+  }
+  .toggle-setting input[type='checkbox']:checked {
+    background: Highlight;
   }
 }

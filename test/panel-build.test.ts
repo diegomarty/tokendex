@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { REFRESH_PRESETS, buildPanelState } from '../src/core/panel/build.js'
+import { REFRESH_PRESETS, buildPanelState, catchBanner } from '../src/core/panel/build.js'
 import { buildSnapshot, type CompanionView } from '../src/core/snapshot.js'
 import {
   Pokeball,
+  PokemonBalance,
   ANIMATED_SPECIES_MAX,
   EGG_STOCK_MAX,
   RareCandy,
@@ -16,6 +17,8 @@ import {
 } from '../src/core/companion/model.js'
 import { DEFAULT_TRAINER_ID } from '../src/core/companion/trainers.js'
 import { candyFullHint } from '../src/core/i18n/dispatch.js'
+import * as D from '../src/core/i18n/dispatch.js'
+import { compact } from '../src/core/tokenFormatter.js'
 import { progressOf } from '../src/core/companion/registry.js'
 import { STARTERS } from '../src/core/companion/starters.js'
 import {
@@ -700,6 +703,72 @@ describe('companion choice', () => {
   })
 })
 
+/** A registry entry with only what a test names. */
+const speciesEntry = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+  ...progressOf(state(), 0),
+  ...over,
+})
+
+describe('the EXP bar', () => {
+  const T = PokemonBalance.phaseThreshold('common', 2, 0)
+  const quarter = Math.round(T / 4)
+
+  // What it has and what is left, formatted here: the webview paints them in the bar's colour
+  // and derives nothing.
+  it('says what the companion has and what is left to its next stage', () => {
+    const panel = build({
+      state: state({ active: { ...activeMon, usedAtStage: quarter } }),
+      usage: usage(view()),
+    })
+    expect(panel.companion).toMatchObject({
+      expPercent: 25,
+      expText: `${compact(quarter)} / ${compact(T)}`,
+      expLeftText: D.expLeftText('en', compact(T - quarter)),
+    })
+  })
+
+  it('counts an egg toward its hatch', () => {
+    const egg = state({
+      species: { 1: speciesEntry({ unlocked: true }) },
+      eggUsage: PokemonBalance.eggHatchThreshold / 2,
+    })
+    const panel = build({ state: egg, usage: usage(view({ speciesID: undefined, name: undefined })) })
+    expect(panel.companion).toMatchObject({
+      expPercent: 50,
+      expText: `${compact(PokemonBalance.eggHatchThreshold / 2)} / ${compact(PokemonBalance.eggHatchThreshold)}`,
+    })
+  })
+
+  // [trigger branch] Nothing left to earn: a registered form with its meter full reads as
+  // registered, not "0 left".
+  it('reads a full, registered form as registered', () => {
+    const panel = build({
+      state: state({
+        active: { ...activeMon, usedAtStage: T },
+        species: { 25: speciesEntry({ unlocked: true, registered: true, xp: T, threshold: T }) },
+      }),
+      usage: usage(view()),
+    })
+    expect(panel.companion?.expPercent).toBe(100)
+    expect(panel.companion?.expLeftText).toBe(D.registrationText('en', 100, true))
+  })
+})
+
+describe('the wild plate’s Poké Ball', () => {
+  // [trigger branch] Owned, not registered: a species caught once (5%) already shows the ball,
+  // as the games mark what you have caught.
+  it('marks a species already obtained, and only that', () => {
+    const owned = build({
+      state: state({ wild: [wild()], species: { 147: speciesEntry({ unlocked: true, xp: 1 }) } }),
+    }).wild.encounters[0]!
+    expect(owned.ownedText).toBe(D.ownedText('en'))
+    const seen = build({
+      state: state({ wild: [wild()], species: { 147: speciesEntry({ seen: true }) } }),
+    }).wild.encounters[0]!
+    expect(seen.ownedText).toBeUndefined()
+  })
+})
+
 describe('the Pokédex summary', () => {
   // [trigger branch] A seen species is in the list but owned by nobody: counting the list would
   // put it in the collection.
@@ -733,5 +802,34 @@ describe('the Pokédex summary', () => {
       ]),
     )
     expect(build({ state: state({ species }) }).dexSummary.percent).toBe(1)
+  })
+})
+
+describe('the catch banner', () => {
+  // [trigger branch] A first catch carries its bar before and after, for the reveal; a duplicate
+  // has no bar to fill.
+  it('gives a first catch its species and its bar before and after', () => {
+    const before = state({ species: { 147: speciesEntry({ seen: true }) } })
+    const banner = catchBanner('en', before, 147, { kind: 'caught', refunded: 0, registeredPercent: 5 })
+    expect(banner).toMatchObject({
+      isNew: true,
+      registration: { speciesID: 147, fromPercent: 0, toPercent: 5 },
+    })
+    // [trigger branch] The detail says what this catch added, not where the bar now stands.
+    const partway = state({ species: { 147: speciesEntry({ seen: true, xp: 400, threshold: 1_000 }) } })
+    const gained = catchBanner('en', partway, 147, { kind: 'caught', refunded: 0, registeredPercent: 45 })
+    expect(gained.registration).toMatchObject({ fromPercent: 40, toPercent: 45 })
+    expect(gained.detail).toBe(D.catchShareText('en', 5))
+    const dup = catchBanner('en', before, 147, { kind: 'caught', refunded: 0, reward: 2_000_000 })
+    expect(dup.isNew).toBe(false)
+    expect(dup.registration).toBeUndefined()
+  })
+})
+
+describe('the finished-companion setting', () => {
+  // Absent in the save means the default — move on — and the panel says so.
+  it('reads the setting off the save, moving on by default', () => {
+    expect(build().keepCompletedCompanion).toBe(false)
+    expect(build({ state: state({ keepCompletedCompanion: true }) }).keepCompletedCompanion).toBe(true)
   })
 })

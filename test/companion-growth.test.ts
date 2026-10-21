@@ -166,6 +166,60 @@ describe('applyUsage', () => {
     expect(result.mon.plannedPathIDs).toEqual([133, 135])
   })
 
+  // [trigger branch] A species caught before its line was known owes its share; the line fixes
+  // the threshold, the share becomes experience, and the meter starts where the bar is.
+  it('settles a share owed by a catch once the line fixes the threshold', () => {
+    const owed = {
+      xp: 0,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      pendingShare: 0.05,
+    }
+    const result = applyUsage(mon(), 0, line, new Set(), fixedRNG(0), { 1: owed })
+    expect(result.species[1]?.xp).toBe(Math.ceil(0.05 * thr(0)))
+    expect(result.species[1]?.pendingShare).toBeUndefined()
+    expect(result.mon.usedAtStage).toBe(Math.ceil(0.05 * thr(0)))
+  })
+
+  // [trigger branch] The meter never lags the bar: a hatch into a caught species starts the
+  // meter at zero while its bar already reads the catch's share.
+  it('starts the meter where the species bar already is', () => {
+    const caught = {
+      xp: 1_000,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      threshold: thr(0),
+    }
+    const result = applyUsage(mon(), 10, line, new Set(), fixedRNG(0), { 1: caught })
+    expect(result.mon.usedAtStage).toBe(1_010)
+    expect(result.species[1]?.xp).toBe(1_010)
+  })
+
+  // [trigger branch] The same rule on evolving: the next form was caught earlier and owes its
+  // share, so the meter it starts with is the overflow plus that share, not the overflow alone.
+  it('starts an evolved form’s meter where its bar already is', () => {
+    const owed = {
+      xp: 0,
+      unlocked: true,
+      seen: true,
+      registered: false,
+      caught: 1,
+      candiesUsed: 0,
+      pendingShare: 0.05,
+    }
+    const result = applyUsage(mon(), thr(0) + 7, line, new Set(), fixedRNG(0), { 2: owed })
+    expect(result.mon.stageIndex).toBe(1)
+    const share = Math.ceil(0.05 * thr(1))
+    expect(result.species[2]?.xp).toBe(7 + share)
+    expect(result.mon.usedAtStage).toBe(7 + share)
+  })
+
   it('records where the species sits in its line when the threshold is fixed', () => {
     const result = applyUsage(mon(), 1, line, new Set(), fixedRNG(0), {})
     expect(result.species[1]).toMatchObject({ baseID: 1, stageIndex: 0, totalForms: 3 })
@@ -188,6 +242,22 @@ describe('applyUsage', () => {
     expect(result.events[0]?.kind).toBe('dittoRevealed')
     expect(result.species[1]).toMatchObject({ xp: 12, registered: true })
     expect(result.species[132]).toMatchObject({ xp: thr(0), unlocked: true })
+  })
+
+  // [trigger branch] The disguise species was unlocked by the hatch alone — never caught, never
+  // raised. The reveal takes that back, or its first real catch would count as a duplicate.
+  it('takes back an unlock the disguise alone gave', () => {
+    const disguised = mon({ dittoDisguise: 132, usedAtStage: 0 })
+    const byHatch = {
+      1: { xp: 0, unlocked: true, seen: false, registered: false, caught: 0, candiesUsed: 0 },
+    }
+    const result = applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), byHatch)
+    expect(result.events[0]?.kind).toBe('dittoRevealed')
+    expect(result.species[1]?.unlocked ?? false).toBe(false)
+    const caught = { 1: { ...byHatch[1], caught: 1 } }
+    expect(applyUsage(disguised, thr(0), line, new Set(), fixedRNG(0), caught).species[1]?.unlocked).toBe(
+      true,
+    )
   })
 
   it('returns the very same registry when a zero delta settles nothing', () => {

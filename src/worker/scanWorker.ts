@@ -100,6 +100,7 @@ export type WorkerAction =
   | { action: 'trackLegendary'; trailID: string }
   | { action: 'runFrom'; encounterID: string }
   | { action: 'setTrainer'; trainerID: string }
+  | { action: 'setKeepCompleted'; keep: boolean }
   | { action: 'setCompanion'; speciesID: number }
   | { action: 'chooseStarter'; speciesID: number }
   | { action: 'incubateEgg' }
@@ -209,7 +210,7 @@ const config = (workerData ?? {}) as WorkerConfig
 
 // Re-exported from the core panel builder, its real home, so the host's import keeps working.
 export { REFRESH_PRESETS } from '../core/panel/build.js'
-import { buildPanelState } from '../core/panel/build.js'
+import { buildPanelState, catchBanner } from '../core/panel/build.js'
 
 /**
  * Whether an encounter may toast at all (`tokendex.encounterNotifications`). Carried on every
@@ -736,6 +737,16 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
         }),
         animation: !spentSomething ? 'none' : payload.action === 'throwBall' ? 'throw' : 'feed',
         attacked: 'attack' in outcome && outcome.attack !== undefined,
+        ...(outcome.kind === 'caught'
+          ? {
+              catchNews: catchBanner(
+                companion.snapshot().language,
+                before,
+                target?.speciesID ?? 0,
+                outcome,
+              ),
+            }
+          : {}),
       }
     }
 
@@ -764,6 +775,10 @@ async function applyActionOn(payload: WorkerAction): Promise<PanelEncounterResul
 
     case 'setTrainer':
       await companion.setTrainer(payload.trainerID)
+      return undefined
+
+    case 'setKeepCompleted':
+      await companion.setKeepCompletedCompanion(payload.keep)
       return undefined
 
     case 'setCompanion':

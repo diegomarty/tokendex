@@ -7,8 +7,8 @@
  * second source of truth) so a reader finds the whole economy in one module. `docs/game-design.md`
  * lists the values.
  *
- * Not wired into the game yet: phase 3 (catching registers) reads `duplicateReward`, phase 5
- * (shiny) reads `shinyBoostShare`.
+ * A catch reads `catchShare` and `duplicateReward` (`encounters.ts`); phase 5 (shiny) will read
+ * `shinyBoostShare`.
  */
 
 import type { Rarity } from './model.js'
@@ -25,6 +25,12 @@ export {
 } from './encounters.js'
 
 export const EconomyBalance = {
+  /**
+   * The share of a species' registration its first catch fills. Small on purpose: catching
+   * obtains the species, raising it is what registers it.
+   */
+  catchShare: 0.05,
+
   /**
    * Tokens a duplicate catch pays into `earnedTokens`, by the line's rarity. Each stays strictly
    * below half the cheapest expected catch in its band, so duplicates are never a farm; the

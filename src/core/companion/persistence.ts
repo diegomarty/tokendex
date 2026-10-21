@@ -118,6 +118,7 @@ export function decodeMonState(value: unknown): MonState | undefined {
   if (nature !== undefined) mon.nature = nature
   const disguise = lenientOptional(value, 'dittoDisguise', isInt)
   if (disguise !== undefined) mon.dittoDisguise = disguise
+  if (value['chosenWhenRegistered'] === true) mon.chosenWhenRegistered = true
   return mon
 }
 
@@ -314,6 +315,7 @@ export function decodeSpeciesProgress(value: unknown): SpeciesProgress | undefin
   if (value['shinyRegistered'] === true) progress.shinyRegistered = true
   const nature = lenientOptional(value, 'nature', isNature)
   if (nature !== undefined) progress.nature = nature
+  if (value['companionShiny'] === true) progress.companionShiny = true
   // An entry that says nothing is dropped: it would only make the map grow.
   const empty = Object.entries(progress).every(([key, v]) => v === fresh[key as keyof SpeciesProgress])
   return empty ? undefined : progress
@@ -442,6 +444,7 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   // an imported save gets its slug checked.
   const trainerID = lenientOptional(value, 'trainerID', isString)
   if (trainerID !== undefined) state.trainerID = trainerID
+  if (value['keepCompletedCompanion'] === true) state.keepCompletedCompanion = true
   const lastEncounterToastAt = lenientOptional(value, 'lastEncounterToastAt', isNumber)
   if (lastEncounterToastAt !== undefined) state.lastEncounterToastAt = lastEncounterToastAt
 

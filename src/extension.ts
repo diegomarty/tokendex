@@ -573,6 +573,7 @@ const CHANGING_REQUESTS: ReadonlySet<PanelRequestKind['kind']> = new Set([
   'track',
   'run',
   'setTrainer',
+  'setKeepCompleted',
   'setCompanion',
   'chooseStarter',
   'incubateEgg',
@@ -710,6 +711,12 @@ async function handlePanelRequest(request: PanelRequestKind): Promise<void> {
     case 'setTrainer': {
       if (!isTrainerID(request.trainerID)) return
       response = await requestAction({ action: 'setTrainer', trainerID: request.trainerID }, true)
+      break
+    }
+
+    case 'setKeepCompleted': {
+      if (typeof request.keep !== 'boolean') return
+      response = await requestAction({ action: 'setKeepCompleted', keep: request.keep }, true)
       break
     }
 

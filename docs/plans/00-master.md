@@ -295,6 +295,10 @@ El compañero elegido viene del lado ganador. `earnedTokens` (ver C6) viene del 
 - Capturar: desbloquea la especie y suma el **5 %** de `registerXP`. Esto sustituye al registro `wild` aislado; el historial de capturas se mantiene.
 - Duplicado: recompensa en tokens, calibrada con el simulador de la fase 1b.
 - Texto del resultado de la captura con el % ganado y la recompensa (`dispatch.ts`).
+- Mejoras de UI pedidas por Diego (2026-10-20), detalladas en el sub-plan § Mejoras de UI:
+  - barra de EXP al estilo de los juegos, con lo que lleva y lo que le queda integrado y del mismo color;
+  - aviso de captura como el de subir de nivel, en la zona del salvaje: el % de registro sumado y si es nuevo en la Pokédex;
+  - una Poké Ball en la tarjeta del salvaje si ya lo tienes, como en los juegos.
 - **Sub-plan:** `docs/plans/03-capturar-registra.md`.
 
 ### Fase 3b — Salvajes con formas evolucionadas

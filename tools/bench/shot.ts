@@ -66,6 +66,9 @@ if (autoThrow !== null) {
             ball.oddsText = percent(pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10)
           }
         }
+        const reply = fixture.throwResult
+        if (reply?.spendableText !== undefined) next.spendableText = reply.spendableText
+        if (reply?.walletChange !== undefined) next.walletChange = reply.walletChange
         setTimeout(() => {
           window.postMessage({ type: 'state', state: next }, '*')
           window.postMessage(
@@ -75,9 +78,10 @@ if (autoThrow !== null) {
                 encounterID: m.encounterID,
                 kind: 'caught',
                 shakes: 4,
-                resultText: `Gotcha! ${head?.name ?? ''} was caught!`,
+                resultText: reply?.resultText ?? `Gotcha! ${head?.name ?? ''} was caught!`,
                 animation: 'throw',
                 attacked: false,
+                ...(reply?.catchNews === undefined ? {} : { catchNews: reply.catchNews }),
               },
             },
             '*',

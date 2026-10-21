@@ -46,8 +46,12 @@ import {
   type TrailEntry,
   type WildEncounter,
   type WildFind,
+  type SpeciesProgress,
   freshCompanionState,
+  freshSpeciesProgress,
 } from '../src/core/companion/model.js'
+import { EconomyBalance } from '../src/core/companion/economy.js'
+import { registrationPercent } from '../src/core/companion/registry.js'
 
 /** Deterministic RNG so every roll in a throw is pinned. */
 const fixedRNG = (...values: number[]) => {
@@ -727,7 +731,12 @@ describe('attacks', () => {
       sequence(STAY),
       NOW,
     )
-    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 3_000_000 })
+    expect(result.outcome).toEqual({
+      kind: 'caught',
+      shakes: 4,
+      refunded: 3_000_000,
+      registeredPercent: 5,
+    })
     expect(result.state.spentTokens).toBe(2_000_000)
   })
 })
@@ -1007,7 +1016,7 @@ describe('throwBall', () => {
     ])
     const result = throwBall(before, 'w1', 'pokeBall', fixedRNG(0), NOW)
 
-    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 0 })
+    expect(result.outcome).toEqual({ kind: 'caught', shakes: 4, refunded: 0, registeredPercent: 5 })
     expect(result.state.inventory['pokeBall']).toBe(1)
     expect(result.state.wild).toHaveLength(0)
     expect(result.state.dex).toHaveLength(1)
@@ -1123,5 +1132,70 @@ describe('the wallet encounters spend from', () => {
     const wallet = 300_000
     const before = state({ usedSinceInstall: 1_000_000, spentTokens: 1_200_000, earnedTokens: 500_000 })
     expect(stealAmount(before, wild({ rarity: 'rare' }))).toBe(wallet)
+  })
+})
+
+describe('catching registers', () => {
+  const catchOne = (s: CompanionState, target: WildEncounter = wild()) =>
+    takeTurn(
+      { ...s, inventory: { masterBall: 1 }, wild: [target] },
+      target.id,
+      { kind: 'throw', ball: 'masterBall' },
+      sequence(STAY),
+      NOW,
+    )
+  const known = (over: Partial<SpeciesProgress> = {}): SpeciesProgress => ({
+    ...freshSpeciesProgress(),
+    threshold: 10_000_000,
+    ...over,
+  })
+
+  // [trigger branch] A first catch with the line known: the share goes straight to the bar.
+  it('registers a share of a new species whose threshold is known', () => {
+    const result = catchOne(state({ species: { 10: known({ seen: true }) } }))
+    expect(result.state.species[10]).toMatchObject({ unlocked: true, caught: 1, xp: 500_000 })
+    expect(result.outcome).toMatchObject({ kind: 'caught', registeredPercent: 5 })
+    expect(result.state.earnedTokens).toBe(0)
+  })
+
+  // [trigger branch] No line yet: the share is owed, and the Pokédex already reads it.
+  it('owes the share of a species never raised, and shows it', () => {
+    const result = catchOne(state())
+    const progress = result.state.species[10]!
+    expect(progress).toMatchObject({ unlocked: true, xp: 0, pendingShare: EconomyBalance.catchShare })
+    expect(registrationPercent(progress)).toBe(5)
+    expect(result.outcome).toMatchObject({ registeredPercent: 5 })
+  })
+
+  // [trigger branch] Already obtained: tokens from the table, into `earnedTokens`, and no xp. With
+  // nothing spent, a reward taken off `spentTokens` would clamp to zero and vanish.
+  it('pays a duplicate from the table and adds no experience', () => {
+    const owned = known({ unlocked: true, caught: 1, xp: 500_000 })
+    const result = catchOne(state({ species: { 10: owned }, spentTokens: 0 }))
+    expect(result.state.earnedTokens).toBe(EconomyBalance.duplicateReward.common)
+    expect(result.state.species[10]).toMatchObject({ xp: 500_000, caught: 2 })
+    expect(result.state.species[10]?.pendingShare).toBeUndefined()
+    expect(result.outcome).toMatchObject({ reward: EconomyBalance.duplicateReward.common })
+    expect(result.outcome).not.toHaveProperty('registeredPercent')
+    const rare = catchOne(state({ species: { 10: owned } }), wild({ rarity: 'rare' }))
+    expect(rare.state.earnedTokens).toBe(EconomyBalance.duplicateReward.rare)
+  })
+
+  // [trigger branch] A threshold where 5% is not a whole number: rounding down would read 4%.
+  it('reads the full share whatever the threshold', () => {
+    const odd = known({ seen: true, threshold: 16_666_667 })
+    const result = catchOne(state({ species: { 10: odd } }))
+    expect(result.outcome).toMatchObject({ registeredPercent: 5 })
+    expect(registrationPercent(result.state.species[10]!)).toBe(5)
+  })
+
+  it('never takes a species past its bar with the share', () => {
+    const nearly = known({ seen: true, xp: 9_800_000 })
+    expect(catchOne(state({ species: { 10: nearly } })).state.species[10]?.xp).toBe(10_000_000)
+  })
+
+  it('marks the shiny form obtained when a shiny is caught', () => {
+    expect(catchOne(state(), wild({ isShiny: true })).state.species[10]?.shinyUnlocked).toBe(true)
+    expect(catchOne(state()).state.species[10]?.shinyUnlocked).toBeUndefined()
   })
 })

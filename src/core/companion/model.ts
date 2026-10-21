@@ -752,6 +752,11 @@ export interface MonState {
   /** undefined = ordinary. Set = really a Ditto, disguised as this species. */
   dittoDisguise?: number
   dittoRevealed: boolean
+  /**
+   * The player put this one on stage by hand while its form was already registered — to raise
+   * its shiny bar, say. The move-on rule leaves it alone; evolving into a new form clears it.
+   */
+  chosenWhenRegistered?: boolean
 }
 
 /**
@@ -793,7 +798,7 @@ export interface SpeciesProgress {
   pendingShare?: number
   /** Experience toward the shiny form, fed only once registered. */
   shinyXP?: number
-  /** The shiny form was obtained — hatched, or raised from a shiny — even before its bar fills. */
+  /** The shiny form was obtained — caught, hatched or raised — even before its bar fills. */
   shinyUnlocked?: boolean
   shinyRegistered?: boolean
   /**
@@ -801,6 +806,12 @@ export interface SpeciesProgress {
    * Pokémon — a Mint bought for it is not rolled away by a switch.
    */
   nature?: PokemonNature
+  /**
+   * The companion raised as this species was shiny when it left the stage. Separate from
+   * `shinyUnlocked`: catching a shiny obtains the shiny form for the collection, it does not
+   * turn the Pokémon you raised shiny.
+   */
+  companionShiny?: boolean
 }
 
 export interface EggStock {
@@ -1042,6 +1053,12 @@ export interface CompanionState {
   encountersSeen: number
   /** Pokémon Showdown trainer slug. Absent = the roster default. */
   trainerID?: string
+  /**
+   * A setting: a companion whose last bar is full stays on stage (its tokens wait for the shiny
+   * bar) instead of moving on to an obtained species still unregistered. Absent = move on, the
+   * default Diego chose.
+   */
+  keepCompletedCompanion?: boolean
   /** Epoch ms of the last encounter toast, for the one-per-hour cap. */
   lastEncounterToastAt?: number
   /**
