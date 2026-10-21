@@ -101,6 +101,37 @@ describe('the stylesheet', () => {
     expect([...new Set(widths)].sort()).toEqual(['media 300', 'media 340'])
   })
 
+  // [trigger branch] The lid, the Pokédex and the shop wear one head (plan 09 §9.2): the same
+  // casing row — lens, three lights, the title in the TOKENDEX logo's style, a screen on the
+  // right — drawn by one rule, so the three cannot drift apart in height, padding or type. Diego
+  // saw the Pokédex's next to the lid with its title off-centre and its count loose in white.
+  it('draws the lid and the tab heads as one head', () => {
+    const shared = topLevelSelectors().filter((s) =>
+      s
+        .split(',')
+        .map((p) => p.trim())
+        .includes('.wallet-bar'),
+    )
+    const both = shared.find((s) =>
+      s
+        .split(',')
+        .map((p) => p.trim())
+        .includes('.device-head'),
+    )
+    expect(both, 'one rule for `.wallet-bar` and `.device-head`').toBeDefined()
+    const pattern = (both ?? '')
+      .split(',')
+      .map((p) => p.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s*,\\s*')
+    const body = new RegExp(`(?:^|})\\s*${pattern}\\s*\\{([^}]*)\\}`).exec(CODE)?.[1] ?? ''
+    for (const property of ['min-height', 'padding', 'border-radius', 'align-items'])
+      expect(body, `${property} in the shared head rule`).toContain(`${property}:`)
+    // The titles are the logo's, in capitals from the stylesheet (the core's words unchanged).
+    expect(/\.brand-name\s*\{[^}]*text-transform:\s*uppercase/.test(CODE)).toBe(true)
+    expect(SCRIPT).not.toContain('class="dex-title"')
+    expect([...SCRIPT.matchAll(/deviceHead\(/g)].length).toBeGreaterThanOrEqual(3)
+  })
+
   // One button per layer: the game's paper `.btn`, its priced screen and the battle `.command`.
   // VS Code's blue `button.action` belongs to the counter — only the developer tab draws one now.
   it('draws the game buttons as .btn, leaving VS Code’s blue to the counter', () => {

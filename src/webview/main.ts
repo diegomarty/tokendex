@@ -382,7 +382,7 @@ function renderHome(state: PanelState): string {
   // usage is read on the device rather than on a box hanging off it.
   const lid = state.lid
   const usageOpen = openDrawers.has('usage')
-  const lights = lid.lights.map((light) => `<i class="led-${escapeHTML(light)}"></i>`).join('')
+  const lights = lidLights(state)
   const columns = lid.columns
     .map(
       (c) => `<div class="lid-column">
@@ -1299,16 +1299,15 @@ function renderShop(state: PanelState): string {
   // The head as the Pokédex's: the device's casing, its lens, the tab's name — and the balance on
   // the lid's own screen, since every price below is judged against it (Diego: the shop follows
   // Home's style).
-  const wallet = `
-    <div class="dex-head device-casing shop-head">
-      <span class="device-lens" aria-hidden="true"></span>
-      <span class="dex-title">${escapeHTML(state.strings.tabs.shop)}</span>
-      <span class="wallet-badge lcd shop-balance" title="${escapeHTML(state.strings.spendable)}"
+  const wallet = deviceHead(state, {
+    title: state.strings.tabs.shop,
+    className: 'shop-head',
+    screen: `<span class="wallet-badge lcd head-screen" title="${escapeHTML(state.strings.spendable)}"
             aria-label="${escapeHTML(state.strings.spendable)}: ${escapeHTML(state.spendableText)}">
         <span class="wallet-value">${escapeHTML(state.spendableText)}</span>
         <img class="coin" src="${itemSpriteURL('nugget')}" alt="" data-emoji-fallback="🪙">
-      </span>
-    </div>`
+      </span>`,
+  })
 
   // `note` is what every card in the group would otherwise repeat. Only the eggs have one so
   // far, and saying it once is the entire reason they each fit on one line now.
@@ -1600,8 +1599,9 @@ function renderChallenges(state: PanelState): string {
 }
 
 function renderDex(state: PanelState): string {
+  // The segments are the device's buttons, in the head's casing under its row (plan 09 §9.3).
   const segments = `
-    <div class="segments">
+    <div class="segments head-segments">
       <button class="seg" data-seg="species" aria-selected="${dexSegment === 'species'}">
         ${escapeHTML(state.dexSummary.speciesSegmentText)}
       </button>
@@ -1616,7 +1616,7 @@ function renderDex(state: PanelState): string {
       </button>
     </div>`
 
-  if (dexSegment === 'medals') return `${dexHead(state, '')}${segments}${renderMedals(state)}`
+  if (dexSegment === 'medals') return `${dexHead(state, undefined, segments)}${renderMedals(state)}`
 
   if (dexSegment === 'species' || dexSegment === 'shiny') {
     // The Shinydex is the same grid seen through the shiny axis: a shiny registered is lit in
@@ -1630,24 +1630,12 @@ function renderDex(state: PanelState): string {
     const byID = new Map(state.dexSpecies.map((sp) => [sp.id, sp]))
     // A region narrows the grid to its numbers and puts its own progress on the head.
     const region = summary.regions.find((r) => r.id === dexRegion)
-    const completion =
+    const scope =
       region !== undefined && !shinydex
-        ? `
-      <div class="dex-progress">
-        <span class="desc">${escapeHTML(region.name)} · ${escapeHTML(region.progressText)}</span>
-        ${gameMeter(region.percent, { surface: 'casing', hidden: true })}
-      </div>`
+        ? { text: region.progressText, percent: region.percent, label: region.name }
         : shinydex
-          ? `
-      <div class="dex-progress">
-        <span class="desc">${escapeHTML(summary.shinyProgressText)}</span>
-        ${gameMeter(summary.shinyPercent, { surface: 'casing', tone: 'shiny', hidden: true })}
-      </div>`
-          : `
-      <div class="dex-progress">
-        <span class="desc">${escapeHTML(summary.progressText)}</span>
-        ${gameMeter(summary.percent, { surface: 'casing', hidden: true })}
-      </div>`
+          ? { text: summary.shinyProgressText, percent: summary.shinyPercent, shiny: true }
+          : { text: summary.progressText, percent: summary.percent }
     // The Shinydex says how a shiny is earned; the collection, how a first Pokémon is had.
     const hint = shinydex
       ? summary.shinyRegistered === 0
@@ -1672,7 +1660,11 @@ function renderDex(state: PanelState): string {
       return sp !== undefined && sp.name.toLowerCase().includes(query)
     }
 
-    const controls = `
+    // Search, order, "obtained only" and the regions, on the device's own screen under its
+    // buttons — folded with the head's chevron, open until folded (plan 09 §9.3).
+    const controls = openDrawers.has('dex-filters-folded')
+      ? '<div id="dex-filters" hidden></div>'
+      : `<div class="dex-filters lcd" id="dex-filters" role="group" aria-label="${escapeHTML(state.strings.dexFiltersToggle)}">
       <div class="dex-controls">
         ${listTools({
           searchAttr: 'id="dex-search"',
@@ -1695,7 +1687,8 @@ function renderDex(state: PanelState): string {
               aria-pressed="${r.id === dexRegion}" title="${escapeHTML(r.progressText)}">${escapeHTML(r.name)}<span class="region-pct">${escapeHTML(r.progressText)}</span></button>`,
           )
           .join('')}
-      </div>`
+      </div>
+    </div>`
 
     const cells: string[] = []
     // The order the grid reads in: number by default; by progress or rarity, the obtained first
@@ -1763,12 +1756,12 @@ function renderDex(state: PanelState): string {
         : `<div class="dex">${cells.join('')}</div>`
     // The detail renders after the grid but floats fixed at the bottom of the view: a card at
     // the top of a 649-cell grid opens off-screen when the click happened four screens down.
-    return `${dexHead(state, completion)}${segments}${controls}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
+    return `${dexHead(state, scope, segments + controls)}${hint}${grid}${renderDexDetail(state, byID.get(dexSelected ?? -1))}`
   }
 
-  const head = dexHead(state, '')
+  const head = dexHead(state, undefined, segments)
   if (state.dexLog.length === 0) {
-    return `${head}${segments}${emptyState(state.strings.emptyLog)}`
+    return `${head}${emptyState(state.strings.emptyLog)}`
   }
 
   // Rarity chips, counted by the core. The log itself stays chronological — this is the
@@ -1786,7 +1779,7 @@ function renderDex(state: PanelState): string {
   const visible =
     dexLogFilter === 'all' ? state.dexLog : state.dexLog.filter((e) => e.rarity === dexLogFilter)
   if (visible.length === 0) {
-    return `${head}${segments}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
+    return `${head}${chips}<p class="empty">${escapeHTML(state.strings.dexNoMatches)}</p>`
   }
 
   const rows = visible
@@ -1803,19 +1796,66 @@ function renderDex(state: PanelState): string {
       </div>`,
     )
     .join('')
-  return `${head}${segments}${chips}<div class="log">${rows}</div>`
+  return `${head}${chips}<div class="log">${rows}</div>`
 }
 
 /**
- * The top of the device: the Pokédex's own red, its title, and — on the collection — how far
- * along it is. The one accent this tab spends; everything under it stays the editor's.
+ * A tab's head, the lid's twin (plan 09 §9.2): the casing row with its lens, the three lights
+ * (the official limits, as on the lid), the tab's name in the logo's style and a screen on the
+ * right — and, under the row, a thin bar when the screen's figure is a progress. One piece, so
+ * the lid, the Pokédex and the shop read as the same device.
  */
-function dexHead(state: PanelState, progress: string): string {
-  return `<div class="dex-head device-casing">
-      <span class="device-lens" aria-hidden="true"></span>
-      <span class="dex-title">${escapeHTML(state.strings.tabs.dex)}</span>
-      ${progress}
+function deviceHead(
+  state: PanelState,
+  o: { title: string; screen?: string; bar?: string; className?: string; inside?: string },
+): string {
+  return `<div class="device-head device-casing${o.className === undefined ? '' : ` ${o.className}`}">
+      <span class="brand">
+        <span class="device-lens" aria-hidden="true"></span>
+        <span class="device-leds" aria-hidden="true">${lidLights(state)}</span>
+        <span class="brand-name device-head-title">${escapeHTML(o.title)}</span>
+      </span>
+      ${o.screen ?? ''}
+      ${o.bar === undefined ? '' : `<div class="device-head-bar">${o.bar}</div>`}
+      ${o.inside ?? ''}
     </div>`
+}
+
+/** The lid's three lights: the first three official limits' severity, dark without one. */
+function lidLights(state: PanelState): string {
+  return state.lid.lights.map((light) => `<i class="led-${escapeHTML(light)}"></i>`).join('')
+}
+
+/**
+ * The Pokédex's head: its count on the screen, the bar of that count under the row, and inside
+ * the casing what drives the grid — the segments and, on the collection, the filters' screen,
+ * which the chevron beside the count folds.
+ */
+function dexHead(
+  state: PanelState,
+  scope?: { text: string; percent: number; shiny?: boolean; label?: string },
+  inside = '',
+): string {
+  if (scope === undefined)
+    return deviceHead(state, { title: state.strings.tabs.dex, className: 'dex-head', inside })
+  const label = scope.label === undefined ? scope.text : `${scope.label} · ${scope.text}`
+  const open = !openDrawers.has('dex-filters-folded')
+  const fold = `<button class="head-fold" data-drawer="dex-filters-folded" aria-expanded="${open}" aria-controls="dex-filters"
+      title="${escapeHTML(state.strings.dexFiltersToggle)}" aria-label="${escapeHTML(state.strings.dexFiltersToggle)}">
+      <i class="codicon codicon-chevron-down" aria-hidden="true"></i></button>`
+  return deviceHead(state, {
+    title: state.strings.tabs.dex,
+    className: 'dex-head',
+    screen: `${fold}<span class="wallet-badge lcd head-screen" title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">
+        <span class="wallet-value">${escapeHTML(scope.text)}</span>
+      </span>`,
+    bar: gameMeter(scope.percent, {
+      surface: 'casing',
+      hidden: true,
+      ...(scope.shiny === true ? { tone: 'shiny' as const } : {}),
+    }),
+    inside,
+  })
 }
 
 function renderSettings(state: PanelState): string {
@@ -2275,6 +2315,7 @@ document.addEventListener('click', (event) => {
     else openDrawers.add(id)
     invalidate('home')
     invalidate('shop') // the shop's groups are drawers too
+    invalidate('dex') // and the Pokédex's filters fold like one
     render()
     return
   }

@@ -3759,35 +3759,6 @@ button.btn.priced:not(:has(.verb)) .cost {
 }
 
 /* ---- the Pokédex ---- */
-.dex-head {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 10px 14px 12px;
-  margin-bottom: 12px;
-  border-radius: 12px;
-}
-.dex-title {
-  font-weight: 800;
-  font-size: 1.1em;
-}
-.dex-head .dex-progress {
-  grid-column: 1 / -1;
-  margin: 4px 0 0;
-}
-.dex-head .dex-progress .desc {
-  /* The count sits up on the title's line, right-aligned, like a device's counter. */
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  color: #fff;
-  opacity: 0.95;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
 /* A caught species: a lifted tile, a Poké Ball mark in its corner and its rarity along the
    bottom edge. The silhouettes stay flat, which is what makes the caught ones read as caught. */
 .dex .cell.owned {
@@ -3886,7 +3857,7 @@ button.btn.priced:not(:has(.verb)) .cost {
   .pockets,
   .segments,
   .bag-list,
-  .dex-head,
+  .device-head,
   .dex-entry-head {
     background: Canvas;
     color: CanvasText;
@@ -4063,13 +4034,147 @@ button.btn.priced:not(:has(.verb)) .cost {
 .wallet-bar {
   position: relative;
   z-index: 3;
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 10px;
+}
+/* The lid and every tab's head are one head (plan 09 §9.2): the same casing row, height and air,
+   everything on it centred — so the Pokédex and the shop read as the device the lid is. */
+.wallet-bar,
+.device-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
+  min-height: 50px;
   margin-bottom: 10px;
   padding: 6px 7px 6px 10px;
   border-radius: 12px;
+}
+/* Lens, lights and name grouped as the lid groups them (`.brand`), so they stand where the lid's
+   do; the group takes the row and the screen stands on the right. */
+.device-head .brand {
+  flex: 1;
+}
+/* The tab's name fills the group; its screen stands on the right, as the lid's balance does. It
+   stands as tall as the lid's row (the name over the usage line, 34px inside the casing's edge),
+   so a bar under it — a second line of the flex — cannot shrink the row and lift what is on it. */
+.device-head-title {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+.device-head .head-screen {
+  cursor: default;
+}
+/* ---- the Pokédex's head, its insides (plan 09 §9.3) ----
+   Under its row, the casing holds what drives the grid: the segments as the device's buttons —
+   dark in the casing, the open one lit, as the tabs are — and the filters on a screen of their
+   own, the lid's kind, which the chevron beside the count folds. */
+.head-segments.segments {
+  flex: 1 0 100%;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+.head-segments .seg {
+  border: 1px solid var(--device-casing-edge);
+  border-radius: var(--r-m);
+  background: var(--device-casing-deep);
+  box-shadow:
+    inset 0 2px 3px rgb(0 0 0 / 0.35),
+    0 1px 0 rgb(255 255 255 / 0.2);
+  color: var(--on-fill);
+  opacity: 0.85;
+}
+.head-segments .seg:hover {
+  background: color-mix(in srgb, var(--device-casing-deep) 80%, #fff);
+}
+.head-segments .seg[aria-selected='true'] {
+  border-color: var(--lcd-edge);
+  background: radial-gradient(120% 140% at 30% 0%, var(--lcd-light-hi), var(--lcd-light));
+  color: var(--device-panel-ink);
+  opacity: 1;
+}
+.head-segments .seg:focus-visible,
+.head-fold:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+.head-fold {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -4px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-s);
+  background: none;
+  color: var(--on-fill);
+  cursor: pointer;
+}
+.head-fold .codicon {
+  transition: transform var(--t-fast) ease;
+}
+.head-fold[aria-expanded='true'] .codicon {
+  transform: rotate(180deg);
+}
+.dex-filters.lcd {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: var(--r-l);
+  color: var(--lcd-label);
+  text-shadow: none;
+  font-size: var(--fs-s);
+}
+.dex-filters .dex-controls {
+  margin-bottom: 6px;
+}
+.dex-filters .dex-controls:last-child {
+  margin-bottom: 0;
+}
+/* The fields and chips in the screen's own light: phosphor on dark glass. */
+.dex-filters :is(.list-search, .list-sort) {
+  position: relative;
+  z-index: 1;
+  color: var(--lcd-ink);
+  background: var(--lcd-edge);
+  border: 1px solid color-mix(in srgb, var(--lcd-ink) 35%, transparent);
+}
+.dex-filters .list-search::placeholder {
+  color: color-mix(in srgb, var(--lcd-label) 60%, transparent);
+}
+.dex-filters .chip {
+  position: relative;
+  z-index: 1;
+  color: var(--lcd-label);
+  border-color: color-mix(in srgb, var(--lcd-ink) 30%, transparent);
+  opacity: 1;
+}
+.dex-filters .chip:hover {
+  background: color-mix(in srgb, var(--lcd-ink) 12%, transparent);
+}
+.dex-filters .chip[aria-pressed='true'] {
+  color: var(--lcd-ink);
+  border-color: var(--lcd-ink);
+  background: color-mix(in srgb, var(--lcd-ink) 20%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .head-fold .codicon {
+    transition: none;
+  }
+}
+/* A progress under the row, inside the casing: the screen says the count, this its length. */
+.device-head-bar {
+  flex: 1 0 100%;
+  padding: 4px 3px 2px 0;
 }
 .brand {
   display: flex;
@@ -4084,6 +4189,8 @@ button.btn.priced:not(:has(.verb)) .cost {
   font-weight: 900;
   font-style: italic;
   letter-spacing: 0.05em;
+  /* Capitals from here, so the core's words stay as they are; scripts without case are unchanged. */
+  text-transform: uppercase;
   white-space: nowrap;
   color: #ffcb05;
   -webkit-text-stroke: 4px #2a4f9c;
@@ -5558,20 +5665,8 @@ img[src$='/versions/generation-vii/icons/egg.png'] {
 }
 
 /* ── The shop, in Home's style (Diego) ──────────────────────────────────────────────────────
-   The head is the Pokédex's casing with the lid's balance screen on its right; the groups are
+   The head is the lid's (`deviceHead`, with the balance on its screen); the groups are
    Home's drawers (`drawerHTML`), their rows paper cards inside. */
-.shop-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.shop-head .dex-title {
-  flex: 1;
-  min-width: 0;
-}
-.shop-head .shop-balance {
-  cursor: default;
-}
 .shop-drawers .drawer-detail .shop-rows {
   display: grid;
   gap: 6px;
