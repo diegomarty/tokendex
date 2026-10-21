@@ -2098,7 +2098,9 @@ function render(): void {
     // source did not change keeps its node across the repaint.
     const kept = tab === 'home' ? sceneSprites(section) : new Map<string, HTMLImageElement>()
     const previousTerrain = section.querySelector<HTMLElement>('.wild-scene')?.dataset['terrain']
+    const focused = focusInside(section)
     section.innerHTML = RENDERERS[tab](state)
+    restoreFocus(focused)
     if (kept.size > 0) {
       for (const [key, fresh] of sceneSprites(section)) {
         const old = kept.get(key)
@@ -2582,6 +2584,34 @@ document.addEventListener('click', (event) => {
   if (target.id === 'export') vscode.postMessage({ type: 'exportSave' })
   if (target.id === 'import') vscode.postMessage({ type: 'importSave' })
 })
+
+/**
+ * A field with focus keeps it across a repaint of its section, caret and all — a scan's state
+ * push arriving mid-word in the Pokédex's search used to throw both away. Only fields with an
+ * id, the ones a repaint recreates under the same name.
+ */
+function focusInside(
+  section: HTMLElement,
+): { id: string; start: number | null; end: number | null } | undefined {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || active.id === '' || !section.contains(active)) return undefined
+  const field = active as HTMLInputElement
+  const selectable = typeof field.selectionStart === 'number'
+  return {
+    id: active.id,
+    start: selectable ? field.selectionStart : null,
+    end: selectable ? field.selectionEnd : null,
+  }
+}
+
+function restoreFocus(focused: ReturnType<typeof focusInside>): void {
+  if (focused === undefined) return
+  const fresh = document.getElementById(focused.id) as HTMLInputElement | null
+  if (fresh === null) return
+  fresh.focus()
+  if (focused.start !== null && typeof fresh.setSelectionRange === 'function')
+    fresh.setSelectionRange(focused.start, focused.end ?? focused.start)
+}
 
 /**
  * Live filtering as the query is typed.
