@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-22
+
 ### Added
 
 - **One game on every computer.** Sync is opt-in, per computer, through a secret gist in your
