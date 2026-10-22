@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { mergeSaves, withRevision } from '../src/core/companion/merge.js'
-import { type CompanionState, type DexEntry, freshCompanionState } from '../src/core/companion/model.js'
+import { changesHistory, mergeSaves, withRevision } from '../src/core/companion/merge.js'
+import {
+  type CompanionState,
+  type DexEntry,
+  freshCompanionState,
+  freshSpeciesProgress,
+} from '../src/core/companion/model.js'
 import { MilestoneBalance } from '../src/core/companion/encounters.js'
 import { sanitized } from '../src/core/companion/saveTransfer.js'
 import { spendableBalance } from '../src/core/companion/ledger.js'
@@ -239,8 +244,99 @@ describe('mergeSaves', () => {
       expect(result.state.claimedTodayTokensByProvider).toEqual({ codex: 5 })
       expect(result.state.lastDate).toBe('2026-10-20')
       expect(result.state.language).toBe('es')
+      // The remote chose no trainer, so the local choice is not erased by its absence.
       expect(result.state.trainerID).toBe('red')
     })
+
+    // One person on two machines: the trainer they picked is a choice, not a machine fact, so it
+    // follows the history that continues — unlike the language, which is the machine's.
+    it("carries the winning history's trainer", () => {
+      const local = save({ revision: { [A]: 1 }, trainerID: 'red' })
+      const remote = save({ revision: { [A]: 1, [B]: 9 }, trainerID: 'blue' })
+      expect(mergeSaves(local, remote).state.trainerID).toBe('blue')
+      expect(mergeSaves(remote, local).state.trainerID).toBe('blue')
+    })
+  })
+
+  describe('a fork decided by the player', () => {
+    // [trigger branch] The first sync onto a machine that already has a companion: the rule would
+    // pick one, the player picked the other.
+    it('continues the chosen history on a fork, collections unioned either way', () => {
+      const { local, remote } = fork(
+        { eggUsage: 111, dex: [dex('mine')] },
+        { eggUsage: 222, dex: [dex('theirs')] },
+      )
+      expect(mergeSaves(local, remote).narrative).toBe('local')
+      const result = mergeSaves(local, remote, { onFork: 'remote' })
+      expect(result.outcome).toBe('forked')
+      expect(result.narrative).toBe('remote')
+      expect(result.state.eggUsage).toBe(222)
+      expect(result.state.dex.map((e) => e.id).sort()).toEqual(['mine', 'theirs'])
+    })
+
+    // A choice only applies where something would be lost. A save that already contains the
+    // other is adopted whatever was asked: forcing the older side would throw away history.
+    it('ignores the choice when one save contains the other', () => {
+      const local = save({ revision: { [A]: 2 }, eggUsage: 10 })
+      const remote = save({ revision: { [A]: 2, [B]: 7 }, eggUsage: 900 })
+      const result = mergeSaves(local, remote, { onFork: 'local' })
+      expect(result.outcome).toBe('adoptedRemote')
+      expect(result.state.eggUsage).toBe(900)
+    })
+  })
+
+  // [trigger branch] Two machines open at once both accrue on every scan. If accrual were a
+  // revision, neither save would ever contain the other and every round would fork — throwing
+  // away the losing side's catch or purchase for nothing (code review, 2026-10-22). Accrual is
+  // reconciled by `usedByDevice` instead, so it must not count.
+  it('does not count accrual as a change of history', () => {
+    const before = save({
+      revision: { [A]: 3 },
+      active: {
+        baseID: 1,
+        pathIDs: [1],
+        plannedPathIDs: [1, 2],
+        stageIndex: 0,
+        usedAtStage: 10,
+        rarity: 'common',
+        totalForms: 2,
+        isShiny: false,
+        dittoRevealed: false,
+      } as CompanionState['active'],
+      species: { 1: { ...freshSpeciesProgress(), unlocked: true, xp: 10 } },
+      challenges: { day: '2026-10-20', week: '2026-W43', items: [] },
+    })
+    const accrued: CompanionState = {
+      ...before,
+      usedSinceInstall: before.usedSinceInstall + 500,
+      usedByDevice: { [A]: 500 },
+      claimedTodayTokensByProvider: { codex: 500 },
+      lastDate: '2026-10-21',
+      accrualDays: ['2026-10-21'],
+      encounterUsage: 500,
+      eggUsage: 77,
+      active: { ...before.active!, usedAtStage: 510 },
+      species: { 1: { ...before.species[1]!, xp: 510, shinyXP: 3 } },
+      queueFullArmed: !before.queueFullArmed,
+    }
+    expect(changesHistory(before, accrued)).toBe(false)
+    expect(changesHistory(before, { ...accrued, spentTokens: 1 })).toBe(true)
+    expect(changesHistory(before, { ...accrued, active: { ...accrued.active!, stageIndex: 1 } })).toBe(
+      true,
+    )
+    expect(changesHistory(before, { ...accrued, dex: [dex('new')] })).toBe(true)
+    expect(changesHistory(before, { ...accrued, eggStock: { count: before.eggStock.count + 1 } })).toBe(
+      true,
+    )
+  })
+
+  // Asymmetric before: each machine kept its own trainer when the winner had none, so two
+  // machines could disagree for ever.
+  it('settles the trainer the same way on both machines when the winner never chose one', () => {
+    const { local, remote } = fork({ eggUsage: 111 }, { eggUsage: 222, trainerID: 'red' })
+    expect(mergeSaves(local, remote).narrative).toBe('local')
+    expect(mergeSaves(local, remote).state.trainerID).toBe('red')
+    expect(mergeSaves(remote, local).state.trainerID).toBe('red')
   })
 
   it('counts one revision per change', () => {

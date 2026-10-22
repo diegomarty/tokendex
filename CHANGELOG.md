@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **One game on every computer.** Sync is opt-in, per computer, through a secret gist in your
+  own GitHub account and VS Code's GitHub sign-in. Every computer publishes its own save and
+  merges the others' every few minutes: the Pokédex and all the usage each machine counted are
+  kept, and one companion continues. The first time, when both computers already have a game,
+  you choose which companion that is. Both computers can be in use at the same time: the tokens
+  each one counts reach the other without either game replacing the other. A computer whose
+  companion is replaced by another's keeps a backup, apart from the import backups. Today's
+  usage counter and the display language stay with each machine. The trainer you pick now
+  travels with the game, on import-merge too.
+
 ## [1.0.0] - 2026-10-21
 
 ### Added

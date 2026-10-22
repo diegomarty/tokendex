@@ -91,6 +91,14 @@ month's, official rate-limit windows as live bars, and a per-CLI breakdown with 
   from another computer can **merge**: both Pokédexes and all the usage either machine counted
   are kept, and the companion continues from whichever save has progressed more. Today's usage
   counter and the display language always stay with the machine.
+- **One game on every computer (opt-in).** `Tokendex: Sync your game across computers` keeps
+  the save in a secret gist in your own GitHub account, using VS Code's GitHub sign-in — no
+  token to paste, no server of ours. Each computer publishes its own file and merges the others',
+  so catches, the Pokédex and every token either machine counted reach the rest within minutes.
+  The first time, if both computers already have a game, you choose which companion continues;
+  both Pokédexes are kept either way. What is uploaded: lifetime token totals, active days, the
+  Pokédex and the bag — never today's per-provider usage, log paths or project names. Turned on
+  per computer; `Tokendex: Turn off sync on this computer` stops it and leaves the game here.
 
 ## Works with what you already use
 

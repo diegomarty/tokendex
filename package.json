@@ -47,6 +47,14 @@
         "command": "tokendex.openInEditor",
         "title": "Tokendex: Open in an editor tab",
         "icon": "$(link-external)"
+      },
+      {
+        "command": "tokendex.syncNow",
+        "title": "Tokendex: Sync your game across computers"
+      },
+      {
+        "command": "tokendex.syncDisable",
+        "title": "Tokendex: Turn off sync on this computer"
       }
     ],
     "configuration": {

@@ -110,9 +110,16 @@ import {
   totalForms,
 } from './model.js'
 import { decodeCompanionState, encodeCompanionState, encodeSidecar, withSidecar } from './persistence.js'
-import { backupFileName, pruneBackups, sanitized } from './saveTransfer.js'
+import {
+  BACKUPS_TO_KEEP,
+  SYNC_BACKUP_FILE_PREFIX,
+  backupFileName,
+  pruneBackups,
+  sanitized,
+  syncBackupFileName,
+} from './saveTransfer.js'
 import { deviceIdentity } from './device.js'
-import { withRevision } from './merge.js'
+import { type MergeOptions, type MergeResult, changesHistory, mergeSaves, withRevision } from './merge.js'
 import {
   creditSpeciesXP,
   markSeen,
@@ -290,6 +297,16 @@ function legendaryEarnedEvent(awards: readonly LegendaryAward[]): CompanionEvent
   return undefined
 }
 
+/** A merge as `absorbRemote` committed it, and whether the companion on stage changed. */
+export type AbsorbResult = MergeResult & { companionReplaced: boolean }
+
+/** Who is on stage, as far as "was my companion replaced" goes: the Pokémon, or the egg. */
+function companionIdentity(state: CompanionState): string {
+  const active = state.active
+  if (active === undefined) return `egg:${state.pendingHatchID ?? ''}`
+  return `${active.baseID}:${active.isShiny}:${active.nature ?? ''}`
+}
+
 export class CompanionStore {
   private state: CompanionState
   private line: EvoLine | undefined
@@ -463,15 +480,21 @@ export class CompanionStore {
    * Nothing inside `body` may touch the network. That is the invariant the two-hold shape of
    * `update()` exists to keep, and `test/companion-store.test.ts` asserts it on the provider.
    */
-  private async transact<T>(body: () => T | Promise<T>): Promise<LockResult<T>> {
+  private async transact<T>(
+    body: () => T | Promise<T>,
+    options: { bump?: boolean } = {},
+  ): Promise<LockResult<T>> {
     return this.lock.withLock(async () => {
       await this.reread()
-      const before = encodeCompanionState(this.state)
+      const before = this.state
       const value = await body()
-      // Only a write that changed something is a revision. Counting idle holds would make a
-      // machine that merely stayed open look busier than one that played, and the busier side
-      // is the one a fork is resolved in favour of.
-      if (encodeCompanionState(this.state) !== before) this.state = withRevision(this.state, this.device)
+      // Only a write that changed the game's history is a revision (`changesHistory`). Counting
+      // idle holds — or a scan that only accrued — would make a machine that merely stayed open
+      // look busier than one that played, and two machines in use at once would fork on every
+      // round. `absorbRemote` opts out entirely: see there.
+      if (options.bump !== false && changesHistory(before, this.state)) {
+        this.state = withRevision(this.state, this.device)
+      }
       await this.write()
       return value
     }, this.options.lockTimeoutMs ?? LOCK_TIMEOUT_MS)
@@ -514,6 +537,59 @@ export class CompanionStore {
     await this.load()
     const result = await this.transact(() => fn(this.mutation()))
     return result.acquired ? { committed: true, value: result.value } : { committed: false }
+  }
+
+  /**
+   * Folds another device's save into this one (`mergeSaves`), under the lock, against the save
+   * as it is on disk. `undefined` means the lock was busy and nothing was written.
+   *
+   * **No revision bump**, unlike every other write. The merge already carries both devices'
+   * counters (per-key max), so the result is exactly "everything both have seen". Counting the
+   * merge as a change of ours would hand the other device a history it has not seen; it would
+   * fork against us, bump in turn, and the two would fork against each other on every round.
+   *
+   * When this machine loses something, the save as it was goes to a backup first: what a fork
+   * loses is bounded (`merge.ts`), and this way it is also recoverable. It loses something on a
+   * fork the other history won, and on an adoption that replaces the companion — the other machine
+   * resolved a fork against us, and we only see its result. An adoption that keeps the companion
+   * lost nothing: the other machine only played on.
+   */
+  async absorbRemote(
+    remote: CompanionState,
+    options: MergeOptions = {},
+  ): Promise<AbsorbResult | undefined> {
+    await this.load()
+    const result = await this.transact(
+      async () => {
+        const merged = mergeSaves(this.state, remote, options)
+        const companionReplaced = companionIdentity(merged.state) !== companionIdentity(this.state)
+        const loses =
+          (merged.outcome === 'forked' && merged.narrative === 'remote') ||
+          (merged.outcome === 'adoptedRemote' && companionReplaced)
+        if (loses) await this.backupState()
+        this.adopt(merged.state)
+        return { ...merged, companionReplaced }
+      },
+      { bump: false },
+    )
+    return result.acquired ? result.value : undefined
+  }
+
+  private async backupState(): Promise<void> {
+    const directory = dirname(this.filePath)
+    try {
+      // A plain write, like `backupCorruptFile`: a backup has a name of its own and one writer,
+      // and the save keeps exactly one atomic writer (`test/companion-store.test.ts`). Its own
+      // prefix and rotation, so syncing can never rotate an import's backup away.
+      await fs.writeFile(
+        join(directory, syncBackupFileName(this.now)),
+        encodeCompanionState(this.state),
+        'utf8',
+      )
+    } catch {
+      return // best effort, as every backup here is
+    }
+    await pruneBackups(directory, BACKUPS_TO_KEEP, SYNC_BACKUP_FILE_PREFIX)
   }
 
   /**

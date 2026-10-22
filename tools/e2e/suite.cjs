@@ -15,7 +15,13 @@ exports.run = async function run() {
   assert.ok(extension.isActive, 'extension failed to activate')
 
   const commands = await vscode.commands.getCommands(true)
-  for (const id of ['tokendex.open', 'tokendex.refresh', 'tokendex.showOutput']) {
+  for (const id of [
+    'tokendex.open',
+    'tokendex.refresh',
+    'tokendex.showOutput',
+    'tokendex.syncNow',
+    'tokendex.syncDisable',
+  ]) {
     assert.ok(commands.includes(id), `command missing: ${id}`)
   }
 

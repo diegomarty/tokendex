@@ -105,6 +105,15 @@ export const BACKUP_FILE_PREFIX = 'companion-state.pre-import-'
 export const BACKUPS_TO_KEEP = 5
 
 /**
+ * Backups sync takes before it replaces this machine's history — named and rotated apart from the
+ * import backups, so a busy week of syncing can never rotate away the backup an import promised.
+ */
+export function syncBackupFileName(millis: number): string {
+  return `${SYNC_BACKUP_FILE_PREFIX}${secondStamp(millis)}.json`
+}
+export const SYNC_BACKUP_FILE_PREFIX = 'companion-state.pre-sync-'
+
+/**
  * Which backups to delete so at most `keep` of them remain, newest kept.
  *
  * Sorted by **name**, not by mtime: `backupFileName` stamps a lexicographically sortable
@@ -114,8 +123,12 @@ export const BACKUPS_TO_KEEP = 5
  * Anything that is not one of our backups is untouched — this runs in a directory that also
  * holds the live save, the usage cache and the sprite index.
  */
-export function expiredBackups(names: string[], keep: number = BACKUPS_TO_KEEP): string[] {
-  const backups = names.filter((name) => name.startsWith(BACKUP_FILE_PREFIX)).sort()
+export function expiredBackups(
+  names: string[],
+  keep: number = BACKUPS_TO_KEEP,
+  prefix: string = BACKUP_FILE_PREFIX,
+): string[] {
+  const backups = names.filter((name) => name.startsWith(prefix)).sort()
   return backups.slice(0, Math.max(0, backups.length - Math.max(0, keep)))
 }
 
@@ -125,9 +138,13 @@ export function expiredBackups(names: string[], keep: number = BACKUPS_TO_KEEP):
  * Best effort by design: a backup that cannot be removed is clutter, and failing an import (or
  * a corruption recovery) over clutter would be the worse trade by a wide margin.
  */
-export async function pruneBackups(directory: string, keep: number = BACKUPS_TO_KEEP): Promise<void> {
+export async function pruneBackups(
+  directory: string,
+  keep: number = BACKUPS_TO_KEEP,
+  prefix: string = BACKUP_FILE_PREFIX,
+): Promise<void> {
   try {
-    for (const name of expiredBackups(await fs.readdir(directory), keep)) {
+    for (const name of expiredBackups(await fs.readdir(directory), keep, prefix)) {
       await fs.rm(join(directory, name), { force: true })
     }
   } catch {

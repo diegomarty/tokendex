@@ -95,6 +95,17 @@ import type {
   PanelEncounterResult,
 } from '../webview/protocol.js'
 import { pokedexEntry } from '../core/panel/dexEntry.js'
+import { deviceIdentity } from '../core/companion/device.js'
+import {
+  type SyncPeer,
+  type SyncPreview,
+  type SyncReport,
+  SyncEngine,
+  fileMemory,
+} from '../core/sync/engine.js'
+import { GistTransport } from '../core/sync/gistTransport.js'
+import { SyncError } from '../core/sync/transport.js'
+import { SyncRunner, type SyncStatus } from './syncRunner.js'
 
 export type WorkerAction =
   | { action: 'buyItem'; item: ItemKind; quantity?: number }
@@ -203,6 +214,30 @@ export interface DexEntryRequest {
   speciesID: number
 }
 
+/**
+ * Cross-device sync (`docs/sync.md`), answered beside the serialized queue like `dexEntry`: a
+ * round is network-bound and must not hold a scan back, and it writes the save only through the
+ * store's own lock, exactly as another window would.
+ *
+ * - `syncConfigure`: a credential turns sync on (or swaps the credential); none turns it off.
+ *   `appVersion` rides along because the worker cannot ask VS Code for it. `paused` holds every
+ *   automatic round until the first manual one (the first-sync question comes first).
+ * - `syncNow`: one round now, whoever holds the lease. `onFork` is the player's answer to the
+ *   first-sync question.
+ * - `syncPeek`: who is in the gist and whether syncing would fork; changes nothing.
+ */
+export type SyncWorkerRequest =
+  | {
+      id: number
+      type: 'syncConfigure'
+      token?: string
+      gistID?: string
+      appVersion: string
+      paused?: boolean
+    }
+  | { id: number; type: 'syncNow'; onFork?: 'local' | 'remote'; forkPeer?: string }
+  | { id: number; type: 'syncPeek' }
+
 export type WorkerRequest =
   | ScanRequest
   | PanelRequest
@@ -211,6 +246,28 @@ export type WorkerRequest =
   | SyncRequest
   | FlushRequest
   | DexEntryRequest
+  | SyncWorkerRequest
+
+/** What a round tells the host: enough for a toast and the log, nothing of the save itself. */
+export interface SyncReportView {
+  /**
+   * Set when this machine's companion was replaced by another machine's history — a fork it lost,
+   * or an adoption of one the other side resolved against it: whose game continues here.
+   */
+  continuedFrom?: string
+  dexAdded: number
+  pushed: boolean
+  peers: Pick<SyncPeer, 'deviceID' | 'label' | 'appVersion'>[]
+  /** A device runs a newer build whose save this one cannot read: updating is the fix. */
+  newerPeer: boolean
+}
+
+/** Sync news, outside the request/response ids like the celebrations. */
+export type SyncBroadcast =
+  | { syncStatus: SyncStatus }
+  /** The gist in use changed (found, created or moved to): the host remembers it per machine. */
+  | { syncGistID: string }
+  | { syncReport: SyncReportView }
 
 /** Fire-and-forget broadcast, outside the request/response ids: celebration toasts. */
 export interface CelebrateBroadcast {
@@ -230,7 +287,10 @@ export type ScanResponse =
   | { id: number; ok: true; panel: PanelState; extra?: PanelEncounterResult }
   /** Answer to a `dexEntry`: never fails — offline, the entry says so itself. */
   | { id: number; ok: true; dexEntry: PanelPokedexEntry }
-  | { id: number; ok: false; error: string }
+  /** Answer to a sync request: a round's report, a preview, or neither (configure). */
+  | { id: number; ok: true; sync: { report?: SyncReportView; preview?: SyncPreview } }
+  /** `reason`, on a sync answer: why, for the host to say it right (`SyncErrorReason` or 'off'). */
+  | { id: number; ok: false; error: string; reason?: string }
 
 interface WorkerConfig {
   cacheFilePath?: string
@@ -479,7 +539,9 @@ async function readCorpus(locale: string | undefined): Promise<ScanObservation> 
 async function scan(locale: string | undefined) {
   const observation = await observe(locale)
   lastObservation = observation
-  return compose(observation, locale, { accrue: true })
+  const snapshot = await compose(observation, locale, { accrue: true })
+  noteSaveChange()
+  return snapshot
 }
 
 /**
@@ -495,6 +557,9 @@ async function scan(locale: string | undefined) {
  */
 async function sync(locale: string | undefined) {
   await companion.syncFromDisk()
+  // Another window of this machine played: its change is ours to publish, and only the window
+  // holding the lease publishes.
+  noteSaveChange()
   const published = lease.owned ? undefined : await readPublishedScan(ourData())
   const observation = published ?? lastObservation
   // Nothing observed yet by anyone: there is no snapshot to recompose, so do the real thing.
@@ -733,7 +798,9 @@ async function commit(
 async function applyAction(payload: WorkerAction): Promise<PanelEncounterResult | undefined> {
   await companion.load()
   try {
-    return await applyActionOn(payload)
+    const result = await applyActionOn(payload)
+    noteSaveChange()
+    return result
   } catch (error) {
     if (error instanceof SaveBusyError) {
       throw new Error(D.saveBusyText(companion.snapshot().language))
@@ -1086,8 +1153,111 @@ parentPort?.on('message', (message: WorkerRequest) => {
     void answerDexEntry(message)
     return
   }
+  if (message.type === 'syncConfigure' || message.type === 'syncNow' || message.type === 'syncPeek') {
+    void answerSync(message)
+    return
+  }
   dispatch(message)
 })
+
+// MARK: - Sync
+
+/**
+ * Cross-device sync. Every window has a runner; only the scan lease holder's talks to GitHub on
+ * its own (`syncRunner.ts`), so a machine with five windows open makes one machine's requests.
+ */
+const syncRunner = new SyncRunner({
+  isLeader: () => lease.owned,
+  onStatus: (syncStatus) => parentPort?.postMessage({ syncStatus } satisfies SyncBroadcast),
+  onReport: (report) => {
+    lastSyncedRevision = revisionKey()
+    parentPort?.postMessage({ syncReport: reportView(report) } satisfies SyncBroadcast)
+  },
+})
+let syncEngine: SyncEngine | undefined
+
+/** The revision vector as last seen, so a change can be told from a re-read of the same save. */
+let lastSyncedRevision: string | undefined
+const revisionKey = (): string => JSON.stringify(Object.entries(companion.snapshot().revision).sort())
+
+/** The save may have moved (a scan, an action, another window): if it did, sync soon. */
+function noteSaveChange(): void {
+  if (syncEngine === undefined) return
+  const key = revisionKey()
+  if (key === lastSyncedRevision) return
+  lastSyncedRevision = key
+  syncRunner.noteChange()
+}
+
+async function configureSync(
+  request: Extract<SyncWorkerRequest, { type: 'syncConfigure' }>,
+): Promise<void> {
+  if (request.token === undefined) {
+    syncEngine = undefined
+    syncRunner.configure(undefined)
+    return
+  }
+  const transport = new GistTransport({
+    token: request.token,
+    ...(request.gistID === undefined ? {} : { gistID: request.gistID }),
+    onGistID: (syncGistID) => parentPort?.postMessage({ syncGistID } satisfies SyncBroadcast),
+  })
+  const engine = new SyncEngine({
+    transport,
+    target: companion,
+    device: await deviceIdentity(ourData()),
+    appVersion: request.appVersion,
+    memory: fileMemory(devJoin(ourData(), 'sync-state.json')),
+  })
+  syncEngine = engine
+  syncRunner.configure((options) => engine.runOnce(options), { paused: request.paused === true })
+}
+
+async function answerSync(request: SyncWorkerRequest): Promise<void> {
+  let answer: ScanResponse
+  try {
+    if (request.type === 'syncConfigure') {
+      await configureSync(request)
+      answer = { id: request.id, ok: true, sync: {} }
+    } else if (request.type === 'syncNow') {
+      // Forced: a round the player asked for reads the gist in full rather than trusting an etag.
+      const report = await syncRunner.runNow({
+        force: true,
+        ...(request.onFork === undefined ? {} : { onFork: request.onFork }),
+        ...(request.forkPeer === undefined ? {} : { forkPeer: request.forkPeer }),
+      })
+      answer = { id: request.id, ok: true, sync: { report: reportView(report) } }
+    } else {
+      if (syncEngine === undefined) throw new Error('sync is off')
+      answer = { id: request.id, ok: true, sync: { preview: await syncEngine.peek() } }
+    }
+  } catch (error) {
+    answer = {
+      id: request.id,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      reason: error instanceof SyncError ? error.reason : syncEngine === undefined ? 'off' : 'unknown',
+    }
+  }
+  parentPort?.postMessage(answer)
+}
+
+function reportView(report: SyncReport): SyncReportView {
+  // Said only when the companion on stage changed: a fork that kept it lost nothing the player
+  // would notice, and a toast per such round would be noise.
+  const lost = report.merges.find(
+    (m) =>
+      // `remote` covers both: an adoption's history is the other machine's too.
+      m.result.companionReplaced && m.result.narrative === 'remote',
+  )
+  return {
+    ...(lost === undefined ? {} : { continuedFrom: lost.peer.label }),
+    dexAdded: report.merges.reduce((total, m) => total + Math.max(0, m.result.dexAdded), 0),
+    pushed: report.pushed,
+    peers: report.peers.map(({ deviceID, label, appVersion }) => ({ deviceID, label, appVersion })),
+    newerPeer: report.skipped.some((s) => s.reason === 'newerSchema'),
+  }
+}
 
 /** Either half may fail on its own; the entry then says what it lacks rather than erroring. */
 async function answerDexEntry(request: DexEntryRequest): Promise<void> {
@@ -1114,6 +1284,7 @@ async function answerDexEntry(request: DexEntryRequest): Promise<void> {
  * released simply goes stale — which is the path a `kill -9` takes anyway.
  */
 async function shutdown(): Promise<void> {
+  syncRunner.stop()
   await cache.flush()
   stopLeaseHeartbeat()
   await lease.release()
