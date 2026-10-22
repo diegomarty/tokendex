@@ -148,6 +148,9 @@ idea; spanning several files and layers is normal when they only make sense toge
 **UI changes** (anything under `src/webview/`) should describe the before/after in the PR.
 Screenshots or GIFs are welcome but optional — a clear text description is fine.
 
+**Every PR starts from the template** (`.github/pull_request_template.md`): what and why, how
+to test, and a two-line checklist, with the title rule as a reminder at the top.
+
 ## Code conventions
 
 The extension is provider-agnostic by design. When extending it, follow these rules; several
