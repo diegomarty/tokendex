@@ -20,6 +20,9 @@
 #                      is about to be tagged and the next contributor still has a place to
 #                      write. This is exactly what the hand-cut releases did (the 0.3.0
 #                      release commit changed CHANGELOG.md by one line), plus the re-opening.
+#   notes <version>    print the section of `## [<version>]`, without its heading or the blank
+#                      lines around it — the GitHub release's notes (`release.yml`). Fails on a
+#                      version with no section, or an empty one: never a release with no notes.
 #
 # The date is HEAD's *author* date, `--date=short`, which carries the author's own timezone.
 # UTC would be wrong here often enough to matter: 0.3.0 was released at 00:54 +0200 and is
@@ -82,6 +85,20 @@ case "${1:-}" in
       { print }
     ' "$FILE" >"$FILE.next" && mv "$FILE.next" "$FILE"
     echo "stamped ## [$VERSION] - $DATE"
+    ;;
+
+  notes)
+    VERSION="${2:-}"
+    [ -n "$VERSION" ] || die 'notes needs a version: changelog.sh notes 1.0.0'
+    BODY="$(awk -v heading="## [$VERSION]" '
+      index($0, heading) == 1 { inside = 1; next }
+      /^## / { if (inside) exit }
+      inside { print }
+    ' "$FILE")"
+    # `$(…)` already dropped the trailing blank lines; the leading ones go here.
+    BODY="$(printf '%s\n' "$BODY" | sed '/[^[:space:]]/,$!d')"
+    [ -n "$BODY" ] || die "no notes for $VERSION in $FILE"
+    printf '%s\n' "$BODY"
     ;;
 
   *)

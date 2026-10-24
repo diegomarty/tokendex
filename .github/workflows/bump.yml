@@ -1,7 +1,7 @@
 # Moves `package.json` and the lockfile to the version the next release will carry, every time
-# something lands on `main` — and, when the notes for it are written, stamps the CHANGELOG and
-# pushes the `vX.Y.Z` tag that `release.yml` has always listened for. `release.yml` is
-# unchanged: it still runs the full gates, packages the `.vsix` and cuts the GitHub release.
+# something lands on `main` — and, when the notes for it are written, stamps the CHANGELOG,
+# pushes the `vX.Y.Z` tag and starts `release.yml` on it, which runs the full gates, packages
+# the `.vsix` and cuts the GitHub release with the CHANGELOG's notes.
 #
 # ## The CHANGELOG is the release gate
 #
@@ -18,38 +18,26 @@
 # the merge that brings the notes may itself be 📝-only, so nothing bumps, and 0.3.1 would
 # never go out.
 #
-# ## Which token pushes what, and why
+# ## One token, and an explicit dispatch
 #
-#   the bump/release commit  →  GITHUB_TOKEN   (the credential actions/checkout persists)
-#   the vX.Y.Z tag           →  RELEASE_TOKEN  (a PAT, from the secret of that name)
+#   the bump/release commit  →  pushed with GITHUB_TOKEN
+#   the vX.Y.Z tag           →  pushed with GITHUB_TOKEN
+#   release.yml              →  dispatched on that tag with GITHUB_TOKEN (`gh workflow run`)
 #
-# This split is the whole safety design, and it is worth not collapsing. GitHub deliberately
-# starts no workflow run for a push made with `GITHUB_TOKEN`, so the commit this workflow
-# makes on `main` cannot re-trigger this workflow — the loop cannot begin at its only possible
-# source. The tag is the exception that has to be made with a PAT, precisely because it *must*
-# trigger something: `release.yml`. That is safe because a tag push matches no trigger here —
-# both `bump.yml` and `ci.yml` filter on `branches:`, which `refs/tags/…` never satisfies — so
-# the one workflow the PAT can start is `release.yml`, and `release.yml` pushes nothing.
-# `[skip ci]` in the commit body is the third layer, load-bearing only for whoever later
-# decides the commit should also go up with the PAT. Do not make that change casually.
+# GitHub starts no workflow run for a push made with `GITHUB_TOKEN`, so nothing this workflow
+# pushes can start it again — the loop cannot begin. Releasing used to lean on the opposite: the
+# tag went up with a PAT (`RELEASE_TOKEN`) precisely so that its push would start `release.yml`.
+# It did not, for 0.5.0 nor for 1.0.0 — the tag arrived and no run followed — and a release that
+# depends on a second credential staying valid fails silently the day it does not. So the tag
+# push starts nothing, by design, and the release is started explicitly instead: a
+# `workflow_dispatch` made with `GITHUB_TOKEN` is GitHub's documented exception and does start a
+# run. Exactly one release run per tag, and no secret to keep alive. `release.yml` pushes
+# nothing, so it starts nothing either.
 #
 # The commit is pushed *before* the tag, deliberately: `release.yml` re-checks the tag against
 # `package.json` and refuses a mismatch, so the tagged commit has to be on `main` first. If the
 # branch push loses a race to a merge that landed mid-run, it fails there and no tag is
 # created — a failed run, never a half-released one, and the next merge recomputes and heals.
-#
-# ## The secret
-#
-#   RELEASE_TOKEN  A fine-grained PAT on this repository with **Contents: Read and write** —
-#                  that single permission is all a tag push needs. (A classic PAT with `repo`
-#                  works too; a GitHub App installation token is the tidier long-term answer,
-#                  since it does not expire with the maintainer's account.) Settings → Secrets
-#                  and variables → Actions → New repository secret.
-#
-# Unlike the publish steps in `release.yml`, an absent secret here is a hard failure rather
-# than a skip, and only on the path that needs it: a run that bumped the version, stamped the
-# changelog and then quietly declined to tag would leave the repository looking released when
-# nothing was. Bumping without the secret is fine and keeps working.
 #
 # ## Which bump, from what
 #
@@ -113,10 +101,8 @@ jobs:
       !startsWith(github.event.head_commit.message, '🔖 Release '))
     permissions:
       contents: write
-    # Hoisted to job env for the same reason release.yml hoists its publish secrets: the
-    # `secrets` context in a step-level `if` is a workflow *parse* error, not a failed step.
-    env:
-      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      # To dispatch release.yml on the tag it pushes.
+      actions: write
     steps:
       # The base is the last tag, so the tags have to be here — a shallow clone has none.
       - uses: actions/checkout@v4
@@ -160,19 +146,6 @@ jobs:
             bump) echo "Bumping to $NEXT. No notes under ## [Unreleased], so no tag." ;;
             release) echo "Releasing $NEXT: the notes are written." ;;
           esac
-
-      # Before anything is written, not after: a run that bumped, stamped, and then declined to
-      # tag would leave the repository looking released when nothing was.
-      - name: Refuse to release without RELEASE_TOKEN
-        if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
-        run: |
-          if [ -z "${RELEASE_TOKEN:-}" ]; then
-            echo "::error::The CHANGELOG says this is a release, but the RELEASE_TOKEN secret" \
-              "is not set, so the vX.Y.Z tag cannot be pushed with a token that triggers" \
-              "release.yml. Add a fine-grained PAT with Contents: Read and write as" \
-              "RELEASE_TOKEN, or empty ## [Unreleased] to hold the release back."
-            exit 1
-          fi
 
       # `npm version` rewrites both manifests. The check below is what makes that a promise
       # rather than an assumption: a release commit here has always carried both.
@@ -242,19 +215,22 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: git push origin "HEAD:$BRANCH"
 
-      # RELEASE_TOKEN, and only here. The empty `extraheader` resets the credential checkout
-      # persisted for github.com — git documents an empty value as the way to override an
-      # inherited header — so this one push authenticates as the PAT and therefore does what
-      # GITHUB_TOKEN cannot: trigger release.yml.
+      # GITHUB_TOKEN, like the commit: this push starts no run. The release is started on the
+      # next step, explicitly, so there is exactly one (see the header).
       - name: Tag the release
         if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
         env:
           NEXT: ${{ steps.next.outputs.next }}
         run: |
           git tag --annotate "v$NEXT" --message "Release $NEXT"
-          git -c http.https://github.com/.extraheader= \
-            push "https://x-access-token:$RELEASE_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/v$NEXT"
+          git push origin "refs/tags/v$NEXT"
+
+      - name: Start the release on the tag
+        if: steps.plan.outputs.action == 'release' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ steps.next.outputs.next }}
+        run: gh workflow run release.yml --ref "v$NEXT"
 
       - name: Say what happened
         env:
