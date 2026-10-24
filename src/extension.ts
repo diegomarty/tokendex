@@ -13,6 +13,7 @@ import { type UsageSnapshot, todayTokensByProvider } from './core/snapshot.js'
 import type {
   CelebrateBroadcast,
   ScanResponse,
+  SyncBroadcast,
   WorkerAction,
   WorkerRequest,
 } from './worker/scanWorker.js'
@@ -77,6 +78,20 @@ import {
   importedText,
   mergedText,
   openPanelLabel,
+  syncChoiceDetail,
+  syncChoiceText,
+  syncConsentDetail,
+  syncConsentText,
+  syncContinuedFromText,
+  syncDisabledText,
+  syncDoneText,
+  syncEnableLabel,
+  syncFailedText,
+  syncKeepLocalLabel,
+  syncKeepRemoteLabel,
+  syncNewerPeerText,
+  syncNotTurnedOnText,
+  syncSignInLabel,
   welcomeToast,
 } from './core/i18n/dispatch.js'
 
@@ -152,6 +167,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('tokendex.dev', () => void runDevScenario()),
     vscode.commands.registerCommand('tokendex.reloadWebview', () => reloadSurfaces()),
+    vscode.commands.registerCommand('tokendex.syncNow', () =>
+      syncNowCommand().catch((error: unknown) => output?.warn(`sync: ${String(error)}`)),
+    ),
+    vscode.commands.registerCommand('tokendex.syncDisable', () =>
+      disableSync().catch((error: unknown) => output?.warn(`sync: ${String(error)}`)),
+    ),
+    // A new GitHub sign-in (or a sign-out) changes the credential the worker holds.
+    vscode.authentication.onDidChangeSessions((e) => {
+      if (e.provider.id === 'github') void configureWorkerSync()
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('tokendex.refreshInterval')) scheduleTimer()
       if (e.affectsConfiguration('tokendex.devMode')) {
@@ -374,7 +399,11 @@ function startWorker(context: vscode.ExtensionContext): void {
   const instance = new Worker(workerPath)
   worker = instance
 
-  instance.on('message', (response: ScanResponse | CelebrateBroadcast) => {
+  instance.on('message', (response: ScanResponse | CelebrateBroadcast | SyncBroadcast) => {
+    if ('syncStatus' in response || 'syncGistID' in response || 'syncReport' in response) {
+      void onSyncBroadcast(response)
+      return
+    }
     // Celebrations arrive outside the request/response ids. On a surface on screen they are
     // news the panel draws with the catch's card (plan 08 §7: one way to celebrate); only when
     // none is do they become toasts, each carrying a way into the panel.
@@ -427,6 +456,11 @@ function startWorker(context: vscode.ExtensionContext): void {
     startWorker(extensionContext)
     void refresh(false)
   })
+
+  // A new worker holds no credential: every start (activation, a crash restart, an import) hands
+  // it the current one.
+  syncConfigured = undefined
+  void configureWorkerSync()
 }
 
 function send(build: (id: number) => WorkerRequest): Promise<ScanResponse> {
@@ -892,6 +926,291 @@ function savePath(): string {
   return join(ourData(), 'companion-state.json')
 }
 
+/** The game's language, read from this machine's save: what the player chose here. */
+async function gameLanguage(): Promise<AppLanguage> {
+  return (
+    parseCompanionState(await fs.readFile(savePath(), 'utf8').catch(() => '')) ??
+    freshCompanionState(vscode.env.language)
+  ).language
+}
+
+// MARK: - Cross-device sync
+
+/**
+ * Whether sync is on for this machine (`docs/sync.md`), and apart from it the gist in use.
+ *
+ * In `ourData()` rather than `globalState`, because every window and profile on the machine shares
+ * that directory, the save and the device id — they are one device, and the scan lease holder,
+ * whichever window it is, must see the same switch. Two files, because two writers set them: the
+ * switch is the player's, the gist id the worker's broadcast. One file read-modified-written by
+ * both lost whichever write landed first. The gist id is not the credential: the token comes from
+ * VS Code's GitHub sign-in and is never written anywhere by this extension.
+ */
+const syncSwitchPath = (): string => join(ourData(), 'sync.json')
+const syncGistPath = (): string => join(ourData(), 'sync-gist.json')
+
+async function readJSONField(path: string, field: string): Promise<unknown> {
+  try {
+    const raw: unknown = JSON.parse(await fs.readFile(path, 'utf8'))
+    return typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>)[field] : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function writeJSON(path: string, value: unknown): Promise<void> {
+  await fs.mkdir(ourData(), { recursive: true })
+  await atomicWriteFile(path, JSON.stringify(value), 'utf8')
+}
+
+const syncEnabled = async (): Promise<boolean> =>
+  (await readJSONField(syncSwitchPath(), 'enabled')) === true
+const setSyncEnabled = (enabled: boolean): Promise<void> => writeJSON(syncSwitchPath(), { enabled })
+async function syncGistID(): Promise<string | undefined> {
+  const id = await readJSONField(syncGistPath(), 'gistID')
+  return typeof id === 'string' ? id : undefined
+}
+
+/**
+ * The GitHub session with the `gist` scope. `silent` never asks; `ask` signs in if there is no
+ * session; `renew` asks for a new one even if there is — what a refused credential needs, since
+ * `ask` would hand back the very session GitHub just refused.
+ */
+async function githubSession(
+  mode: 'silent' | 'ask' | 'renew',
+): Promise<vscode.AuthenticationSession | undefined> {
+  try {
+    return await vscode.authentication.getSession(
+      'github',
+      ['gist'],
+      mode === 'silent'
+        ? { silent: true }
+        : mode === 'ask'
+          ? { createIfNone: true }
+          : { forceNewSession: true },
+    )
+  } catch (error) {
+    output?.warn(`sync: GitHub sign-in failed: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+}
+
+/** What the worker was last configured with, so a refresh tick only re-sends on a change. */
+let syncConfigured: string | undefined
+/**
+ * Set across `enableSync`. The switch is not written until its first round succeeds, so a refresh
+ * tick in between would read "off" and turn off the very engine the flow is using.
+ */
+let syncEnabling = false
+/** "Turn off" while `enableSync` runs: the flow must not write the switch on afterwards. */
+let syncEnableCancelled = false
+
+/**
+ * Hands the worker the current credential, or turns sync off in it. Idempotent: called on every
+ * worker start, every refresh tick (another window may have flipped the switch) and every
+ * sign-in change, and only sends when the credential or the switch differs — not the gist id,
+ * which the worker's transport already follows.
+ */
+async function configureWorkerSync(
+  options: { paused?: boolean; fromEnable?: boolean } = {},
+): Promise<boolean> {
+  if (syncEnabling && options.paused !== true && options.fromEnable !== true) return false
+  // `paused` is the enable flow, before the switch is written: it configures regardless.
+  const wanted = (await syncEnabled()) || options.paused === true
+  const session = wanted ? await githubSession('silent') : undefined
+  const key = session === undefined ? 'off' : `${session.id}:${session.accessToken}`
+  if (key === syncConfigured && options.paused !== true) return session !== undefined
+  if (wanted && session === undefined)
+    output?.warn('sync: on, but there is no GitHub session with the gist scope')
+  const gistID = await syncGistID()
+  const answer = await send((id) => ({
+    id,
+    type: 'syncConfigure',
+    appVersion: version(),
+    ...(session === undefined ? {} : { token: session.accessToken }),
+    ...(gistID === undefined ? {} : { gistID }),
+    ...(options.paused === true ? { paused: true } : {}),
+  }))
+  if (answer.ok) {
+    syncConfigured = key
+    // A credential handed over is a fresh start: a later refusal deserves its own prompt.
+    if (session !== undefined) syncAuthPrompted = false
+  }
+  return answer.ok && session !== undefined
+}
+
+/** "Sync now": the first time, it is turning sync on; after that, one round. */
+async function syncNowCommand(): Promise<void> {
+  if (!(await syncEnabled())) return enableSync()
+  await runSyncRound({ context: 'manual' })
+}
+
+/**
+ * Turning sync on, on this machine: consent naming what leaves it, a GitHub sign-in, and — when
+ * this machine and another both have a game — the question of which companion continues.
+ *
+ * The worker is configured `paused`, so nothing syncs on its own before that answer, and the
+ * switch is written only once the first round has gone through with it. Written earlier, a
+ * failed first round would leave sync on with the question unanswered, and the next start would
+ * settle the fork by the rule.
+ */
+async function enableSync(): Promise<void> {
+  if (syncEnabling) return
+  syncEnabling = true
+  syncEnableCancelled = false
+  try {
+    await enableSyncFlow()
+  } finally {
+    syncEnabling = false
+  }
+}
+
+async function enableSyncFlow(): Promise<void> {
+  const lang = await gameLanguage()
+  const consent = await vscode.window.showInformationMessage(
+    syncConsentText(lang),
+    { modal: true, detail: syncConsentDetail(lang) },
+    syncEnableLabel(lang),
+  )
+  if (consent === undefined) return
+  if ((await githubSession('ask')) === undefined) return
+
+  if (!(await configureWorkerSync({ paused: true }))) {
+    void vscode.window.showWarningMessage(syncNotTurnedOnText(lang))
+    await configureWorkerSync({ fromEnable: true })
+    return
+  }
+
+  const peek = await send((id) => ({ id, type: 'syncPeek' }))
+  if (!peek.ok) {
+    output?.warn(`sync: could not read the gist: ${peek.error}`)
+    void vscode.window.showWarningMessage(syncNotTurnedOnText(lang))
+    await configureWorkerSync({ fromEnable: true })
+    return
+  }
+  const preview = 'sync' in peek ? peek.sync.preview : undefined
+  // The question names a peer that would fork; joining with nothing of our own, the one with the
+  // most progress.
+  const peer =
+    preview?.forkPeer ??
+    [...(preview?.peers ?? [])].sort((a, b) => b.summary.lifetimeTokens - a.summary.lifetimeTokens)[0]
+  let fork: { onFork: 'local' | 'remote'; forkPeer: string } | undefined
+  if (preview !== undefined && peer !== undefined) {
+    if (preview.wouldFork) {
+      const keepLocal = syncKeepLocalLabel(lang)
+      const keepRemote = syncKeepRemoteLabel(lang, peer.label)
+      const choice = await vscode.window.showWarningMessage(
+        syncChoiceText(
+          lang,
+          { dexCount: preview.local.dexCount, tokens: preview.local.lifetimeTokens },
+          { label: peer.label, dexCount: peer.summary.dexCount, tokens: peer.summary.lifetimeTokens },
+        ),
+        { modal: true, detail: syncChoiceDetail(lang) },
+        keepLocal,
+        keepRemote,
+      )
+      if (choice === undefined) {
+        // Asked and not answered: sync stays off rather than deciding for the player.
+        await configureWorkerSync({ fromEnable: true })
+        return
+      }
+      fork = { onFork: choice === keepLocal ? 'local' : 'remote', forkPeer: peer.deviceID }
+    } else if (!preview.hasOwnGame) {
+      // Nothing of its own to lose — an egg, an empty Pokédex — so this machine joins the game that
+      // exists. Left to the rule, a new machine that scanned a lot could win and replace it.
+      fork = { onFork: 'remote', forkPeer: peer.deviceID }
+    }
+  }
+  if ((await runSyncRound({ context: 'enable', ...fork })) && !syncEnableCancelled) {
+    await setSyncEnabled(true)
+  }
+  // Either way the worker follows the switch: on and running, or off again.
+  syncConfigured = undefined
+  await configureWorkerSync({ fromEnable: true })
+}
+
+/**
+ * One round, now. A failure is said for what it is: in the enable flow sync stays off, so "it will
+ * retry" would be untrue; with sync on, the runner does retry a network failure, and a refused or
+ * missing credential needs a sign-in.
+ */
+async function runSyncRound(round: {
+  context: 'enable' | 'manual'
+  onFork?: 'local' | 'remote'
+  forkPeer?: string
+}): Promise<boolean> {
+  const answer = await send((id) => ({
+    id,
+    type: 'syncNow',
+    ...(round.onFork === undefined ? {} : { onFork: round.onFork }),
+    ...(round.forkPeer === undefined ? {} : { forkPeer: round.forkPeer }),
+  }))
+  const lang = await gameLanguage()
+  if (!answer.ok) {
+    output?.warn(`sync: round failed (${answer.reason ?? 'unknown'}): ${answer.error}`)
+    void vscode.window.showWarningMessage(
+      round.context === 'enable'
+        ? syncNotTurnedOnText(lang)
+        : syncFailedText(lang, answer.reason ?? 'unknown'),
+    )
+    return false
+  }
+  const report = 'sync' in answer ? answer.sync.report : undefined
+  if (report !== undefined) {
+    void vscode.window.showInformationMessage(syncDoneText(lang, report.dexAdded, report.peers.length))
+  }
+  return true
+}
+
+async function disableSync(): Promise<void> {
+  // Mid-enable, the configure below is skipped and the flow would write the switch on after it.
+  if (syncEnabling) syncEnableCancelled = true
+  await setSyncEnabled(false)
+  await configureWorkerSync()
+  void vscode.window.showInformationMessage(syncDisabledText(await gameLanguage()))
+}
+
+/** Said once per credential (reset when a new one is handed over) and once per window. */
+let syncAuthPrompted = false
+let syncNewerPeerWarned = false
+
+async function onSyncBroadcast(message: SyncBroadcast): Promise<void> {
+  if ('syncGistID' in message) {
+    await writeJSON(syncGistPath(), { gistID: message.syncGistID }).catch(() => undefined)
+    return
+  }
+  if ('syncStatus' in message) {
+    const status = message.syncStatus
+    if (status.phase !== 'error') return
+    output?.warn(`sync: ${status.lastError ?? 'unknown'}: ${status.errorMessage ?? ''}`)
+    if (status.lastError !== 'auth' || syncAuthPrompted) return
+    syncAuthPrompted = true
+    const lang = await gameLanguage()
+    const signIn = syncSignInLabel(lang)
+    const choice = await vscode.window.showWarningMessage(syncFailedText(lang, 'auth'), signIn)
+    if (choice === signIn && (await githubSession('renew')) !== undefined) {
+      syncConfigured = undefined
+      await configureWorkerSync()
+    }
+    return
+  }
+  const report = message.syncReport
+  output?.info(
+    `sync: ${report.peers.length} other device(s), pushed=${report.pushed}, dex+${report.dexAdded}` +
+      (report.continuedFrom === undefined ? '' : `, continued from ${report.continuedFrom}`),
+  )
+  // The save is read for its language only when there is something to say.
+  if (report.continuedFrom !== undefined) {
+    void vscode.window.showInformationMessage(
+      syncContinuedFromText(await gameLanguage(), report.continuedFrom),
+    )
+  }
+  if (report.newerPeer && !syncNewerPeerWarned) {
+    syncNewerPeerWarned = true
+    void vscode.window.showWarningMessage(syncNewerPeerText(await gameLanguage()))
+  }
+}
+
 /**
  * This machine's usage as the ledger sees it, taken from the last completed scan.
  *
@@ -999,10 +1318,7 @@ async function importSave(): Promise<void> {
   const summary = summarize(envelope.state)
   // The copy is the core's, in the game's language — read from this machine's save, which is the
   // language the player chose here (an imported save never changes it).
-  const lang = (
-    parseCompanionState(await fs.readFile(savePath(), 'utf8').catch(() => '')) ??
-    freshCompanionState(vscode.env.language)
-  ).language
+  const lang = await gameLanguage()
   const mergeLabel = importMergeLabel(lang)
   const replaceLabel = importReplaceLabel(lang)
   const answer = await vscode.window.showWarningMessage(
@@ -1140,6 +1456,8 @@ async function runDevScenario(): Promise<void> {
 }
 
 async function refresh(manual: boolean): Promise<void> {
+  // Another window may have turned sync on or off; the lease holder is the one that must know.
+  void configureWorkerSync()
   // Never two scans at once: the first cold scan takes ~30 seconds and overlapping them
   // would just multiply the I/O.
   if (scanInFlight) {

@@ -51,6 +51,38 @@ export interface MergeResult {
   creditedTokens: number
   /** Pokédex entries the result gained over the local save. */
   dexAdded: number
+  /**
+   * Whether history of this save is gone from the result: a fork it lost here, or an adoption of
+   * a save whose fork, resolved elsewhere, dropped writes this save holds. An adoption of a peer
+   * that only played on — a hatch, an evolution, a new companion — loses nothing.
+   */
+  localLost: boolean
+}
+
+/** Per key, the later of two drops: a device's counter only grows, so the later one is current. */
+function mergedDiscarded(
+  a: CompanionState['discarded'],
+  b: CompanionState['discarded'],
+): Record<string, [number, number]> {
+  const out = { ...a }
+  for (const [device, range] of Object.entries(b ?? {})) {
+    const held = out[device]
+    if (held === undefined || range[1] > held[1]) out[device] = range
+  }
+  return out
+}
+
+/**
+ * Whether `remote` records a drop of writes `local` holds, and `local` has not already absorbed
+ * that drop (its own copy of the record would be the same).
+ */
+function dropsWritesOf(remote: CompanionState, local: CompanionState): boolean {
+  return Object.entries(remote.discarded ?? {}).some(([device, [after, upTo]]) => {
+    const seen = local.discarded?.[device]
+    if (seen !== undefined && seen[0] === after && seen[1] === upTo) return false
+    const count = local.revision[device] ?? 0
+    return count > after && count <= upTo
+  })
 }
 
 /** Every counter in `a` is at least the one in `b`: `a` has seen all of `b`'s history. */
@@ -152,7 +184,20 @@ function mergeRegistries(
   return out
 }
 
-export function mergeSaves(local: CompanionState, remote: CompanionState): MergeResult {
+export interface MergeOptions {
+  /**
+   * Whose history continues **if** the saves forked — the player's answer to the first sync onto
+   * a machine that already has a companion (`docs/sync.md` §7.1). Ignored when one save contains
+   * the other: adopting the newer one loses nothing, and forcing the older would.
+   */
+  onFork?: 'local' | 'remote'
+}
+
+export function mergeSaves(
+  local: CompanionState,
+  remote: CompanionState,
+  options: MergeOptions = {},
+): MergeResult {
   const localCovers = covers(local.revision, remote.revision)
   const remoteCovers = covers(remote.revision, local.revision)
   // A save from before sync has no counters, and "every counter covers nothing" is vacuously
@@ -170,7 +215,7 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
     narrative = 'remote'
   } else {
     outcome = 'forked'
-    narrative = forkWinner(local, remote, untracked)
+    narrative = options.onFork ?? forkWinner(local, remote, untracked)
   }
 
   const base = narrative === 'local' ? local : remote
@@ -187,8 +232,10 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
     delete state.claimedTodayTokensByProvider
   }
   state.language = local.language
-  if (local.trainerID !== undefined) state.trainerID = local.trainerID
-  else delete state.trainerID
+  // The trainer is the player's choice, not the machine's, so it follows the winning history —
+  // and when that history never chose one, the other side's choice, so both machines settle on
+  // the same trainer rather than each keeping its own.
+  if (base.trainerID === undefined && other.trainerID !== undefined) state.trainerID = other.trainerID
   // Challenges: the narrative winner's board. On the same day and week, each challenge keeps the
   // furthest progress of either side but the winner's paid flag — the reward lives in the winner's
   // `earnedTokens`, so one only the loser completed is paid on the next settle, not lost.
@@ -213,7 +260,7 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   const medals = new Set([...(local.medals ?? []), ...(remote.medals ?? [])])
   if (medals.size > 0) state.medals = [...medals]
   if (local.medalsSeeded === true || remote.medalsSeeded === true) state.medalsSeeded = true
-  // A setting, like the language and the trainer: this machine's choice.
+  // A setting, like the language: this machine's choice.
   if (local.keepCompletedCompanion === true) state.keepCompletedCompanion = true
   else delete state.keepCompletedCompanion
   if (local.lastEncounterToastAt !== undefined) state.lastEncounterToastAt = local.lastEncounterToastAt
@@ -233,6 +280,17 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
   }
   state.usedByDevice = perKeyMax(base.usedByDevice, other.usedByDevice)
   state.revision = perKeyMax(base.revision, other.revision)
+  // What this fork drops is the loser's counters above the winner's: recorded, so a machine that
+  // held those writes and later adopts the result knows it lost them (`localLost`).
+  const discarded = mergedDiscarded(base.discarded, other.discarded)
+  if (outcome === 'forked') {
+    for (const [device, count] of Object.entries(other.revision)) {
+      const after = base.revision[device] ?? 0
+      if (count > after) discarded[device] = [after, count]
+    }
+  }
+  if (Object.keys(discarded).length > 0) state.discarded = discarded
+  else delete state.discarded
 
   // Collections: union, whichever side won.
   const dexIDs = new Set(state.dex.map((entry) => entry.id))
@@ -295,7 +353,68 @@ export function mergeSaves(local: CompanionState, remote: CompanionState): Merge
     narrative,
     creditedTokens: credited,
     dexAdded: merged.dex.length - local.dex.length,
+    localLost:
+      (outcome === 'forked' && narrative === 'remote') ||
+      (outcome === 'adoptedRemote' && dropsWritesOf(remote, local)),
   }
+}
+
+/**
+ * Whether `after` differs from `before` in its **history**, not merely in what it accrued.
+ *
+ * Accrual — the ledger, the token totals, the egg's and the companion's meters, species
+ * experience, the encounter meter, active days, challenge progress — is reconciled by the merge
+ * itself from `usedByDevice`: the tokens one side has not seen are credited to the other, whichever
+ * history continues. Counting it as a revision would make two machines that are merely both in use
+ * fork on every round, and a fork discards the losing side's catches and purchases for nothing.
+ * Everything else — a hatch, an evolution, a spawn, a catch, a purchase, a daily egg, a payout —
+ * is history, and is counted.
+ */
+export function changesHistory(before: CompanionState, after: CompanionState): boolean {
+  return historyKey(before) !== historyKey(after)
+}
+
+/** Top-level fields that only accrue (see `changesHistory`), plus the counters themselves. */
+const ACCRUAL_FIELDS = [
+  'usedSinceInstall',
+  'usedByDevice',
+  'claimedTodayTokensByProvider',
+  'lastDate',
+  'installBaselineSet',
+  'accrualDays',
+  'eggUsage',
+  'encounterUsage',
+  'queueFullArmed',
+  'lastEncounterToastAt',
+  'revision',
+] as const satisfies readonly (keyof CompanionState)[]
+
+/** The save with everything that only accrues taken out, as canonical text. */
+function historyKey(state: CompanionState): string {
+  const rest: Partial<CompanionState> = { ...state }
+  for (const key of ACCRUAL_FIELDS) delete rest[key]
+  if (state.active !== undefined) rest.active = { ...state.active, usedAtStage: 0 }
+  rest.species = Object.fromEntries(
+    Object.entries(state.species).map(([id, progress]) => [id, { ...progress, xp: 0, shinyXP: 0 }]),
+  )
+  if (state.challenges !== undefined) {
+    rest.challenges = {
+      ...state.challenges,
+      items: state.challenges.items.map((c) => ({ ...c, progress: 0 })),
+    }
+  }
+  return canonicalJSON(rest)
+}
+
+/** JSON with object keys sorted, so the same content always reads the same. */
+function canonicalJSON(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : v,
+  )
 }
 
 /** Records one committed change by `device`. Called on every write that changed the save. */

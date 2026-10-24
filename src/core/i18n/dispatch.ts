@@ -1099,6 +1099,181 @@ export function mergedText(lang: AppLanguage, dexAdded: number, narrative: 'loca
       )
 }
 
+// MARK: - Sync
+
+/** The one-time consent: what leaves this machine, and where it goes (`docs/sync.md` §5). */
+export function syncConsentText(lang: AppLanguage): string {
+  return t(
+    lang,
+    'GitHub로 이 게임을 다른 컴퓨터와 동기화할까요?',
+    'Sync this game with your other computers through GitHub?',
+    'GitHubでこのゲームをほかのコンピューターと同期しますか？',
+    '¿Sincronizar esta partida con tus otros equipos a través de GitHub?',
+  )
+}
+
+export function syncConsentDetail(lang: AppLanguage): string {
+  return t(
+    lang,
+    '내 GitHub 계정의 비공개(secret) gist에 다음을 올려요: 누적 토큰 수, 활동한 날짜, 도감, 가방. 오늘의 공급자별 사용량과 표시 언어는 올리지 않아요.\n\nsecret gist는 목록에 나오지 않지만 URL을 아는 사람은 읽을 수 있어요. 동기화는 이 컴퓨터에서만 켜지고, 다른 컴퓨터에서도 한 번씩 켜야 해요.',
+    "A secret gist in your GitHub account will hold: your lifetime token totals, the days you were active, your Pokédex and your bag. Today's per-provider usage and the display language are not uploaded.\n\nA secret gist is unlisted, but anyone with its URL can read it. Sync is turned on for this computer only; turn it on once on each of the others.",
+    'あなたのGitHubアカウントのシークレットgistに、累計トークン数・活動した日・図鑑・バッグを保存します。今日のプロバイダー別使用量と表示言語はアップロードしません。\n\nシークレットgistは一覧に出ませんが、URLを知っている人は読めます。同期はこのコンピューターだけで有効になります。ほかのコンピューターでも一度ずつ有効にしてください。',
+    'Un gist secreto de tu cuenta de GitHub guardará: tus tokens totales, los días con actividad, tu Pokédex y tu bolsa. El uso de hoy por proveedor y el idioma no se suben.\n\nUn gist secreto no aparece en listados, pero cualquiera con su URL puede leerlo. La sincronización se activa solo en este equipo; actívala una vez en cada uno de los demás.',
+  )
+}
+
+export function syncEnableLabel(lang: AppLanguage): string {
+  return t(lang, '동기화 켜기', 'Turn on sync', '同期を有効にする', 'Activar sincronización')
+}
+
+/**
+ * The first-sync question (`docs/sync.md` §7.1): both machines have a game, only one companion can
+ * continue. Names both sides concretely, and says the Pokédexes merge either way — otherwise the
+ * choice reads as "delete one of my collections".
+ */
+export function syncChoiceText(
+  lang: AppLanguage,
+  local: { dexCount: number; tokens: number },
+  remote: { label: string; dexCount: number; tokens: number },
+): string {
+  const lt = compact(local.tokens)
+  const rt = compact(remote.tokens)
+  return t(
+    lang,
+    `두 컴퓨터에 각각 게임이 있어요. 이 컴퓨터: 도감 ${local.dexCount}마리, ${lt} 토큰. ${remote.label}: 도감 ${remote.dexCount}마리, ${rt} 토큰. 어느 동료가 계속할까요?`,
+    `Both computers have a game. This one: ${local.dexCount} in the Pokédex, ${lt} tokens. ${remote.label}: ${remote.dexCount} in the Pokédex, ${rt} tokens. Which companion continues?`,
+    `両方のコンピューターにゲームがあります。このコンピューター：図鑑${local.dexCount}匹、${lt}トークン。${remote.label}：図鑑${remote.dexCount}匹、${rt}トークン。どちらの相棒が続けますか？`,
+    `Los dos equipos tienen partida. Este: ${local.dexCount} en la Pokédex, ${lt} tokens. ${remote.label}: ${remote.dexCount} en la Pokédex, ${rt} tokens. ¿Qué compañero continúa?`,
+  )
+}
+
+export function syncChoiceDetail(lang: AppLanguage): string {
+  return t(
+    lang,
+    '어느 쪽을 골라도 두 도감과 두 컴퓨터의 사용량은 모두 지켜요. 고르지 않은 쪽의 동료, 알, 가방, 잔액은 백업으로 저장돼요.',
+    "Whichever you pick, both Pokédexes and all the usage either computer counted are kept. The other side's companion, egg, bag and balance are saved to a backup.",
+    'どちらを選んでも、両方の図鑑と両方のコンピューターの使用量はすべて残ります。選ばなかった側の相棒・タマゴ・バッグ・残高はバックアップに保存されます。',
+    'Elijas el que elijas, se conservan las dos Pokédex y todo el uso que contó cada equipo. El compañero, el huevo, la bolsa y el saldo del otro lado se guardan en una copia de seguridad.',
+  )
+}
+
+export function syncKeepLocalLabel(lang: AppLanguage): string {
+  return t(
+    lang,
+    '이 컴퓨터의 동료',
+    "This computer's companion",
+    'このコンピューターの相棒',
+    'El de este equipo',
+  )
+}
+
+export function syncKeepRemoteLabel(lang: AppLanguage, label: string): string {
+  return t(lang, `${label}의 동료`, `${label}'s companion`, `${label}の相棒`, `El de ${label}`)
+}
+
+export function syncDoneText(lang: AppLanguage, dexAdded: number, devices: number): string {
+  return dexAdded > 0
+    ? t(
+        lang,
+        `동기화했어요: 도감 ${dexAdded}마리 추가 (다른 컴퓨터 ${devices}대).`,
+        `Synced: ${dexAdded} new in the Pokédex (${devices} other computer${devices === 1 ? '' : 's'}).`,
+        `同期しました：図鑑に${dexAdded}匹追加（ほかのコンピューター${devices}台）。`,
+        `Sincronizado: ${dexAdded} nuevos en la Pokédex (${devices} equipo${devices === 1 ? '' : 's'} más).`,
+      )
+    : t(
+        lang,
+        `동기화했어요 (다른 컴퓨터 ${devices}대).`,
+        `Synced (${devices} other computer${devices === 1 ? '' : 's'}).`,
+        `同期しました（ほかのコンピューター${devices}台）。`,
+        `Sincronizado (${devices} equipo${devices === 1 ? '' : 's'} más).`,
+      )
+}
+
+/** A fork went to another computer: this one's recent companion progress was replaced. */
+export function syncContinuedFromText(lang: AppLanguage, label: string): string {
+  return t(
+    lang,
+    `${label}의 게임이 여기서 계속돼요. 도감과 사용량은 합쳐졌고, 이 컴퓨터의 이전 상태는 백업으로 저장했어요.`,
+    `The game from ${label} continues here. Pokédexes and usage were merged; this computer's previous state was saved to a backup.`,
+    `${label}のゲームがここで続きます。図鑑と使用量は合わせました。このコンピューターの以前の状態はバックアップに保存しました。`,
+    `Aquí continúa la partida de ${label}. Las Pokédex y el uso se combinaron; el estado anterior de este equipo se guardó en una copia de seguridad.`,
+  )
+}
+
+export function syncNewerPeerText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '다른 컴퓨터가 더 새로운 Tokendex를 쓰고 있어서 그 게임을 읽을 수 없어요. 확장을 업데이트하세요.',
+    'Another computer runs a newer Tokendex, so its game cannot be read here. Update the extension.',
+    'ほかのコンピューターがより新しいTokendexを使っているため、そのゲームを読めません。拡張機能を更新してください。',
+    'Otro equipo usa un Tokendex más nuevo y su partida no se puede leer aquí. Actualiza la extensión.',
+  )
+}
+
+export function syncDisabledText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '이 컴퓨터의 동기화를 껐어요. 게임은 이 컴퓨터에 그대로 있고, gist도 지우지 않았어요.',
+    'Sync is off on this computer. Your game stays here, and the gist was not deleted.',
+    'このコンピューターの同期を無効にしました。ゲームはここに残り、gistは削除していません。',
+    'Sincronización desactivada en este equipo. Tu partida se queda aquí y el gist no se ha borrado.',
+  )
+}
+
+/** Turning sync on did not go through: nothing was changed, and nothing will retry on its own. */
+export function syncNotTurnedOnText(lang: AppLanguage): string {
+  return t(
+    lang,
+    '동기화를 켜지 못했어요: GitHub에 연결할 수 없었어요. 게임은 그대로예요. 명령 팔레트에서 다시 시도하세요.',
+    'Sync was not turned on: GitHub could not be reached. Your game is unchanged. Try again from the command palette.',
+    '同期を有効にできませんでした：GitHubに接続できませんでした。ゲームはそのままです。コマンドパレットからもう一度お試しください。',
+    'No se activó la sincronización: no se pudo conectar con GitHub. Tu partida no ha cambiado. Inténtalo de nuevo desde la paleta de comandos.',
+  )
+}
+
+export function syncFailedText(lang: AppLanguage, reason: string): string {
+  switch (reason) {
+    // 'off': the worker holds no credential — there is no GitHub session with the gist scope.
+    case 'off':
+    case 'auth':
+      return t(
+        lang,
+        'GitHub가 동기화 권한을 거부했어요. 다시 로그인하세요.',
+        'GitHub refused the sync credential. Sign in again.',
+        'GitHubが同期の認証を拒否しました。もう一度サインインしてください。',
+        'GitHub rechazó la credencial de sincronización. Vuelve a iniciar sesión.',
+      )
+    case 'rateLimited':
+      return t(
+        lang,
+        'GitHub 요청 한도에 걸렸어요. 잠시 후 다시 동기화해요.',
+        'GitHub rate limit reached. Sync will retry later.',
+        'GitHubのリクエスト上限に達しました。しばらくして再試行します。',
+        'Se alcanzó el límite de GitHub. La sincronización lo reintentará más tarde.',
+      )
+    case 'tooLarge':
+      return t(
+        lang,
+        '게임이 너무 커서 gist에 올릴 수 없어요.',
+        'The game is too large for a gist.',
+        'ゲームが大きすぎてgistに保存できません。',
+        'La partida es demasiado grande para un gist.',
+      )
+    default:
+      return t(
+        lang,
+        '지금은 동기화할 수 없어요. 나중에 다시 시도해요.',
+        'Could not sync right now. It will retry later.',
+        '今は同期できません。あとで再試行します。',
+        'No se pudo sincronizar ahora. Se reintentará más tarde.',
+      )
+  }
+}
+
+export function syncSignInLabel(lang: AppLanguage): string {
+  return t(lang, '로그인', 'Sign in', 'サインイン', 'Iniciar sesión')
+}
+
 // MARK: - Celebrations
 
 /**
