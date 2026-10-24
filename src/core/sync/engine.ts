@@ -105,14 +105,17 @@ export interface SyncPreview {
    * of its own — the case that deserves a question (`docs/sync.md` §7.1).
    */
   wouldFork: boolean
+  /** The peer the question is about: of those that would fork, the one with the most progress. */
+  forkPeer?: SyncPeer
 }
 
 export interface RoundOptions {
   /** Read the gist in full rather than trusting the etag. */
   force?: boolean
   /**
-   * The player's answer to the first-sync question, for the one device it named (`forkPeer`).
-   * Every other peer is merged by the rule: the answer was about that computer, not about all.
+   * The player's answer to the first-sync question about one device (`forkPeer`), folded first.
+   * `local` holds for every peer of the round: keeping this computer's companion means keeping it.
+   * `remote` is about that computer alone; every other peer is merged by the rule.
    */
   onFork?: 'local' | 'remote'
   forkPeer?: string
@@ -169,8 +172,17 @@ export class SyncEngine {
       // must be brought forward by it, never pushed over it (code review, 2026-10-22). When the
       // local save is ahead, as it normally is, this merge keeps it and changes nothing.
       if (own !== undefined && (await target.absorbRemote(own.state)) === undefined) report.busy = true
-      for (const { peer, state } of peers) {
-        const chosen = round.onFork !== undefined && peer.deviceID === round.forkPeer
+      // The peer the answer named goes first, so it meets the save the player was asked about; a
+      // peer folded before it could already have settled the fork by the rule. "Keep this
+      // computer's" holds for every peer of the round — a later fork won by the rule would replace
+      // the very companion the player chose to keep. "Keep theirs" was about that computer alone.
+      const ordered = [
+        ...peers.filter(({ peer }) => peer.deviceID === round.forkPeer),
+        ...peers.filter(({ peer }) => peer.deviceID !== round.forkPeer),
+      ]
+      for (const { peer, state } of ordered) {
+        const chosen =
+          round.onFork !== undefined && (peer.deviceID === round.forkPeer || round.onFork === 'local')
         const result = await target.absorbRemote(state, chosen ? { onFork: round.onFork! } : {})
         if (result === undefined) {
           report.busy = true
@@ -212,13 +224,16 @@ export class SyncEngine {
     const peers = read.kind === 'files' ? this.decode(read.files).peers : []
     const local = target.snapshot()
     const hasOwnGame = local.active !== undefined || local.dex.length > 0
+    const forkPeer = peers
+      .filter(({ state }) => mergeSaves(local as CompanionState, state).outcome === 'forked')
+      .map((p) => p.peer)
+      .sort((a, b) => b.summary.lifetimeTokens - a.summary.lifetimeTokens)[0]
     return {
       local: summarize(local),
       hasOwnGame,
       peers: peers.map((p) => p.peer),
-      wouldFork:
-        hasOwnGame &&
-        peers.some(({ state }) => mergeSaves(local as CompanionState, state).outcome === 'forked'),
+      wouldFork: hasOwnGame && forkPeer !== undefined,
+      ...(forkPeer === undefined ? {} : { forkPeer }),
     }
   }
 

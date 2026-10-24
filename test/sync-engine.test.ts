@@ -397,6 +397,96 @@ describe('SyncEngine', () => {
     expect(report.skipped).toEqual([])
     expect(report.peers).toEqual([])
   })
+
+  // [trigger branch] Three devices: two peers that already share a game, the lower id folded first.
+  // It used to settle the fork by the rule, so the named peer, folded next, was only an adoption
+  // and "keep this computer's companion" was never applied.
+  it("keeps this computer's companion when a peer folded before the named one would fork", async () => {
+    const gist = new MemoryTransport()
+    const peer = (revision: Record<string, number>) =>
+      encodeSyncPayload(
+        { ...freshCompanionState('en'), active: mon(4), dex: [dex('p')], revision },
+        { appVersion: '1', label: 'p' },
+      ).text
+    await gist.write(syncFileName(B), peer({ [B]: 5, [C]: 5 }))
+    await gist.write(syncFileName(C), peer({ [B]: 5, [C]: 6 }))
+    const a = machine(A, gist, { active: mon(1), dex: [dex('a')], revision: { [A]: 1 } })
+    await a.engine.runOnce({ onFork: 'local', forkPeer: C })
+    expect(a.store.snapshot().active?.baseID).toBe(1)
+    expect(dexIDs(a.store.snapshot())).toEqual(['a', 'p'])
+  })
+
+  // Two peers each ahead of the other: the named one folded first, the other still forks against
+  // the result. The player's "keep this computer's" holds for it too, not the rule.
+  it("keeps this computer's companion against every peer of the first round", async () => {
+    const gist = new MemoryTransport()
+    const peer = (revision: Record<string, number>) =>
+      encodeSyncPayload(
+        { ...freshCompanionState('en'), active: mon(4), revision },
+        { appVersion: '1', label: 'p' },
+      ).text
+    await gist.write(syncFileName(B), peer({ [B]: 40, [C]: 5 }))
+    await gist.write(syncFileName(C), peer({ [B]: 5, [C]: 6 }))
+    const a = machine(A, gist, { active: mon(1), revision: { [A]: 1 } })
+    await a.engine.runOnce({ onFork: 'local', forkPeer: C })
+    expect(a.store.snapshot().active?.baseID).toBe(1)
+  })
+
+  // The question names a peer that would fork, not merely the one with the most progress.
+  it('names a peer that would fork in the first-sync question', async () => {
+    const gist = new MemoryTransport()
+    const payload = (state: Partial<CompanionState>) =>
+      encodeSyncPayload({ ...freshCompanionState('en'), ...state }, { appVersion: '1', label: 'p' }).text
+    // B has already seen everything A has: no fork, however far it went.
+    await gist.write(syncFileName(B), payload({ usedSinceInstall: 9_000, revision: { [A]: 2 } }))
+    await gist.write(syncFileName(C), payload({ usedSinceInstall: 10, revision: { [C]: 1 } }))
+    const a = machine(A, gist, { active: mon(1), revision: { [A]: 2 } })
+    const peek = await a.engine.peek()
+    expect(peek.wouldFork).toBe(true)
+    expect(peek.forkPeer?.deviceID).toBe(C)
+  })
+
+  // [trigger branch] The other machine hatched the shared egg: an adoption that replaces the
+  // companion, and lost nothing. It used to back up, toast "continued from…" and rotate away the
+  // backup of a real lost fork.
+  it('does not back up an adoption of a hatch on the other machine', async () => {
+    const gist = new MemoryTransport()
+    const a = machine(A, gist, { revision: { [A]: 1 } })
+    await a.engine.runOnce()
+    await gist.write(
+      syncFileName(B),
+      encodeSyncPayload(
+        { ...freshCompanionState('en'), active: mon(4), revision: { [A]: 1, [B]: 1 } },
+        { appVersion: '1', label: 'p' },
+      ).text,
+    )
+    const report = await a.engine.runOnce()
+    expect(report.merges[0]?.result).toMatchObject({
+      outcome: 'adoptedRemote',
+      companionReplaced: true,
+      localLost: false,
+    })
+    expect(a.store.snapshot().active?.baseID).toBe(4)
+    expect(syncBackups(a.directory)).toHaveLength(0)
+  })
+
+  // A machine that adopted a fork's result once has lost nothing more when its peer plays on.
+  it('backs up a lost fork once, not on every adoption after it', async () => {
+    const gist = new MemoryTransport()
+    const a = machine(A, gist, { active: mon(4), revision: { [A]: 1 } })
+    const b = machine(B, gist, { active: mon(7), revision: { [B]: 9 } })
+    await b.engine.runOnce()
+    await a.engine.runOnce({ onFork: 'local', forkPeer: B })
+    await b.engine.runOnce()
+    expect(syncBackups(b.directory)).toHaveLength(1)
+    // A hatches something new: history, so a revision of A's.
+    await a.store.update({ todayTokensByProvider: { codex: 10 }, todayDate: DAY, hasUsageData: true })
+    await a.engine.runOnce()
+    const report = await b.engine.runOnce()
+    expect(report.merges[0]?.result.outcome).toBe('adoptedRemote')
+    expect(report.merges[0]?.result.localLost).toBe(false)
+    expect(syncBackups(b.directory)).toHaveLength(1)
+  })
 })
 
 describe('sync payload', () => {

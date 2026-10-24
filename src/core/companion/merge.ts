@@ -51,6 +51,38 @@ export interface MergeResult {
   creditedTokens: number
   /** Pokédex entries the result gained over the local save. */
   dexAdded: number
+  /**
+   * Whether history of this save is gone from the result: a fork it lost here, or an adoption of
+   * a save whose fork, resolved elsewhere, dropped writes this save holds. An adoption of a peer
+   * that only played on — a hatch, an evolution, a new companion — loses nothing.
+   */
+  localLost: boolean
+}
+
+/** Per key, the later of two drops: a device's counter only grows, so the later one is current. */
+function mergedDiscarded(
+  a: CompanionState['discarded'],
+  b: CompanionState['discarded'],
+): Record<string, [number, number]> {
+  const out = { ...a }
+  for (const [device, range] of Object.entries(b ?? {})) {
+    const held = out[device]
+    if (held === undefined || range[1] > held[1]) out[device] = range
+  }
+  return out
+}
+
+/**
+ * Whether `remote` records a drop of writes `local` holds, and `local` has not already absorbed
+ * that drop (its own copy of the record would be the same).
+ */
+function dropsWritesOf(remote: CompanionState, local: CompanionState): boolean {
+  return Object.entries(remote.discarded ?? {}).some(([device, [after, upTo]]) => {
+    const seen = local.discarded?.[device]
+    if (seen !== undefined && seen[0] === after && seen[1] === upTo) return false
+    const count = local.revision[device] ?? 0
+    return count > after && count <= upTo
+  })
 }
 
 /** Every counter in `a` is at least the one in `b`: `a` has seen all of `b`'s history. */
@@ -248,6 +280,17 @@ export function mergeSaves(
   }
   state.usedByDevice = perKeyMax(base.usedByDevice, other.usedByDevice)
   state.revision = perKeyMax(base.revision, other.revision)
+  // What this fork drops is the loser's counters above the winner's: recorded, so a machine that
+  // held those writes and later adopts the result knows it lost them (`localLost`).
+  const discarded = mergedDiscarded(base.discarded, other.discarded)
+  if (outcome === 'forked') {
+    for (const [device, count] of Object.entries(other.revision)) {
+      const after = base.revision[device] ?? 0
+      if (count > after) discarded[device] = [after, count]
+    }
+  }
+  if (Object.keys(discarded).length > 0) state.discarded = discarded
+  else delete state.discarded
 
   // Collections: union, whichever side won.
   const dexIDs = new Set(state.dex.map((entry) => entry.id))
@@ -310,6 +353,9 @@ export function mergeSaves(
     narrative,
     creditedTokens: credited,
     dexAdded: merged.dex.length - local.dex.length,
+    localLost:
+      (outcome === 'forked' && narrative === 'remote') ||
+      (outcome === 'adoptedRemote' && dropsWritesOf(remote, local)),
   }
 }
 

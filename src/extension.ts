@@ -167,8 +167,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('tokendex.dev', () => void runDevScenario()),
     vscode.commands.registerCommand('tokendex.reloadWebview', () => reloadSurfaces()),
-    vscode.commands.registerCommand('tokendex.syncNow', () => void syncNowCommand()),
-    vscode.commands.registerCommand('tokendex.syncDisable', () => void disableSync()),
+    vscode.commands.registerCommand('tokendex.syncNow', () =>
+      syncNowCommand().catch((error: unknown) => output?.warn(`sync: ${String(error)}`)),
+    ),
+    vscode.commands.registerCommand('tokendex.syncDisable', () =>
+      disableSync().catch((error: unknown) => output?.warn(`sync: ${String(error)}`)),
+    ),
     // A new GitHub sign-in (or a sign-out) changes the credential the worker holds.
     vscode.authentication.onDidChangeSessions((e) => {
       if (e.provider.id === 'github') void configureWorkerSync()
@@ -998,6 +1002,8 @@ let syncConfigured: string | undefined
  * tick in between would read "off" and turn off the very engine the flow is using.
  */
 let syncEnabling = false
+/** "Turn off" while `enableSync` runs: the flow must not write the switch on afterwards. */
+let syncEnableCancelled = false
 
 /**
  * Hands the worker the current credential, or turns sync off in it. Idempotent: called on every
@@ -1051,6 +1057,7 @@ async function syncNowCommand(): Promise<void> {
 async function enableSync(): Promise<void> {
   if (syncEnabling) return
   syncEnabling = true
+  syncEnableCancelled = false
   try {
     await enableSyncFlow()
   } finally {
@@ -1082,10 +1089,11 @@ async function enableSyncFlow(): Promise<void> {
     return
   }
   const preview = 'sync' in peek ? peek.sync.preview : undefined
-  // Two machines: one peer. More: the one with the most progress is the one worth naming.
-  const peer = [...(preview?.peers ?? [])].sort(
-    (a, b) => b.summary.lifetimeTokens - a.summary.lifetimeTokens,
-  )[0]
+  // The question names a peer that would fork; joining with nothing of our own, the one with the
+  // most progress.
+  const peer =
+    preview?.forkPeer ??
+    [...(preview?.peers ?? [])].sort((a, b) => b.summary.lifetimeTokens - a.summary.lifetimeTokens)[0]
   let fork: { onFork: 'local' | 'remote'; forkPeer: string } | undefined
   if (preview !== undefined && peer !== undefined) {
     if (preview.wouldFork) {
@@ -1113,7 +1121,9 @@ async function enableSyncFlow(): Promise<void> {
       fork = { onFork: 'remote', forkPeer: peer.deviceID }
     }
   }
-  if (await runSyncRound({ context: 'enable', ...fork })) await setSyncEnabled(true)
+  if ((await runSyncRound({ context: 'enable', ...fork })) && !syncEnableCancelled) {
+    await setSyncEnabled(true)
+  }
   // Either way the worker follows the switch: on and running, or off again.
   syncConfigured = undefined
   await configureWorkerSync({ fromEnable: true })
@@ -1153,6 +1163,8 @@ async function runSyncRound(round: {
 }
 
 async function disableSync(): Promise<void> {
+  // Mid-enable, the configure below is skipped and the flow would write the switch on after it.
+  if (syncEnabling) syncEnableCancelled = true
   await setSyncEnabled(false)
   await configureWorkerSync()
   void vscode.window.showInformationMessage(syncDisabledText(await gameLanguage()))

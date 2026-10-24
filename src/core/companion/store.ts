@@ -550,9 +550,9 @@ export class CompanionStore {
    *
    * When this machine loses something, the save as it was goes to a backup first: what a fork
    * loses is bounded (`merge.ts`), and this way it is also recoverable. It loses something on a
-   * fork the other history won, and on an adoption that replaces the companion — the other machine
-   * resolved a fork against us, and we only see its result. An adoption that keeps the companion
-   * lost nothing: the other machine only played on.
+   * fork the other history won, and on an adoption of a fork the other machine resolved against
+   * us — `localLost` either way. An adoption of a peer that only played on lost nothing, even when
+   * it hatched the egg or changed the companion.
    */
   async absorbRemote(
     remote: CompanionState,
@@ -563,10 +563,7 @@ export class CompanionStore {
       async () => {
         const merged = mergeSaves(this.state, remote, options)
         const companionReplaced = companionIdentity(merged.state) !== companionIdentity(this.state)
-        const loses =
-          (merged.outcome === 'forked' && merged.narrative === 'remote') ||
-          (merged.outcome === 'adoptedRemote' && companionReplaced)
-        if (loses) await this.backupState()
+        if (merged.localLost) await this.backupState()
         this.adopt(merged.state)
         return { ...merged, companionReplaced }
       },

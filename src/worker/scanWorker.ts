@@ -1245,11 +1245,8 @@ async function answerSync(request: SyncWorkerRequest): Promise<void> {
 function reportView(report: SyncReport): SyncReportView {
   // Said only when the companion on stage changed: a fork that kept it lost nothing the player
   // would notice, and a toast per such round would be noise.
-  const lost = report.merges.find(
-    (m) =>
-      // `remote` covers both: an adoption's history is the other machine's too.
-      m.result.companionReplaced && m.result.narrative === 'remote',
-  )
+  // Lost, not merely replaced: a hatch or a new companion on the other machine is the same game.
+  const lost = report.merges.find((m) => m.result.companionReplaced && m.result.localLost)
   return {
     ...(lost === undefined ? {} : { continuedFrom: lost.peer.label }),
     dexAdded: report.merges.reduce((total, m) => total + Math.max(0, m.result.dexAdded), 0),

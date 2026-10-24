@@ -1181,6 +1181,13 @@ export interface CompanionState {
    * machine, permanently (`docs/sync.md` §7.5).
    */
   revision: Record<string, number>
+  /**
+   * The writes the last fork on each device's counter dropped: `[after, upTo]`, the counters in
+   * `(after, upTo]`. `revision` alone cannot tell a machine whose save was discarded by a fork
+   * resolved elsewhere from one whose peer merely played on — both see an adoption — and only the
+   * first lost anything (`mergeSaves`, `localLost`). Absent until a fork drops something.
+   */
+  discarded?: Record<string, [number, number]>
   /** Items waiting in the wild area. They share the queue's room with the Pokémon. */
   finds: WildFind[]
   /** Legendaries that got away and can still be tracked back. */

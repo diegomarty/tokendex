@@ -79,6 +79,13 @@ function isNumberRecord(v: unknown): v is Record<string, number> {
   return isObject(v) && Object.values(v).every(isInt)
 }
 
+function isDiscardedRecord(v: unknown): v is Record<string, [number, number]> {
+  return (
+    isObject(v) &&
+    Object.values(v).every((r) => Array.isArray(r) && r.length === 2 && isInt(r[0]) && isInt(r[1]))
+  )
+}
+
 function isStringRecord(v: unknown): v is Record<string, string> {
   return isObject(v) && Object.values(v).every(isString)
 }
@@ -530,6 +537,8 @@ export function decodeCompanionState(value: unknown, hostLanguage?: string): Com
   // an imported save gets its slug checked.
   const trainerID = lenientOptional(value, 'trainerID', isString)
   if (trainerID !== undefined) state.trainerID = trainerID
+  const discarded = lenientOptional(value, 'discarded', isDiscardedRecord)
+  if (discarded !== undefined) state.discarded = discarded
   if (value['keepCompletedCompanion'] === true) state.keepCompletedCompanion = true
   const lure = decodeLure(value['lure'])
   if (lure !== undefined) state.lure = lure
