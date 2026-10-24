@@ -67,6 +67,11 @@ jobs:
       - name: Package
         run: npm run package
 
+      # Before any publish, not after: a version with no notes must stop here, not once the
+      # Marketplace already carries it.
+      - name: Write the release notes from the CHANGELOG
+        run: .github/scripts/changelog.sh notes "${GITHUB_REF_NAME#v}" >release-notes.md
+
       # Skipped, not failed, while the secret is absent — publishing is manual until then (see
       # the header). A skip keeps the GitHub release below happening; `continue-on-error` here
       # would instead hide a real publish failure on the day the secret exists.
@@ -80,9 +85,6 @@ jobs:
         if: ${{ env.OVSX_PAT != '' }}
         continue-on-error: true
         run: npx --yes ovsx publish *.vsix -p "$OVSX_PAT"
-
-      - name: Write the release notes from the CHANGELOG
-        run: .github/scripts/changelog.sh notes "${GITHUB_REF_NAME#v}" >release-notes.md
 
       - name: Attach the .vsix to the GitHub release
         uses: softprops/action-gh-release@v2

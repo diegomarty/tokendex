@@ -71,4 +71,13 @@ describe('cutting a release', () => {
     expect(release).toMatch(/body_path: release-notes\.md/)
     expect(release).not.toMatch(/generate_release_notes: true/)
   })
+
+  // A version with no notes must fail before anything is published, not after.
+  it('writes the notes before publishing anywhere', () => {
+    const release = workflow('release.yml')
+    const notesAt = release.indexOf('changelog.sh notes "')
+    expect(notesAt).toBeGreaterThan(-1)
+    expect(notesAt).toBeLessThan(release.indexOf('vsce publish'))
+    expect(notesAt).toBeLessThan(release.indexOf('ovsx publish'))
+  })
 })
