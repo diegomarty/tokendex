@@ -24,6 +24,8 @@ class FakeGitHub {
   scripted = new Map<string, Response[]>()
   /** Files whose `content` is cut off in the gist object, as GitHub does for large ones. */
   truncate = new Set<string>()
+  /** Gists that exist but are not in the list: another account's, readable by id. */
+  unlisted = new Set<string>()
   /** Swallow the next PATCH: answer 200 but keep nothing — a write lost to a concurrent one. */
   losePatches = 0
   authHeaders: string[] = []
@@ -74,12 +76,14 @@ class FakeGitHub {
     }
     if (method === 'GET' && url.pathname === '/gists') {
       const page = Number(url.searchParams.get('page'))
-      const all = [...this.gists.values()].map((g) => ({
-        id: g.id,
-        description: g.description,
-        public: g.public,
-        created_at: g.created_at,
-      }))
+      const all = [...this.gists.values()]
+        .filter((g) => !this.unlisted.has(g.id))
+        .map((g) => ({
+          id: g.id,
+          description: g.description,
+          public: g.public,
+          created_at: g.created_at,
+        }))
       const slice = all.slice((page - 1) * 100, page * 100)
       const more = all.length > page * 100
       return Response.json(slice, { headers: more ? { Link: '<x>; rel="next"' } : {} })
@@ -184,6 +188,47 @@ describe('GistTransport', () => {
     github.truncate.add('tokendex-a.json')
     const read = await transport(github, gist.id).read()
     expect(read.kind === 'files' && read.files[0]?.text.length).toBe(5000)
+  })
+
+  // [trigger branch] A truncated file whose raw URL did not answer 200 was dropped without a
+  // word, and the gist's etag kept: that peer was not read again until the gist next changed.
+  it('lists a truncated file it could not fetch as unread', async () => {
+    const github = new FakeGitHub()
+    const gist = github.add()
+    gist.files.set('tokendex-a.json', 'x'.repeat(5000))
+    gist.files.set('tokendex-b.json', 'small')
+    github.truncate.add('tokendex-a.json')
+    github.scripted.set(`GET /${gist.id}/tokendex-a.json`, [new Response('', { status: 404 })])
+    const read = await transport(github, gist.id).read()
+    expect(read).toMatchObject({ kind: 'files', unread: ['tokendex-a.json'] })
+    expect(read.kind === 'files' && read.files.map((f) => f.name)).toEqual(['tokendex-b.json'])
+  })
+
+  // [trigger branch] Signed in to another account, discovery found nothing and the remembered id —
+  // the first account's secret gist, readable by id — stayed in use, folding that game into this one.
+  it("leaves a remembered gist that is not in the signed-in account's list", async () => {
+    const github = new FakeGitHub()
+    const other = github.add()
+    other.files.set('tokendex-b.json', 'another account')
+    github.unlisted.add(other.id)
+    const seen: string[] = []
+    const read = await transport(github, other.id, seen).read()
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).not.toBe(other.id)
+    expect(read.kind === 'files' && read.files.map((f) => f.name)).toEqual([GIST_README_NAME])
+    // The list just read is the whole of it: it is not read again before the gist is created.
+    expect(github.calls.filter((c) => c === 'GET /gists')).toHaveLength(1)
+  })
+
+  // Only a list read to its end says "not there": a list that failed says nothing.
+  it('keeps a remembered gist when the list could not be read whole', async () => {
+    const github = new FakeGitHub()
+    const gist = github.add()
+    github.unlisted.add(gist.id)
+    github.scripted.set('GET /gists', [new Response('', { status: 422 })])
+    const seen: string[] = []
+    await transport(github, gist.id, seen).read()
+    expect(seen).toEqual([])
   })
 
   // [trigger branch] A PATCH that reported success while a concurrent one kept the old file.

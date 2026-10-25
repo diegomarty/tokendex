@@ -222,6 +222,73 @@ describe('SyncRunner', () => {
     expect(time.pendingIn()).toBeUndefined()
   })
 
+  // [trigger branch] A round in flight when sync was turned off still pushed, and its success
+  // published "idle" over "off".
+  it('tells a round in flight that it is no longer wanted once sync is turned off', async () => {
+    const time = clock()
+    const statuses: SyncStatus[] = []
+    let release: (() => void) | undefined
+    let stillWanted: (() => boolean) | undefined
+    const r = new SyncRunner({
+      isLeader: () => true,
+      onStatus: (s) => statuses.push(s),
+      onReport: () => undefined,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+    })
+    r.configure(
+      (options) =>
+        new Promise<SyncReport>((resolve) => {
+          stillWanted = options.stillWanted
+          release = () => resolve(REPORT)
+        }),
+    )
+    await time.advance(0)
+    expect(stillWanted?.()).toBe(true)
+    r.configure(undefined)
+    expect(stillWanted?.()).toBe(false)
+    release?.()
+    await time.advance(0)
+    expect(statuses.at(-1)).toMatchObject({ phase: 'off' })
+  })
+
+  // [trigger branch] Its failure, too, spoke for a configuration it no longer belonged to: "error"
+  // over "off" — a sign-in prompt after sync was turned off — and a backoff counted against the next.
+  it('lets neither the report nor the failure of a round from before a reconfigure through', async () => {
+    const time = clock()
+    const statuses: SyncStatus[] = []
+    const reports: SyncReport[] = []
+    const settle: { ok?: () => void; fail?: () => void } = {}
+    const r = new SyncRunner({
+      isLeader: () => true,
+      onStatus: (s) => statuses.push(s),
+      onReport: (report) => reports.push(report),
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+    })
+    const pending = () =>
+      new Promise<SyncReport>((resolve, reject) => {
+        settle.ok = () => resolve(REPORT)
+        settle.fail = () => reject(new SyncError('auth', 'refused'))
+      })
+    r.configure(pending)
+    await time.advance(0)
+    r.configure(undefined)
+    settle.ok?.()
+    await time.advance(0)
+    expect(reports).toEqual([])
+
+    r.configure(pending)
+    await time.advance(0)
+    r.configure(undefined)
+    settle.fail?.()
+    await time.advance(0)
+    expect(statuses.at(-1)).toMatchObject({ phase: 'off' })
+    expect(statuses.some((s) => s.phase === 'error')).toBe(false)
+  })
+
   it('goes quiet when turned off', async () => {
     const { r, time, statuses } = runner(async () => REPORT)
     await time.advance(0)

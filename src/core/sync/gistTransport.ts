@@ -71,6 +71,12 @@ interface GistSummary {
   created_at?: unknown
 }
 
+/** `complete`: the whole list was read, so "not found" means not there, not "past the last page". */
+interface Discovery {
+  oldest: string | undefined
+  complete: boolean
+}
+
 /** A response read whole — status, headers and body — inside the request's timeout. */
 interface Answer {
   status: number
@@ -104,9 +110,15 @@ export class GistTransport implements SyncTransport {
         throw new SyncError('notFound', 'the sync gist could not be found or created')
     }
     if (answer.status === 304) return { kind: 'notModified' }
-    const files = await this.files(parse(answer))
+    const unread: string[] = []
+    const files = await this.files(parse(answer), unread)
     const newEtag = answer.headers.get('ETag') ?? undefined
-    return { kind: 'files', files, ...(newEtag === undefined ? {} : { etag: newEtag }) }
+    return {
+      kind: 'files',
+      files,
+      ...(newEtag === undefined ? {} : { etag: newEtag }),
+      ...(unread.length === 0 ? {} : { unread }),
+    }
   }
 
   /**
@@ -153,7 +165,8 @@ export class GistTransport implements SyncTransport {
     )
   }
 
-  private async files(body: unknown): Promise<RemoteFile[]> {
+  /** The gist's files; a truncated one whose raw URL did not answer goes to `unread`. */
+  private async files(body: unknown, unread: string[] = []): Promise<RemoteFile[]> {
     const raw = (body as { files?: unknown } | null)?.files
     if (typeof raw !== 'object' || raw === null) throw new SyncError('protocol', 'a gist without files')
     const files: RemoteFile[] = []
@@ -163,7 +176,10 @@ export class GistTransport implements SyncTransport {
       // Large files come back truncated in the gist object; the raw URL serves them whole.
       if ((value.truncated === true || text === undefined) && typeof value.raw_url === 'string') {
         const answer = await this.request('GET', value.raw_url)
-        if (answer.status !== 200) continue
+        if (answer.status !== 200) {
+          unread.push(name)
+          continue
+        }
         text = answer.text
       }
       if (text !== undefined) files.push({ name, text })
@@ -177,7 +193,7 @@ export class GistTransport implements SyncTransport {
 
   private async ensureGist(): Promise<string> {
     if (this.gistID !== undefined) return this.gistID
-    const id = (await this.discoverNow()) ?? (await this.create())
+    const id = (await this.discoverNow()).oldest ?? (await this.create())
     this.use(id)
     return id
   }
@@ -192,8 +208,13 @@ export class GistTransport implements SyncTransport {
   private async rediscoverIfDue(): Promise<void> {
     if (this.gistID === undefined) return // `ensureGist` discovers anyway
     if (this.lastDiscovery !== undefined && this.now() - this.lastDiscovery < REDISCOVER_EVERY_MS) return
-    const oldest = await this.discoverNow()
+    const { oldest, complete } = await this.discoverNow()
     if (oldest !== undefined && oldest !== this.gistID) this.use(oldest)
+    // None in this account, after reading its whole list: the remembered gist is another account's
+    // — the player signed in as someone else. A secret gist reads for anyone with its id, so
+    // keeping it would go on folding that account's game into this one. The list just read is the
+    // whole of it, so this account has none: create it, rather than read the list again.
+    else if (oldest === undefined && complete) this.use(await this.create())
   }
 
   private use(id: string): void {
@@ -201,15 +222,16 @@ export class GistTransport implements SyncTransport {
     this.options.onGistID?.(id)
   }
 
-  private async discoverNow(): Promise<string | undefined> {
+  private async discoverNow(): Promise<Discovery> {
     const found = await this.discover()
     this.lastDiscovery = this.now()
     return found
   }
 
   /** The oldest of the player's private gists carrying our description, if there is one. */
-  private async discover(): Promise<string | undefined> {
+  private async discover(): Promise<Discovery> {
     const found: { id: string; createdAt: string }[] = []
+    let complete = false
     for (let page = 1; page <= MAX_DISCOVERY_PAGES; page++) {
       const answer = await this.request('GET', `/gists?per_page=100&page=${page}`)
       if (answer.status !== 200) break
@@ -220,12 +242,15 @@ export class GistTransport implements SyncTransport {
         if (typeof gist.id !== 'string') continue
         found.push({ id: gist.id, createdAt: typeof gist.created_at === 'string' ? gist.created_at : '' })
       }
-      if (!/rel="next"/.test(answer.headers.get('Link') ?? '')) break
+      if (!/rel="next"/.test(answer.headers.get('Link') ?? '')) {
+        complete = true
+        break
+      }
     }
     found.sort((a, b) =>
       a.createdAt !== b.createdAt ? (a.createdAt < b.createdAt ? -1 : 1) : a.id < b.id ? -1 : 1,
     )
-    return found[0]?.id
+    return { oldest: found[0]?.id, complete }
   }
 
   private async create(): Promise<string> {
