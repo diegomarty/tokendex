@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The Marketplace and Open VSX listings describe Tokendex as it is now: a Pokémon game and a
+  local usage tracker, instead of the early status-bar creature.
+
 ## [1.1.1] - 2026-10-25
 
 ### Fixed
