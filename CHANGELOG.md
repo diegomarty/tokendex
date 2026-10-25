@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-25
+
 ### Changed
 
 - The Marketplace and Open VSX listings describe Tokendex as it is now: a Pokémon game and a
