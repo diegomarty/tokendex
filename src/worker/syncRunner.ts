@@ -157,12 +157,14 @@ export class SyncRunner {
   private async attempt(round: SyncRound, options: RoundOptions): Promise<SyncReport> {
     this.publish({ ...this.status, phase: 'syncing' })
     try {
-      const report = await round(options)
-      this.publish({ phase: 'idle', lastSyncAt: this.now() })
+      // A reconfigure — turning sync off above all — while the round is in flight stops its push.
+      const report = await round({ ...options, stillWanted: () => this.round === round })
       this.deps.onReport(report)
       // Only a round of the current configuration speaks for it: one still in flight from before
-      // a reconfigure must not lift the pause the enable flow has just set.
+      // a reconfigure must not lift the pause the enable flow has just set, nor say "idle" over
+      // "off".
       if (this.round === round) {
+        this.publish({ phase: 'idle', lastSyncAt: this.now() })
         this.paused = false
         this.failures = 0
         this.schedule(report.busy ? SYNC_DEBOUNCE_MS : SYNC_PERIOD_MS)

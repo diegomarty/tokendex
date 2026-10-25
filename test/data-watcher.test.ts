@@ -99,6 +99,12 @@ describe('the data watcher debounces', () => {
     expect(h.changes).toBe(2)
   })
 
+  // [trigger branch] Turning sync off in one window reached the window holding the lease only on
+  // its next refresh tick, so that one kept talking to GitHub for up to two minutes.
+  it('wakes on the sync switch', () => {
+    expect(carriesOtherWindowsProgress('sync.json')).toBe(true)
+  })
+
   it('ignores the files that are not another window progressing', () => {
     const h = harness()
     for (const file of [

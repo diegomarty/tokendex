@@ -222,6 +222,37 @@ describe('SyncRunner', () => {
     expect(time.pendingIn()).toBeUndefined()
   })
 
+  // [trigger branch] A round in flight when sync was turned off still pushed, and its success
+  // published "idle" over "off".
+  it('tells a round in flight that it is no longer wanted once sync is turned off', async () => {
+    const time = clock()
+    const statuses: SyncStatus[] = []
+    let release: (() => void) | undefined
+    let stillWanted: (() => boolean) | undefined
+    const r = new SyncRunner({
+      isLeader: () => true,
+      onStatus: (s) => statuses.push(s),
+      onReport: () => undefined,
+      now: time.now,
+      setTimer: time.setTimer,
+      clearTimer: time.clearTimer,
+    })
+    r.configure(
+      (options) =>
+        new Promise<SyncReport>((resolve) => {
+          stillWanted = options.stillWanted
+          release = () => resolve(REPORT)
+        }),
+    )
+    await time.advance(0)
+    expect(stillWanted?.()).toBe(true)
+    r.configure(undefined)
+    expect(stillWanted?.()).toBe(false)
+    release?.()
+    await time.advance(0)
+    expect(statuses.at(-1)).toMatchObject({ phase: 'off' })
+  })
+
   it('goes quiet when turned off', async () => {
     const { r, time, statuses } = runner(async () => REPORT)
     await time.advance(0)

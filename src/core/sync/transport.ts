@@ -14,8 +14,13 @@ export interface RemoteFile {
   text: string
 }
 
-/** `notModified`: the etag still matches, so nothing has changed since the last read. */
-export type ReadResult = { kind: 'notModified' } | { kind: 'files'; files: RemoteFile[]; etag?: string }
+/**
+ * `notModified`: the etag still matches, so nothing has changed since the last read. `unread`:
+ * files the store listed but could not hand over this time — the read is not the whole store, so
+ * its etag must not be trusted to stand for it.
+ */
+export type ReadResult =
+  { kind: 'notModified' } | { kind: 'files'; files: RemoteFile[]; etag?: string; unread?: string[] }
 
 export interface SyncTransport {
   /** Every file, unless `etag` says nothing moved since it was handed out. */

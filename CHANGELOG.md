@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Turning sync off stops it at once, in every window.** The window that was syncing used to
+  carry on for up to two minutes, and a round already under way could still upload.
+- Signing in to VS Code with another GitHub account no longer keeps syncing with the first
+  account's gist.
+- A computer whose copy in the gist was out of date now replaces it, instead of waiting for
+  something to change locally.
+- A computer's save that failed to download is retried on the next round, instead of being
+  skipped until the gist changed.
+- A refused GitHub sign-in shows one message, not two.
+
 ## [1.1.0] - 2026-10-22
 
 ### Added

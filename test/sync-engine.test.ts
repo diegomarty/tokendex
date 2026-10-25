@@ -398,6 +398,55 @@ describe('SyncEngine', () => {
     expect(report.peers).toEqual([])
   })
 
+  // [trigger branch] The gist held an older file of ours while the memory said the current one had
+  // been pushed (a move to a duplicate gist, a restored memory file): nothing was pushed, and the
+  // peers folded the stale save until something changed here.
+  it('replaces a stale copy of its own file even when the memory says it was pushed', async () => {
+    const gist = new MemoryTransport()
+    const a = machine(A, gist, { dex: [dex('old')], revision: { [A]: 1 } })
+    await a.store.load()
+    const stale = encodeSyncPayload(a.store.snapshot(), { appVersion: '1.0.0', label: 'x' }).text
+    await a.store.update({ todayTokensByProvider: { codex: 10 }, todayDate: DAY, hasUsageData: true })
+    await a.engine.runOnce()
+    const current = gist.files.get(syncFileName(A))
+    await gist.write(syncFileName(A), stale)
+    const report = await a.engine.runOnce()
+    expect(report.pushed).toBe(true)
+    expect(gist.files.get(syncFileName(A))).toBe(current)
+  })
+
+  // [trigger branch] A peer's file the transport could not hand over was dropped silently and the
+  // etag kept, so the next rounds were 304s and that peer was not folded in until the gist moved.
+  it('reports an unread peer file and reads the gist in full next round', async () => {
+    const gist = new MemoryTransport()
+    const etags: (string | undefined)[] = []
+    let unread: string[] | undefined = [syncFileName(B)]
+    const flaky: SyncTransport = {
+      read: async (etag) => {
+        etags.push(etag)
+        const read = await gist.read(etag)
+        return read.kind === 'files' && unread !== undefined ? { ...read, unread } : read
+      },
+      write: (name, text) => gist.write(name, text),
+    }
+    const a = machine(A, flaky, { revision: { [A]: 1 } })
+    await a.engine.runOnce()
+    const report = await a.engine.runOnce()
+    expect(report.skipped).toEqual([{ deviceID: B, reason: 'unreadable' }])
+    unread = undefined
+    await a.engine.runOnce()
+    expect(etags.at(-1)).toBeUndefined()
+  })
+
+  // Turned off while the round was in flight: nothing leaves the machine.
+  it('does not push when the round is no longer wanted', async () => {
+    const gist = new MemoryTransport()
+    const a = machine(A, gist, { revision: { [A]: 1 } })
+    const report = await a.engine.runOnce({ stillWanted: () => false })
+    expect(report.pushed).toBe(false)
+    expect(gist.writes).toBe(0)
+  })
+
   // [trigger branch] Three devices: two peers that already share a game, the lower id folded first.
   // It used to settle the fork by the rule, so the named peer, folded next, was only an adoption
   // and "keep this computer's companion" was never applied.

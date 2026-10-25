@@ -59,7 +59,9 @@ export interface DataWatchOptions {
 const DEFAULT_DEBOUNCE_MS = 750
 
 /**
- * The files whose change means *another window made progress*, as an allowlist.
+ * The files whose change means *another window made progress*, as an allowlist. `sync.json` is
+ * the sync switch: turned off in one window, it must stop the window that holds the lease now,
+ * not on its next refresh tick.
  *
  * An allowlist rather than a denylist of temp suffixes: a denylist fails open, so the day a
  * new `.partial` or `.stale-…` name appears it becomes a refresh storm instead of a missed
@@ -67,7 +69,7 @@ const DEFAULT_DEBOUNCE_MS = 750
  * cache, the dev state, the sprite index) or a file no window reads back (backups).
  */
 export function carriesOtherWindowsProgress(file: string): boolean {
-  return file === 'companion-state.json' || file === 'usage-snapshot.json'
+  return file === 'companion-state.json' || file === 'usage-snapshot.json' || file === 'sync.json'
 }
 
 /**

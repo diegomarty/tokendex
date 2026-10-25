@@ -9,8 +9,8 @@
  *    would hand the other device a history it has not seen, it would fork against us, bump in
  *    turn, and the two would fork for ever.
  *  - **Push only what is new.** The payload leaves this machine's ledger out (`payload.ts`), and
- *    it is pushed only when its digest differs from the one last pushed — or from the one the
- *    gist already holds, which covers a reinstall that lost the memory file.
+ *    it is pushed only when its digest differs from the copy the gist holds — read this round, or
+ *    on a 304 the one last pushed.
  *
  * Peers are folded in device-id order, so a round with three devices is deterministic.
  *
@@ -119,6 +119,11 @@ export interface RoundOptions {
    */
   onFork?: 'local' | 'remote'
   forkPeer?: string
+  /**
+   * Asked right before the push: false once sync was turned off (or reconfigured) while this round
+   * was in flight. Nothing leaves the machine after the player turned sync off.
+   */
+  stillWanted?: () => boolean
 }
 
 export interface SyncEngineOptions {
@@ -190,8 +195,16 @@ export class SyncEngine {
         }
         report.merges.push({ peer, result })
       }
+      // A file the transport listed and could not hand over is a peer not folded in: said, and
+      // read again next round rather than hidden behind an etag that says nothing moved.
+      for (const name of read.unread ?? []) {
+        const deviceID = deviceOfSyncFile(name)
+        if (deviceID !== undefined && deviceID !== device.id) {
+          report.skipped.push({ deviceID, reason: 'unreadable' })
+        }
+      }
       // An etag is only worth keeping once everything it stands for has been folded in.
-      if (report.busy) delete next.etag
+      if (report.busy || (read.unread?.length ?? 0) > 0) delete next.etag
       else if (read.etag !== undefined) next.etag = read.etag
       else delete next.etag
     }
@@ -200,12 +213,13 @@ export class SyncEngine {
       appVersion: this.options.appVersion,
       label: device.label,
     })
-    if (payload.digest === heldDigest) {
+    // What the gist holds of ours: read this round, or — on a 304 — what we last pushed. A copy
+    // read this round is believed over the memory: the gist may hold an older file of ours (a move
+    // to a duplicate gist, a restored memory file) that the memory says was already replaced.
+    const gistHolds = read.kind === 'files' ? heldDigest : next.pushedDigest
+    if (payload.digest === gistHolds) {
       next.pushedDigest = payload.digest
-    } else if (
-      payload.digest !== next.pushedDigest ||
-      (read.kind === 'files' && heldDigest === undefined)
-    ) {
+    } else if (round.stillWanted?.() !== false) {
       await transport.write(syncFileName(device.id), payload.text)
       report.pushed = true
       next.pushedDigest = payload.digest
