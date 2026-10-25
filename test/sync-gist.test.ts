@@ -216,6 +216,8 @@ describe('GistTransport', () => {
     expect(seen).toHaveLength(1)
     expect(seen[0]).not.toBe(other.id)
     expect(read.kind === 'files' && read.files.map((f) => f.name)).toEqual([GIST_README_NAME])
+    // The list just read is the whole of it: it is not read again before the gist is created.
+    expect(github.calls.filter((c) => c === 'GET /gists')).toHaveLength(1)
   })
 
   // Only a list read to its end says "not there": a list that failed says nothing.

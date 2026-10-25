@@ -159,11 +159,11 @@ export class SyncRunner {
     try {
       // A reconfigure — turning sync off above all — while the round is in flight stops its push.
       const report = await round({ ...options, stillWanted: () => this.round === round })
-      this.deps.onReport(report)
       // Only a round of the current configuration speaks for it: one still in flight from before
-      // a reconfigure must not lift the pause the enable flow has just set, nor say "idle" over
-      // "off".
+      // a reconfigure must not lift the pause the enable flow has just set, say "idle" over "off",
+      // nor announce what it merged after the player turned sync off.
       if (this.round === round) {
+        this.deps.onReport(report)
         this.publish({ phase: 'idle', lastSyncAt: this.now() })
         this.paused = false
         this.failures = 0
@@ -171,6 +171,9 @@ export class SyncRunner {
       }
       return report
     } catch (error) {
+      // Likewise a failure: an earlier configuration's error is not this one's — no "error" over
+      // "off", no sign-in prompt for a credential already replaced, no longer backoff.
+      if (this.round !== round) throw error
       this.failures += 1
       const reason = error instanceof SyncError ? error.reason : 'unknown'
       this.publish({
@@ -179,9 +182,7 @@ export class SyncRunner {
         lastError: reason,
         errorMessage: error instanceof Error ? error.message : String(error),
       })
-      if (this.round === round && !this.paused && reason !== 'auth') {
-        this.schedule(retryDelay(this.failures, error))
-      }
+      if (!this.paused && reason !== 'auth') this.schedule(retryDelay(this.failures, error))
       throw error
     }
   }

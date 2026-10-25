@@ -120,8 +120,8 @@ export interface RoundOptions {
   onFork?: 'local' | 'remote'
   forkPeer?: string
   /**
-   * Asked right before the push: false once sync was turned off (or reconfigured) while this round
-   * was in flight. Nothing leaves the machine after the player turned sync off.
+   * False once sync was turned off (or reconfigured) while this round was in flight. Asked before
+   * the read, before anything is folded and before the push: past it, the round stops where it is.
    */
   stillWanted?: () => boolean
 }
@@ -153,8 +153,6 @@ export class SyncEngine {
     const { transport, target, device, memory } = this.options
     await target.load()
     const remembered = await memory.read()
-    const read = await transport.read(round.force === true ? undefined : remembered.etag)
-
     const report: SyncReport = {
       pulled: false,
       pushed: false,
@@ -163,8 +161,16 @@ export class SyncEngine {
       skipped: [],
       busy: false,
     }
+    const wanted = (): boolean => round.stillWanted?.() !== false
+    if (!wanted()) return report
+    const read = await transport.read(round.force === true ? undefined : remembered.etag)
+    if (!wanted()) return report
+
     const next: SyncMemory = { ...remembered }
     let heldDigest: string | undefined
+    // Our own file listed but not handed over: what the gist holds of ours is unknown, and pushing
+    // would overwrite a copy that was never merged — the one that restores a save gone backwards.
+    const ownUnread = read.kind === 'files' && (read.unread ?? []).includes(syncFileName(device.id))
 
     if (read.kind === 'files') {
       report.pulled = true
@@ -219,7 +225,7 @@ export class SyncEngine {
     const gistHolds = read.kind === 'files' ? heldDigest : next.pushedDigest
     if (payload.digest === gistHolds) {
       next.pushedDigest = payload.digest
-    } else if (round.stillWanted?.() !== false) {
+    } else if (!ownUnread && wanted()) {
       await transport.write(syncFileName(device.id), payload.text)
       report.pushed = true
       next.pushedDigest = payload.digest

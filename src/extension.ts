@@ -298,10 +298,11 @@ function startDataWatcher(): void {
       if (!dataWatcherWanted) return // the window closed while the directory was being made
       dataWatcher = watchDataDirectory({
         directory,
-        onChange: () => {
-          void syncFromDisk()
+        onChange: (changed) => {
+          const touched = (file: string) => changed === undefined || changed.has(file)
+          if (touched('companion-state.json') || touched('usage-snapshot.json')) void syncFromDisk()
           // Read-only, as the watcher requires: it only hands the worker the switch as it now is.
-          void configureWorkerSync()
+          if (touched('sync.json')) void configureWorkerSync()
         },
       })
     })
@@ -1018,9 +1019,20 @@ let syncEnableCancelled = false
  * sign-in change, and only sends when the credential or the switch differs — not the gist id,
  * which the worker's transport already follows.
  */
-async function configureWorkerSync(
-  options: { paused?: boolean; fromEnable?: boolean } = {},
-): Promise<boolean> {
+function configureWorkerSync(options: { paused?: boolean; fromEnable?: boolean } = {}): Promise<boolean> {
+  // One at a time, in the order asked. Each reads the switch, awaits the session and only then
+  // sends: two interleaved, an "on" that read the switch first could land after the "off" and
+  // turn sync back on. Queued, the last one asked reads the switch last.
+  const run = syncConfigureQueue.then(() => configureWorkerSyncNow(options))
+  syncConfigureQueue = run.catch(() => undefined)
+  return run
+}
+let syncConfigureQueue: Promise<unknown> = Promise.resolve()
+
+async function configureWorkerSyncNow(options: {
+  paused?: boolean
+  fromEnable?: boolean
+}): Promise<boolean> {
   if (syncEnabling && options.paused !== true && options.fromEnable !== true) return false
   // `paused` is the enable flow, before the switch is written: it configures regardless.
   const wanted = (await syncEnabled()) || options.paused === true
@@ -1081,6 +1093,8 @@ async function enableSyncFlow(): Promise<void> {
   )
   if (consent === undefined) return
   if ((await githubSession('ask')) === undefined) return
+  // "Turn off" may come at any await of this flow: past it, nothing more is configured or sent.
+  if (syncEnableCancelled) return
 
   if (!(await configureWorkerSync({ paused: true }))) {
     void vscode.window.showWarningMessage(syncNotTurnedOnText(lang))
@@ -1089,6 +1103,7 @@ async function enableSyncFlow(): Promise<void> {
   }
 
   const peek = await send((id) => ({ id, type: 'syncPeek' }))
+  if (syncEnableCancelled) return
   if (!peek.ok) {
     output?.warn(`sync: could not read the gist: ${peek.error}`)
     void vscode.window.showWarningMessage(syncNotTurnedOnText(lang))
@@ -1128,6 +1143,7 @@ async function enableSyncFlow(): Promise<void> {
       fork = { onFork: 'remote', forkPeer: peer.deviceID }
     }
   }
+  if (syncEnableCancelled) return
   if ((await runSyncRound({ context: 'enable', ...fork })) && !syncEnableCancelled) {
     await setSyncEnabled(true)
   }
@@ -1177,10 +1193,11 @@ async function runSyncRound(round: {
 }
 
 async function disableSync(): Promise<void> {
-  // Mid-enable, the configure below is skipped and the flow would write the switch on after it.
+  // Mid-enable, the flow would write the switch on after this, and a plain configure is skipped
+  // while it runs — so this one goes through as the flow's own, and stops its round in flight.
   if (syncEnabling) syncEnableCancelled = true
   await setSyncEnabled(false)
-  await configureWorkerSync()
+  await configureWorkerSync({ fromEnable: syncEnabling })
   void vscode.window.showInformationMessage(syncDisabledText(await gameLanguage()))
 }
 
@@ -1220,7 +1237,8 @@ async function onSyncBroadcast(message: SyncBroadcast): Promise<void> {
     const status = message.syncStatus
     if (status.phase !== 'error') return
     output?.warn(`sync: ${status.lastError ?? 'unknown'}: ${status.errorMessage ?? ''}`)
-    if (status.lastError !== 'auth' || syncAuthPrompted) return
+    // The enable flow says it itself — "sync was not turned on" — and turning it on again signs in.
+    if (status.lastError !== 'auth' || syncAuthPrompted || syncEnabling) return
     syncAuthPrompted = true
     await promptSignIn(gameLanguage())
     return

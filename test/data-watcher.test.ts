@@ -32,10 +32,14 @@ function harness(over: { debounceMs?: number } = {}) {
   const timers: { fn: () => void; ms: number; id: number; cancelled: boolean }[] = []
   let nextID = 0
   let changes = 0
+  const bursts: (string[] | undefined)[] = []
 
   const handle = watchDataDirectory({
     directory: '/nowhere',
-    onChange: () => (changes += 1),
+    onChange: (changed) => {
+      changes += 1
+      bursts.push(changed === undefined ? undefined : [...changed].sort())
+    },
     debounceMs: over.debounceMs ?? 750,
     watchFactory: factory,
     setTimer: (fn, ms) => {
@@ -53,6 +57,8 @@ function harness(over: { debounceMs?: number } = {}) {
     get changes(): number {
       return changes
     },
+    /** What each burst said changed: its names, or `undefined` when one event had none. */
+    bursts,
     get closes(): number {
       return closed
     },
@@ -103,6 +109,22 @@ describe('the data watcher debounces', () => {
   // its next refresh tick, so that one kept talking to GitHub for up to two minutes.
   it('wakes on the sync switch', () => {
     expect(carriesOtherWindowsProgress('sync.json')).toBe(true)
+  })
+
+  // The host routes each name to its own handler: the sync switch does not re-read the save, and
+  // a save does not re-read the switch. A nameless event could be either, so it says so.
+  it('hands over what each burst changed', () => {
+    const h = harness()
+    h.emit('sync.json')
+    h.emit('sync.json')
+    h.elapse()
+    h.emit('companion-state.json')
+    h.emit('usage-snapshot.json')
+    h.elapse()
+    h.emit('sync.json')
+    h.emit(undefined)
+    h.elapse()
+    expect(h.bursts).toEqual([['sync.json'], ['companion-state.json', 'usage-snapshot.json'], undefined])
   })
 
   it('ignores the files that are not another window progressing', () => {

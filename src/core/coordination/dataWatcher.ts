@@ -45,8 +45,12 @@ export type WatchFactory = (
 export interface DataWatchOptions {
   /** The directory to watch — `ourData()` in production. */
   directory: string
-  /** Called once per burst, after `debounceMs` of quiet. Must not write into `directory`. */
-  onChange: () => void
+  /**
+   * Called once per burst, after `debounceMs` of quiet, with the names that changed in it —
+   * `undefined` when an event came without a name, so any of them may have. Must not write into
+   * `directory`.
+   */
+  onChange: (changed: ReadonlySet<string> | undefined) => void
   debounceMs?: number
   /** Which file names are worth a refresh. Defaults to `carriesOtherWindowsProgress`. */
   interesting?: (file: string) => boolean
@@ -88,11 +92,15 @@ export function watchDataDirectory(options: DataWatchOptions): WatchHandle {
 
   let pending: unknown
   let closed = false
+  /** The burst's names; `undefined` once one event had none. */
+  let changed: Set<string> | undefined = new Set()
 
   const fire = (): void => {
     pending = undefined
+    const burst = changed
+    changed = new Set()
     if (closed) return
-    options.onChange()
+    options.onChange(burst)
   }
 
   let watcher: WatchHandle | undefined
@@ -103,6 +111,8 @@ export function watchDataDirectory(options: DataWatchOptions): WatchHandle {
       // would turn "the watcher is imprecise here" into "the watcher does nothing here"; the
       // handler is read-only, so the worst an uninteresting event costs is one cheap re-read.
       if (file !== undefined && file !== '' && !interesting(file)) return
+      if (file === undefined || file === '') changed = undefined
+      else changed?.add(file)
       if (pending !== undefined) clearTimer(pending)
       pending = setTimer(fire, debounceMs)
     })

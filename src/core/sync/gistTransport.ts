@@ -212,8 +212,9 @@ export class GistTransport implements SyncTransport {
     if (oldest !== undefined && oldest !== this.gistID) this.use(oldest)
     // None in this account, after reading its whole list: the remembered gist is another account's
     // — the player signed in as someone else. A secret gist reads for anyone with its id, so
-    // keeping it would go on folding that account's game into this one.
-    else if (oldest === undefined && complete) this.forget()
+    // keeping it would go on folding that account's game into this one. The list just read is the
+    // whole of it, so this account has none: create it, rather than read the list again.
+    else if (oldest === undefined && complete) this.use(await this.create())
   }
 
   private use(id: string): void {

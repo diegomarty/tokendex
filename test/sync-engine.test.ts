@@ -438,6 +438,40 @@ describe('SyncEngine', () => {
     expect(etags.at(-1)).toBeUndefined()
   })
 
+  // [trigger branch] Our own file was listed but not handed over, so it was never merged — and the
+  // push went over it: the copy that restores a local save gone backwards, overwritten by it.
+  it('does not push over its own file when that file could not be read', async () => {
+    const gist = new MemoryTransport()
+    const a = machine(A, gist, { dex: [dex('kept')], revision: { [A]: 50 } })
+    await a.engine.runOnce()
+    const good = gist.files.get(syncFileName(A))
+    const unreadOwn: SyncTransport = {
+      read: async (etag) => {
+        const read = await gist.read(etag)
+        if (read.kind !== 'files') return read
+        const files = read.files.filter((f) => f.name !== syncFileName(A))
+        return { ...read, files, unread: [syncFileName(A)] }
+      },
+      write: (name, text) => gist.write(name, text),
+    }
+    const reset = machine(A, unreadOwn, { revision: { [A]: 1 } })
+    const report = await reset.engine.runOnce()
+    expect(report.pushed).toBe(false)
+    expect(gist.files.get(syncFileName(A))).toBe(good)
+  })
+
+  // Turned off between the read and the merge: nothing is folded into the save either.
+  it('folds nothing once the round is no longer wanted', async () => {
+    const gist = new MemoryTransport()
+    const b = machine(B, gist, { dex: [dex('b1')], revision: { [B]: 1 } })
+    await b.engine.runOnce()
+    const a = machine(A, gist, { dex: [dex('a1')], revision: { [A]: 1 } })
+    let asked = 0
+    const report = await a.engine.runOnce({ stillWanted: () => ++asked === 1 })
+    expect(report.merges).toEqual([])
+    expect(dexIDs(a.store.snapshot())).toEqual(['a1'])
+  })
+
   // Turned off while the round was in flight: nothing leaves the machine.
   it('does not push when the round is no longer wanted', async () => {
     const gist = new MemoryTransport()
