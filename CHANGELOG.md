@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-25
+
 ### Fixed
 
 - **Turning sync off stops it at once, in every window.** The window that was syncing used to
