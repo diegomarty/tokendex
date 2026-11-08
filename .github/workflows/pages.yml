@@ -1,0 +1,39 @@
+# Publishes `site/` to GitHub Pages (https://diegomarty.github.io/tokendex/). The screenshots the
+# page shows are the README's, copied in at build time rather than kept twice in the repository.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', 'media/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/media
+          cp -R site/. _site/
+          cp media/icon.png _site/media/
+          cp -R media/readme _site/media/readme
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - uses: actions/deploy-pages@v4
+        id: deploy
