@@ -16,6 +16,7 @@
 [![Installs](https://vsmarketplacebadges.dev/installs-short/diegomarty.tokendex.svg)](https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex)
 [![Open VSX](https://img.shields.io/open-vsx/v/diegomarty/tokendex?label=Open%20VSX)](https://open-vsx.org/extension/diegomarty/tokendex)
 [![Open VSX downloads](https://img.shields.io/open-vsx/dt/diegomarty/tokendex?label=Open%20VSX%20downloads)](https://open-vsx.org/extension/diegomarty/tokendex)
+[![Website](https://img.shields.io/badge/website-diegomarty.github.io%2Ftokendex-d4433b)](https://diegomarty.github.io/tokendex/)
 
 <br>
 

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://diegomarty.github.io/tokendex/sitemap.xml

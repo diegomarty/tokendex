@@ -305,7 +305,7 @@
   "bugs": {
     "url": "https://github.com/diegomarty/tokendex/issues"
   },
-  "homepage": "https://github.com/diegomarty/tokendex#readme",
+  "homepage": "https://diegomarty.github.io/tokendex/",
   "dependencies": {
     "@types/sql.js": "^1.4.11",
     "sql.js": "^1.14.2"

@@ -1,0 +1,1677 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tokendex – Turn your AI coding tokens into a Pokédex inside VS Code</title>
+    <meta
+      name="description"
+      content="Tokendex is a free VS Code extension that reads your local Claude Code, Codex, Gemini CLI, Cursor and Copilot usage logs and turns the tokens you burn into a Pokémon game: raise a starter, catch wild Pokémon, fill a 649-species Pokédex. 100% local, nothing uploaded."
+    />
+    <link rel="canonical" href="https://diegomarty.github.io/tokendex/" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="theme-color" content="#d4433b" />
+    <link rel="icon" href="media/icon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="media/icon.png" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Tokendex" />
+    <meta property="og:url" content="https://diegomarty.github.io/tokendex/" />
+    <meta
+      property="og:title"
+      content="Tokendex – Your AI coding tokens hatch, raise and catch Pokémon in VS Code"
+    />
+    <meta
+      property="og:description"
+      content="A free VS Code extension that turns the tokens you already burn in Claude Code, Codex, Gemini and friends into a Pokémon game and a precise, 100% local usage tracker."
+    />
+    <meta property="og:image" content="https://diegomarty.github.io/tokendex/og.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="720" />
+    <meta
+      property="og:image:alt"
+      content="The Tokendex panel in VS Code: an Eevee companion with its EXP bar, and Charizard's Pokédex entry"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Tokendex – Turn your AI coding tokens into a Pokédex inside VS Code"
+    />
+    <meta
+      name="twitter:description"
+      content="Raise a starter, catch wild Pokémon and fill the Pokédex with the tokens you burn in Claude Code, Codex, Gemini CLI, Cursor and Copilot. Free, open source, 100% local."
+    />
+    <meta name="twitter:image" content="https://diegomarty.github.io/tokendex/og.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "SoftwareApplication",
+            "name": "Tokendex",
+            "url": "https://diegomarty.github.io/tokendex/",
+            "image": "https://diegomarty.github.io/tokendex/og.png",
+            "description": "A VS Code extension that reads local AI coding CLI usage logs (Claude Code, Codex, Gemini CLI, Cursor, Copilot and more) and turns the tokens into a Pokémon game: raise a starter, catch wild Pokémon and fill a 649-species Pokédex. Also a precise, 100% local usage tracker.",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "Visual Studio Code extension",
+            "operatingSystem": "Windows, macOS, Linux",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "license": "https://github.com/diegomarty/tokendex/blob/main/LICENSE",
+            "downloadUrl": "https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex",
+            "installUrl": "vscode:extension/diegomarty.tokendex",
+            "screenshot": "https://diegomarty.github.io/tokendex/media/readme/dex.png",
+            "author": {
+              "@type": "Person",
+              "name": "Diego Marty",
+              "url": "https://github.com/diegomarty"
+            },
+            "sameAs": [
+              "https://github.com/diegomarty/tokendex",
+              "https://open-vsx.org/extension/diegomarty/tokendex"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Does Tokendex upload my code or my AI usage anywhere?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. Tokendex only reads the log files the AI CLIs already keep on your disk, and everything stays on your machine. The only network calls fetch Pokémon sprites and species data from PokéAPI, and they are cached locally."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which AI coding tools does Tokendex track?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Claude Code, Codex, Gemini CLI, Grok, Antigravity, Cursor, GitHub Copilot (the CLI and Copilot Chat inside VS Code), OpenCode, Hermes and Kiro. Providers you do not use never appear."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it slow down VS Code?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. Scanning runs in a worker thread, never on the extension host. On a real 1.1 GB corpus the first scan takes about 6 seconds once, a warm start about 170 ms, and each refresh 90 to 115 ms."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it work in VSCodium, Cursor or Windsurf?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Tokendex is published on Open VSX as well as the VS Code Marketplace, and ships as a single .vsix for every platform with no native modules."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is Tokendex free?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. It is free and open source under the MIT licence. It is a fan project, not affiliated with Nintendo, Creatures Inc. or GAME FREAK, and no Pokémon sprites are bundled."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <style>
+      :root {
+        --casing: #d4433b;
+        --casing-deep: #a72f29;
+        --casing-edge: #6e1c17;
+        --lens: #3fa7e0;
+        --lens-hi: #d8f3ff;
+        --lens-lo: #1d6fa8;
+        --led-amber: #ffd23f;
+        --led-green: #4cd964;
+        --led-red: #ff6b5e;
+        --screen: #1b1f27;
+        --screen-deep: #12151b;
+        --ink: #f4f6ef;
+        --ink-soft: #b8bfcc;
+        --ink-mute: #7f889a;
+        --exp: #3d8bfd;
+        --exp-label: #f7cf4a;
+        --gain: #2f8f4e;
+        --pixel: 'Press Start 2P', monospace;
+        --body: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        --max: 1120px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        font-family: var(--body);
+        color: var(--ink);
+        background: var(--screen-deep);
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--lens);
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+        display: block;
+      }
+      .wrap {
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+      .pixel {
+        font-family: var(--pixel);
+        letter-spacing: 0.02em;
+        line-height: 1.6;
+      }
+      .eyebrow {
+        font-family: var(--pixel);
+        font-size: 10px;
+        color: var(--exp-label);
+        text-transform: uppercase;
+        margin: 0 0 12px;
+      }
+      h2 {
+        font-family: var(--pixel);
+        font-size: clamp(16px, 2.4vw, 22px);
+        line-height: 1.5;
+        margin: 0 0 14px;
+      }
+      .lead {
+        color: var(--ink-soft);
+        font-size: 17px;
+        max-width: 60ch;
+        margin: 0 0 28px;
+      }
+      section {
+        padding: 72px 0;
+      }
+
+      /* Casing: the top of the page is the Pokédex's red shell */
+      .casing {
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(1200px 500px at 15% -10%, #e85a50 0%, transparent 60%),
+          linear-gradient(180deg, var(--casing) 0%, var(--casing-deep) 100%);
+        border-bottom: 6px solid var(--casing-edge);
+        color: #fff;
+      }
+      nav {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        padding: 18px 0;
+      }
+      nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--pixel);
+        font-size: 13px;
+        color: #fff;
+        text-decoration: none;
+        margin-right: auto;
+      }
+      nav .brand img {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+      }
+      nav a:not(.brand) {
+        color: #ffe9e6;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+        opacity: 0.9;
+      }
+      nav a:not(.brand):hover {
+        opacity: 1;
+        text-decoration: underline;
+      }
+      .lens-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0 26px;
+      }
+      .lens {
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        background: radial-gradient(
+          circle at 35% 30%,
+          var(--lens-hi) 0%,
+          var(--lens) 35%,
+          var(--lens-lo) 100%
+        );
+        border: 5px solid #fff;
+        box-shadow:
+          0 4px 0 var(--casing-edge),
+          0 0 0 3px var(--casing-deep);
+      }
+      .led {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.25);
+      }
+      .led.r {
+        background: var(--led-red);
+      }
+      .led.a {
+        background: var(--led-amber);
+      }
+      .led.g {
+        background: var(--led-green);
+        animation: blink 2.4s infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      .hero > *,
+      .sync > * {
+        min-width: 0;
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 48px;
+        align-items: center;
+        padding: 24px 0 72px;
+      }
+      h1 {
+        font-family: var(--pixel);
+        font-size: clamp(18px, 3vw, 30px);
+        line-height: 1.45;
+        margin: 0 0 20px;
+        text-shadow: 3px 3px 0 var(--casing-edge);
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--exp-label);
+      }
+      .hero .lead {
+        color: #ffe9e6;
+      }
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 18px;
+        border-radius: 10px;
+        font-weight: 700;
+        text-decoration: none;
+        font-size: 15px;
+        border: 2px solid transparent;
+        transition: transform 0.12s ease;
+      }
+      .btn:hover {
+        transform: translateY(-2px);
+      }
+      .btn.primary {
+        background: var(--ink);
+        color: var(--casing-edge);
+        box-shadow: 0 4px 0 var(--casing-edge);
+      }
+      .btn.ghost {
+        background: rgb(0 0 0 / 0.22);
+        color: #fff;
+        border-color: rgb(255 255 255 / 0.35);
+      }
+      .install {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--screen-deep);
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 10px 12px 10px 14px;
+        font-family: var(--mono);
+        font-size: 14px;
+        max-width: 520px;
+        box-shadow: 0 4px 0 var(--casing-edge);
+      }
+      .install code {
+        flex: 1;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+      .install button {
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        background: var(--exp);
+        color: #fff;
+        border: 0;
+        border-radius: 6px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+      .badges img {
+        height: 20px;
+      }
+
+      /* The device screen the hero capture sits in */
+      .screen {
+        background: var(--screen);
+        border: 10px solid var(--screen-deep);
+        border-radius: 22px;
+        padding: 12px;
+        box-shadow:
+          0 0 0 4px var(--casing-edge),
+          0 20px 50px rgb(0 0 0 / 0.35);
+        max-width: 380px;
+        margin: 0 auto;
+      }
+      .screen img {
+        border-radius: 10px;
+        width: 100%;
+      }
+      .screen figcaption {
+        color: var(--ink-soft);
+        font-size: 13px;
+        text-align: center;
+        margin-top: 10px;
+      }
+
+      /* Pokémon dialog box that types itself */
+      .dialog {
+        background: #f5f7fb;
+        color: #1d2433;
+        border: 3px solid #22304d;
+        box-shadow: inset 0 0 0 2px #8ea6d6;
+        border-radius: 6px;
+        padding: 12px 14px;
+        font-family: var(--pixel);
+        font-size: 11px;
+        line-height: 1.8;
+        min-height: 62px;
+        max-width: 520px;
+        margin: 0 0 22px;
+      }
+      .dialog .cursor {
+        display: inline-block;
+        width: 0.6em;
+        height: 0.6em;
+        margin-left: 6px;
+        border-left: 0.6em solid #22304d;
+        border-top: 0.4em solid transparent;
+        border-bottom: 0.4em solid transparent;
+        width: 0;
+        animation: blink 0.8s steps(1) infinite;
+        vertical-align: middle;
+      }
+
+      /* A VS Code status bar: where the companion actually lives */
+      .statusbar {
+        background: #007acc;
+        color: #fff;
+        font-size: 12px;
+        font-family: var(--body);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 4px 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        position: relative;
+        z-index: 1;
+      }
+      .statusbar .right {
+        margin-left: auto;
+        display: flex;
+        gap: 14px;
+      }
+      .statusbar .tk {
+        background: rgb(255 255 255 / 0.18);
+        border-radius: 3px;
+        padding: 0 8px;
+        font-weight: 700;
+      }
+      .statusbar .tk img {
+        display: inline-block;
+        width: 22px;
+        height: 22px;
+        image-rendering: pixelated;
+        vertical-align: middle;
+        margin: -6px 2px -6px -4px;
+      }
+
+      /* Section heads drawn as the device's lid */
+      .lid {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .lid .lens {
+        width: 26px;
+        height: 26px;
+        border-width: 3px;
+        box-shadow: 0 2px 0 var(--casing-edge);
+      }
+      .lid .led {
+        width: 7px;
+        height: 7px;
+      }
+
+      /* Wild sprites peeking around the page */
+      .sprite {
+        image-rendering: pixelated;
+        width: 96px;
+        height: 96px;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      .card {
+        background: var(--screen);
+        border: 1px solid #2a3040;
+        border-radius: 16px;
+        padding: 24px;
+        position: relative;
+        transition:
+          transform 0.2s ease,
+          border-color 0.2s ease;
+      }
+      .card:hover {
+        transform: translateY(-4px);
+        border-color: var(--lens);
+      }
+
+      /* Throw demo: a wild Dratini on the game's stage */
+      .demo {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 28px;
+        align-items: center;
+        margin-top: 56px;
+        background: var(--screen);
+        border: 1px solid #2a3040;
+        border-radius: 20px;
+        padding: 24px;
+      }
+      .stage {
+        position: relative;
+        height: 260px;
+        border-radius: 14px;
+        overflow: hidden;
+        background:
+          radial-gradient(ellipse 70% 30% at 70% 88%, #3a7f49 0%, transparent 70%),
+          linear-gradient(180deg, #7fd1ff 0%, #bfe7ff 55%, #5f7f28 56%, #3f8f3a 100%);
+      }
+      .stage .cloud {
+        position: absolute;
+        top: 22px;
+        left: 12%;
+        width: 70px;
+        height: 22px;
+        background: #fff;
+        border-radius: 20px;
+        opacity: 0.9;
+        animation: drift 14s linear infinite;
+      }
+      .stage .cloud.two {
+        left: 60%;
+        top: 44px;
+        width: 48px;
+        animation-delay: -7s;
+      }
+      .stage .wild {
+        position: absolute;
+        right: 14%;
+        bottom: 62px;
+        width: 120px;
+        height: 120px;
+        image-rendering: pixelated;
+        animation: bob 2.6s ease-in-out infinite;
+        transition: transform 0.3s;
+      }
+      .stage.caught .wild,
+      .stage.inball .wild,
+      .stage.wobble .wild {
+        visibility: hidden;
+        animation: none;
+        transform: scale(0.2) translateY(-40px);
+      }
+      .stage .trainer {
+        position: absolute;
+        left: 12%;
+        bottom: 54px;
+        width: 96px;
+        image-rendering: pixelated;
+      }
+      .stage .ball {
+        position: absolute;
+        left: 22%;
+        bottom: 110px;
+        width: 34px;
+        height: 34px;
+        opacity: 0;
+        image-rendering: pixelated;
+      }
+      .stage.flying .ball {
+        animation: fly 0.7s ease-in forwards;
+      }
+      .stage.inball .ball {
+        opacity: 1;
+        transform: translate(var(--dx), 0);
+      }
+      .stage.wobble .ball {
+        opacity: 1;
+        transform: translate(var(--dx), 0);
+        animation: wobble 0.9s ease-in-out;
+      }
+      .stage.caught .ball {
+        opacity: 1;
+        transform: translate(var(--dx), 0);
+        filter: brightness(0.75);
+      }
+      .stage.free .ball {
+        animation: pop 0.35s ease-out forwards;
+      }
+      .stage .plate {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        background: rgb(29 36 51 / 0.85);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 10px;
+        border-radius: 8px;
+      }
+      .stage .plate b {
+        color: var(--exp-label);
+      }
+      @keyframes fly {
+        0% {
+          opacity: 1;
+          transform: translate(0, 0) rotate(0);
+        }
+        50% {
+          transform: translate(calc(var(--dx) / 2), -110px) rotate(360deg);
+        }
+        100% {
+          opacity: 1;
+          transform: translate(var(--dx), 0) rotate(720deg);
+        }
+      }
+      @keyframes wobble {
+        0%,
+        100% {
+          transform: translate(var(--dx), 0) rotate(0);
+        }
+        25% {
+          transform: translate(calc(var(--dx) - 6px), 0) rotate(-22deg);
+        }
+        75% {
+          transform: translate(calc(var(--dx) + 6px), 0) rotate(22deg);
+        }
+      }
+      @keyframes pop {
+        to {
+          opacity: 0;
+          transform: translate(var(--dx), -30px) scale(1.8);
+        }
+      }
+      .balls {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin: 14px 0;
+      }
+      .balls button {
+        font: inherit;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--screen-deep);
+        color: var(--ink);
+        border: 2px solid #2a3040;
+        border-radius: 10px;
+        padding: 10px 12px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .balls button[aria-pressed='true'] {
+        border-color: var(--lens);
+        box-shadow: 0 0 0 3px rgb(63 167 224 / 0.25);
+      }
+      .balls img {
+        width: 28px;
+        height: 28px;
+        image-rendering: pixelated;
+      }
+      .balls small {
+        display: block;
+        color: var(--ink-mute);
+        font-size: 12px;
+      }
+      .balls b {
+        margin-left: auto;
+        font-family: var(--pixel);
+        font-size: 10px;
+        color: var(--led-green);
+      }
+      .throw {
+        font: inherit;
+        font-weight: 800;
+        font-size: 16px;
+        background: var(--casing);
+        color: #fff;
+        border: 0;
+        border-radius: 12px;
+        padding: 14px 22px;
+        cursor: pointer;
+        box-shadow: 0 4px 0 var(--casing-edge);
+        width: 100%;
+      }
+      .throw:active {
+        transform: translateY(3px);
+        box-shadow: 0 1px 0 var(--casing-edge);
+      }
+      .throw:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .demo .dialog {
+        margin: 14px 0 0;
+        max-width: none;
+      }
+
+      /* Closing call: pick your starter */
+      .starters {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin: 8px 0 22px;
+      }
+      .starters img {
+        width: 120px;
+        height: 120px;
+        image-rendering: pixelated;
+        animation: bob 3s ease-in-out infinite;
+        transition: transform 0.2s;
+      }
+      .starters img:nth-child(2) {
+        animation-delay: -1s;
+      }
+      .starters img:nth-child(3) {
+        animation-delay: -2s;
+      }
+      .starters img:hover {
+        transform: scale(1.15);
+      }
+      .closing {
+        text-align: center;
+        background:
+          radial-gradient(600px 300px at 50% 0%, #e85a50 0%, transparent 70%),
+          linear-gradient(180deg, var(--casing) 0%, var(--casing-deep) 100%);
+        border-top: 6px solid var(--casing-edge);
+      }
+      .closing h2 {
+        font-size: clamp(18px, 3vw, 28px);
+      }
+      .closing .cta {
+        justify-content: center;
+      }
+      .card h3 {
+        font-family: var(--pixel);
+        font-size: 12px;
+        margin: 0 0 12px;
+        color: var(--exp-label);
+      }
+      .card p {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 15px;
+      }
+      .card .sprite {
+        position: absolute;
+        top: -34px;
+        right: 12px;
+      }
+      .bar {
+        height: 10px;
+        border-radius: 6px;
+        background: #0c0f14;
+        border: 1px solid #2a3040;
+        overflow: hidden;
+        margin: 16px 0 6px;
+      }
+      .bar i {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--exp), #8cc4ff);
+      }
+      .bar.full i {
+        background: var(--gain);
+      }
+      .shots {
+        display: grid;
+        grid-template-columns: 1fr 1fr 2.3fr;
+        gap: 16px;
+        margin-top: 40px;
+        align-items: start;
+      }
+      .shots img {
+        border-radius: 12px;
+        border: 1px solid #2a3040;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .chip {
+        background: var(--screen);
+        border: 1px solid #2a3040;
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin: 28px 0;
+      }
+      .stat {
+        background: var(--screen);
+        border: 1px solid #2a3040;
+        border-radius: 14px;
+        padding: 18px;
+      }
+      .stat b {
+        display: block;
+        font-family: var(--pixel);
+        font-size: 18px;
+        color: var(--led-green);
+        margin-bottom: 8px;
+      }
+      .stat span {
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+      ul.plain {
+        padding-left: 20px;
+        color: var(--ink-soft);
+        max-width: 70ch;
+      }
+      ul.plain li {
+        margin: 8px 0;
+      }
+      details {
+        border-top: 1px solid #2a3040;
+        padding: 14px 0;
+      }
+      details:last-of-type {
+        border-bottom: 1px solid #2a3040;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 700;
+        font-size: 16px;
+      }
+      details p {
+        color: var(--ink-soft);
+        margin: 10px 0 0;
+        max-width: 75ch;
+      }
+      .sync {
+        background: linear-gradient(135deg, #22304d, var(--screen));
+        border: 1px solid #3a4a6e;
+        border-radius: 18px;
+        padding: 32px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 24px;
+        align-items: center;
+      }
+      footer {
+        border-top: 6px solid var(--casing-edge);
+        background: var(--casing-deep);
+        color: #ffe9e6;
+        padding: 36px 0;
+        font-size: 13px;
+      }
+      footer a {
+        color: #fff;
+      }
+      footer p {
+        max-width: 90ch;
+      }
+      /* Motion: hero rises in, sprites bob, sections reveal on scroll, EXP bars fill */
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+      }
+      @keyframes bob {
+        50% {
+          transform: translateY(-7px);
+        }
+      }
+      @keyframes drift {
+        0%,
+        100% {
+          transform: translate(0, 0) rotate(-4deg);
+        }
+        50% {
+          transform: translate(10px, -18px) rotate(4deg);
+        }
+      }
+      .hero > div > * {
+        animation: rise 0.7s both;
+      }
+      .hero > div > :nth-child(2) {
+        animation-delay: 0.1s;
+      }
+      .hero > div > :nth-child(3) {
+        animation-delay: 0.2s;
+      }
+      .hero > div > :nth-child(4) {
+        animation-delay: 0.3s;
+      }
+      .hero > div > :nth-child(5) {
+        animation-delay: 0.4s;
+      }
+      .hero > div > :nth-child(6) {
+        animation-delay: 0.5s;
+      }
+      .screen {
+        animation: rise 0.8s 0.35s both;
+      }
+      .lens::after {
+        content: '';
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.55), transparent 55%);
+        animation: blink 3.2s infinite;
+      }
+      .float {
+        position: absolute;
+        pointer-events: none;
+        image-rendering: pixelated;
+        opacity: 0.85;
+        animation: drift 9s ease-in-out infinite;
+      }
+      .float.a {
+        right: 4%;
+        top: 70px;
+        width: 72px;
+      }
+      .float.b {
+        left: 46%;
+        bottom: 40px;
+        width: 64px;
+        animation-delay: -3s;
+        animation-duration: 11s;
+      }
+      .float.c {
+        right: 34%;
+        top: 110px;
+        width: 56px;
+        animation-delay: -6s;
+        animation-duration: 8s;
+      }
+      .card .sprite {
+        animation: bob 3s ease-in-out infinite;
+      }
+      .card:nth-child(2) .sprite {
+        animation-delay: -1s;
+      }
+      .card:nth-child(3) .sprite {
+        animation-delay: -2s;
+      }
+      .reveal {
+        opacity: 0;
+        transform: translateY(18px);
+        transition:
+          opacity 0.6s ease,
+          transform 0.6s ease;
+      }
+      .reveal.in {
+        opacity: 1;
+        transform: none;
+      }
+      .bar i {
+        width: 0;
+        transition: width 1.2s ease 0.3s;
+      }
+      .in .bar i {
+        width: 71%;
+      }
+      .in .bar.full i {
+        width: 100%;
+      }
+      .btn.star {
+        background: #1d2433;
+        color: #fff;
+        border-color: #3a4a6e;
+      }
+      .btn.star .ball {
+        width: 18px;
+        height: 18px;
+        transition: transform 0.6s ease;
+      }
+      .btn.star:hover .ball {
+        transform: rotate(360deg);
+      }
+      .btn.star b {
+        font-family: var(--pixel);
+        font-size: 10px;
+        background: rgb(255 255 255 / 0.12);
+        padding: 5px 8px;
+        border-radius: 6px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        ::after {
+          animation: none !important;
+          transition: none !important;
+        }
+        .reveal {
+          opacity: 1;
+          transform: none;
+        }
+        .bar i {
+          width: 71%;
+        }
+        .bar.full i {
+          width: 100%;
+        }
+        html {
+          scroll-behavior: auto;
+        }
+      }
+      @media (max-width: 880px) {
+        .demo {
+          grid-template-columns: 1fr;
+        }
+        .stage {
+          height: 220px;
+        }
+        .stage .trainer {
+          left: 4%;
+        }
+        .stage .wild {
+          right: 6%;
+        }
+        .statusbar .left {
+          display: none;
+        }
+        .balls {
+          grid-template-columns: 1fr;
+        }
+        .starters img {
+          width: 84px;
+          height: 84px;
+        }
+        .hero,
+        .steps,
+        .stats,
+        .sync {
+          grid-template-columns: 1fr;
+        }
+        .shots {
+          grid-template-columns: 1fr 1fr;
+        }
+        .shots img:last-child {
+          grid-column: 1 / -1;
+        }
+        nav a:not(.brand):not(.gh) {
+          display: none;
+        }
+        .float {
+          display: none;
+        }
+        .card .sprite {
+          top: -26px;
+          width: 72px;
+          height: 72px;
+        }
+        section {
+          padding: 52px 0;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="casing">
+      <img
+        class="float a"
+        src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png"
+        alt=""
+        aria-hidden="true"
+        width="96"
+        height="96"
+      />
+      <img
+        class="float b"
+        src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/129.png"
+        alt=""
+        aria-hidden="true"
+        width="96"
+        height="96"
+      />
+      <img
+        class="float c"
+        src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
+        alt=""
+        aria-hidden="true"
+        width="30"
+        height="30"
+      />
+      <div class="wrap">
+        <nav aria-label="Main">
+          <a class="brand" href="#top"
+            ><img src="media/icon.png" alt="" width="36" height="36" />Tokendex</a
+          >
+          <a href="#how">How it works</a>
+          <a href="#tools">Works with</a>
+          <a href="#tracker">The tracker</a>
+          <a href="#faq">FAQ</a>
+          <a class="gh" href="https://github.com/diegomarty/tokendex">GitHub</a>
+        </nav>
+
+        <div class="hero" id="top">
+          <div>
+            <div class="lens-row" aria-hidden="true">
+              <span class="lens"></span>
+              <span class="led r"></span><span class="led a"></span><span class="led g"></span>
+            </div>
+            <h1>Your AI coding tokens hatch, raise and catch Pokémon. <em>Inside VS Code.</em></h1>
+            <p class="lead">
+              You already burn millions of tokens a day in Claude Code, Codex, Gemini CLI and friends.
+              Tokendex reads those local logs, nothing uploaded, ever, and turns the spend you already
+              made into a game that grows in your status bar.
+            </p>
+            <div class="dialog" aria-live="polite">
+              <span id="type"></span><span class="cursor" aria-hidden="true"></span>
+            </div>
+            <div class="cta">
+              <a
+                class="btn primary"
+                href="https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex"
+                >Install from the VS Code Marketplace</a
+              >
+              <a class="btn ghost" href="https://open-vsx.org/extension/diegomarty/tokendex"
+                >Open VSX · VSCodium, Cursor, Windsurf</a
+              >
+              <a class="btn ghost" href="vscode:extension/diegomarty.tokendex">Open in VS Code</a>
+              <a
+                class="btn star"
+                href="https://github.com/diegomarty/tokendex"
+                aria-label="Star Tokendex on GitHub"
+              >
+                <svg class="ball" viewBox="0 0 20 20" aria-hidden="true">
+                  <circle cx="10" cy="10" r="9" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
+                  <path d="M1 10h18" stroke="#1d2433" stroke-width="1.5" />
+                  <path d="M1 10a9 9 0 0 1 18 0Z" fill="#ff6b5e" />
+                  <circle cx="10" cy="10" r="3" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
+                </svg>
+                Star on GitHub <b id="stars" aria-live="polite">★</b>
+              </a>
+            </div>
+            <div class="install">
+              <code id="cmd">code --install-extension diegomarty.tokendex</code>
+              <button type="button" id="copy" aria-label="Copy the install command">Copy</button>
+            </div>
+            <div class="badges">
+              <a href="https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex"
+                ><img
+                  src="https://vsmarketplacebadges.dev/version-short/diegomarty.tokendex.svg"
+                  alt="Latest version on the VS Code Marketplace"
+              /></a>
+              <a href="https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex"
+                ><img
+                  src="https://vsmarketplacebadges.dev/installs-short/diegomarty.tokendex.svg"
+                  alt="Marketplace installs"
+              /></a>
+              <a href="https://open-vsx.org/extension/diegomarty/tokendex"
+                ><img
+                  src="https://img.shields.io/open-vsx/dt/diegomarty/tokendex?label=Open%20VSX%20downloads"
+                  alt="Open VSX downloads"
+              /></a>
+              <a href="https://github.com/diegomarty/tokendex/blob/main/LICENSE"
+                ><img src="https://img.shields.io/badge/license-MIT-3fb950" alt="MIT licence"
+              /></a>
+              <img
+                src="https://img.shields.io/badge/data-100%25%20local-444d56"
+                alt="100% local: nothing is uploaded"
+              />
+            </div>
+          </div>
+
+          <figure class="screen">
+            <img
+              src="media/readme/hero.gif"
+              width="360"
+              height="640"
+              alt="A wild Dratini appears in the Tokendex panel, an Ultra Ball flies, wobbles and catches it, and a shiny Magikarp steps up next"
+            />
+            <figcaption>
+              A wild Dratini appeared. 23% with a Poké Ball, 39% with an Ultra Ball.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+      <div class="statusbar" aria-label="How Tokendex looks in the VS Code status bar">
+        <span class="left">⎇ main</span><span class="left">⊗ 0 ⚠ 0</span>
+        <span class="right">
+          <span class="tk"
+            ><img
+              src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/133.png"
+              alt=""
+              aria-hidden="true"
+            />Eevee 71% · 253.4M today · 42% of the 5-hour window</span
+          >
+          <span>Ln 42, Col 7</span><span>TypeScript</span>
+        </span>
+      </div>
+    </header>
+
+    <main>
+      <section id="how">
+        <div class="wrap">
+          <p class="eyebrow">How it works</p>
+          <h2>Every token is experience. Every session is a walk in the tall grass.</h2>
+          <p class="lead">
+            Pick a starter from generations 1 to 5, keep coding, and the tokens your AI tools log become
+            its experience. Wild Pokémon walk into the editor while you work. Nothing ever interrupts you.
+          </p>
+          <div class="steps">
+            <article class="card reveal">
+              <img
+                class="sprite"
+                src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/133.png"
+                alt="Eevee"
+                loading="lazy"
+                width="96"
+                height="96"
+              />
+              <h3>Raise</h3>
+              <p>
+                The tokens your companion sees fill its species' bar. A full bar registers it in the
+                Pokédex and evolves it through its real evolution line. Eggs hatch at 5M tokens, one free
+                a day.
+              </p>
+              <div class="bar" aria-hidden="true"><i></i></div>
+              <p><small>Eevee · 142M / 200M</small></p>
+            </article>
+            <article class="card reveal">
+              <img
+                class="sprite"
+                src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/147.png"
+                alt="Dratini"
+                loading="lazy"
+                width="96"
+                height="96"
+              />
+              <h3>Catch</h3>
+              <p>
+                Wild Pokémon appear as you code, the first after just 500k tokens. Every ball shows its
+                real odds, computed with the Gen IV catch formula on the species' true capture rate. Miss,
+                and it may get angry or flee. Shinies are 1 in 64.
+              </p>
+            </article>
+            <article class="card reveal">
+              <img
+                class="sprite"
+                src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/6.png"
+                alt="Charizard"
+                loading="lazy"
+                width="96"
+                height="96"
+              />
+              <h3>Collect</h3>
+              <p>
+                649 species, Kanto to Unova, each with a full Pokédex entry: genus, types, base stats, the
+                Pokédex text and its evolution line. Medals, regions and daily challenges along the way. A
+                full Pokédex is a road of one to two years.
+              </p>
+              <div class="bar full" aria-hidden="true"><i></i></div>
+              <p><small>Charizard · registered</small></p>
+            </article>
+          </div>
+
+          <div class="demo reveal" id="demo">
+            <div class="stage" id="stage" style="--dx: 0px">
+              <span class="cloud" aria-hidden="true"></span
+              ><span class="cloud two" aria-hidden="true"></span>
+              <div class="plate">Wild <b>Dratini</b> · Rare · Lv. 18</div>
+              <img
+                class="trainer"
+                src="https://play.pokemonshowdown.com/sprites/trainers/red.png"
+                alt="Trainer Red"
+                width="80"
+                height="80"
+              />
+              <img
+                class="wild"
+                id="wild"
+                src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/147.png"
+                alt="A wild Dratini"
+                width="96"
+                height="96"
+              />
+              <img
+                class="ball"
+                id="ball"
+                src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
+                alt=""
+                aria-hidden="true"
+                width="30"
+                height="30"
+              />
+            </div>
+            <div>
+              <p class="eyebrow">Try a throw</p>
+              <h2 style="font-size: 15px">Every ball shows its real odds.</h2>
+              <p style="color: var(--ink-soft); margin: 0; font-size: 14px">
+                These are the actual numbers the panel shows for a wild Dratini: the Gen IV catch formula
+                on its true capture rate. Pick a ball and throw.
+              </p>
+              <div class="balls" role="group" aria-label="Choose a ball">
+                <button type="button" data-ball="poke-ball" data-odds="23" aria-pressed="true">
+                  <img
+                    src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
+                    alt=""
+                  /><span>Poké Ball<small>5M tokens</small></span
+                  ><b>23%</b>
+                </button>
+                <button type="button" data-ball="great-ball" data-odds="32" aria-pressed="false">
+                  <img
+                    src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/great-ball.png"
+                    alt=""
+                  /><span>Great Ball<small>15M tokens</small></span
+                  ><b>32%</b>
+                </button>
+                <button type="button" data-ball="ultra-ball" data-odds="39" aria-pressed="false">
+                  <img
+                    src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/ultra-ball.png"
+                    alt=""
+                  /><span>Ultra Ball<small>40M tokens</small></span
+                  ><b>39%</b>
+                </button>
+                <button type="button" data-ball="master-ball" data-odds="100" aria-pressed="false">
+                  <img
+                    src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png"
+                    alt=""
+                  /><span>Master Ball<small>never fails</small></span
+                  ><b>100%</b>
+                </button>
+              </div>
+              <button type="button" class="throw" id="throw">Throw!</button>
+              <div class="dialog" aria-live="polite">
+                <span id="demoText">A wild Dratini appeared!</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="shots reveal">
+            <img
+              src="media/readme/home.png"
+              alt="Tokendex home: your trainer and an Eevee companion with its EXP bar, the next encounter countdown, and drawers for the incubator, the wild and the streak"
+              loading="lazy"
+              width="360"
+              height="700"
+            />
+            <img
+              src="media/readme/shop.png"
+              alt="The shop, priced in the tokens you already spent: Poké, Great, Ultra and Master Balls, berries, items and eggs"
+              loading="lazy"
+              width="360"
+              height="700"
+            />
+            <img
+              src="media/readme/dex.png"
+              alt="The Pokédex with 24 of 649 registered and Charizard's entry open: Fire and Flying, height, weight, base stats and evolution line"
+              loading="lazy"
+              width="920"
+              height="620"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section id="tools" style="background: var(--screen)">
+        <div class="wrap">
+          <p class="eyebrow">Works with what you already use</p>
+          <h2>Eleven AI coding tools. Local log files only.</h2>
+          <p class="lead">Providers you do not use never appear. No API keys, no accounts, no setup.</p>
+          <div class="chips reveal">
+            <span class="chip">Claude Code</span>
+            <span class="chip">Codex</span>
+            <span class="chip">Gemini CLI</span>
+            <span class="chip">Cursor</span>
+            <span class="chip">GitHub Copilot CLI</span>
+            <span class="chip">Copilot in VS Code</span>
+            <span class="chip">OpenCode</span>
+            <span class="chip">Grok</span>
+            <span class="chip">Antigravity</span>
+            <span class="chip">Hermes</span>
+            <span class="chip">Kiro</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="tracker">
+        <div class="wrap">
+          <p class="eyebrow">The tracker underneath</p>
+          <h2>A precise, fast usage tracker. The game sits on top.</h2>
+          <p class="lead">
+            Today's tokens and cost, this month's, the official rate-limit windows for Claude and Codex as
+            live bars, and a per-CLI breakdown with burn rate while a session runs. Four languages, down
+            to the toasts.
+          </p>
+          <div class="stats">
+            <div class="stat reveal">
+              <b>~6 s</b><span>First scan ever, once, on a real 1.1 GB corpus</span>
+            </div>
+            <div class="stat reveal"><b>~170 ms</b><span>Startup with a warm cache</span></div>
+            <div class="stat reveal">
+              <b>~100 ms</b><span>Each refresh, in a worker thread, never blocking the editor</span>
+            </div>
+            <div class="stat reveal">
+              <b>0 bytes</b><span>Uploaded. Your logs are read locally and stay local.</span>
+            </div>
+          </div>
+          <ul class="plain">
+            <li>
+              One <code>.vsix</code> for every platform: SQLite-backed providers are read through sql.js,
+              so there are no native modules to compile.
+            </li>
+            <li>
+              Status bar at a glance: your official limit percentage or today's tokens, plus your
+              companion's mood. Hover for the full breakdown.
+            </li>
+            <li>
+              Save export and import with a validated envelope, automatic backups, and merging across
+              machines.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section style="padding-top: 0">
+        <div class="wrap">
+          <div class="sync reveal">
+            <div>
+              <p class="eyebrow">New in 1.1</p>
+              <h2>One game on every computer.</h2>
+              <p style="color: var(--ink-soft); margin: 0; max-width: 70ch">
+                Opt-in sync through a secret gist in your own GitHub account, using VS Code's GitHub
+                sign-in. No token to paste, no server of ours. Each computer publishes its own save and
+                merges the others', so catches, the Pokédex and every token either machine counted reach
+                the rest within minutes.
+              </p>
+            </div>
+            <a class="btn primary" href="https://github.com/diegomarty/tokendex/blob/main/CHANGELOG.md"
+              >Read the changelog</a
+            >
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" style="background: var(--screen)">
+        <div class="wrap">
+          <p class="eyebrow">Questions</p>
+          <h2>FAQ</h2>
+          <details open>
+            <summary>Does Tokendex upload my code or my AI usage anywhere?</summary>
+            <p>
+              No. Tokendex only reads the log files the AI CLIs already keep on your disk, and everything
+              stays on your machine. The only network calls fetch Pokémon sprites and species data from
+              PokéAPI, and they are cached locally.
+            </p>
+          </details>
+          <details>
+            <summary>Which AI coding tools does Tokendex track?</summary>
+            <p>
+              Claude Code, Codex, Gemini CLI, Grok, Antigravity, Cursor, GitHub Copilot (the CLI and
+              Copilot Chat inside VS Code), OpenCode, Hermes and Kiro. Providers you do not use never
+              appear.
+            </p>
+          </details>
+          <details>
+            <summary>Does it slow down VS Code?</summary>
+            <p>
+              No. Scanning runs in a worker thread, never on the extension host. On a real 1.1 GB corpus
+              the first scan takes about 6 seconds once, a warm start about 170 ms, and each refresh 90 to
+              115 ms.
+            </p>
+          </details>
+          <details>
+            <summary>Does it work in VSCodium, Cursor or Windsurf?</summary>
+            <p>
+              Yes. Tokendex is published on Open VSX as well as the VS Code Marketplace, and ships as a
+              single .vsix for every platform with no native modules.
+            </p>
+          </details>
+          <details>
+            <summary>Is Tokendex free?</summary>
+            <p>
+              Yes. It is free and open source under the MIT licence. It is a fan project, not affiliated
+              with Nintendo, Creatures Inc. or GAME FREAK, and no Pokémon sprites are bundled.
+            </p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <section class="closing">
+      <div class="wrap">
+        <p class="eyebrow" style="color: #fff">Ready?</p>
+        <div class="starters" aria-hidden="true">
+          <img
+            src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/1.png"
+            alt=""
+            loading="lazy"
+          />
+          <img
+            src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/4.png"
+            alt=""
+            loading="lazy"
+          />
+          <img
+            src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/7.png"
+            alt=""
+            loading="lazy"
+          />
+        </div>
+        <h2>Pick your starter. The tokens are already being spent.</h2>
+        <div class="cta">
+          <a
+            class="btn primary"
+            href="https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex"
+            >Install from the VS Code Marketplace</a
+          >
+          <a class="btn ghost" href="https://open-vsx.org/extension/diegomarty/tokendex">Open VSX</a>
+          <a class="btn ghost" href="https://github.com/diegomarty/tokendex">Star on GitHub</a>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          <a href="https://marketplace.visualstudio.com/items?itemName=diegomarty.tokendex"
+            >VS Code Marketplace</a
+          >
+          · <a href="https://open-vsx.org/extension/diegomarty/tokendex">Open VSX</a> ·
+          <a href="https://github.com/diegomarty/tokendex">Source on GitHub</a> ·
+          <a href="https://github.com/diegomarty/tokendex/issues">Issues</a>
+        </p>
+        <p>
+          Pokémon and Pokémon character names are trademarks of Nintendo. Tokendex is a fan work and is
+          not affiliated with or endorsed by Nintendo, Creatures Inc. or GAME FREAK Inc. No game sprites
+          are bundled: Pokémon and item sprites are fetched from
+          <a href="https://pokeapi.co">PokéAPI</a> at runtime, trainer sprites from
+          <a href="https://play.pokemonshowdown.com">Pokémon Showdown</a>. The extension icon is original
+          fan artwork. MIT licence.
+        </p>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById('copy').addEventListener('click', async (e) => {
+        const b = e.currentTarget
+        try {
+          await navigator.clipboard.writeText(document.getElementById('cmd').textContent)
+          b.textContent = 'Copied'
+        } catch {
+          b.textContent = 'Select & copy'
+        }
+        setTimeout(() => (b.textContent = 'Copy'), 1600)
+      })
+
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) if (e.isIntersecting) e.target.classList.add('in')
+        },
+        { rootMargin: '0px 0px -10% 0px' },
+      )
+      document.querySelectorAll('.reveal').forEach((el) => io.observe(el))
+
+      // Hero dialog: lines from the panel, typed letter by letter like the game does
+      const lines = [
+        'A wild Dratini appeared!',
+        'You used 253.4M tokens today.',
+        'Eevee is at 71%. 58M to go.',
+        'Gotcha! Dratini was caught!',
+        'Nothing uploaded. Ever.',
+      ]
+      const typeEl = document.getElementById('type')
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches
+      let li = 0
+      function typeLine() {
+        const text = lines[li++ % lines.length]
+        if (still) {
+          typeEl.textContent = text
+          return setTimeout(typeLine, 3200)
+        }
+        let i = 0
+        typeEl.textContent = ''
+        const tick = setInterval(() => {
+          typeEl.textContent = text.slice(0, ++i)
+          if (i >= text.length) {
+            clearInterval(tick)
+            setTimeout(typeLine, 2200)
+          }
+        }, 45)
+      }
+      typeLine()
+
+      // Throw demo. The odds are the panel's own numbers for Dratini; the shakes follow the
+      // games: a catch wobbles three times, a miss breaks free after one or two.
+      const stage = document.getElementById('stage')
+      const ballEl = document.getElementById('ball')
+      const throwBtn = document.getElementById('throw')
+      const demoText = document.getElementById('demoText')
+      const sprites = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/'
+      let odds = 23
+      let ballName = 'Poké Ball'
+      document.querySelectorAll('.balls button').forEach((b) => {
+        b.addEventListener('click', () => {
+          document
+            .querySelectorAll('.balls button')
+            .forEach((o) => o.setAttribute('aria-pressed', 'false'))
+          b.setAttribute('aria-pressed', 'true')
+          odds = Number(b.dataset.odds)
+          ballName = b.querySelector('span').firstChild.textContent
+          ballEl.src = sprites + b.dataset.ball + '.png'
+          stage.className = 'stage'
+          demoText.textContent = ballName + ': ' + odds + '% to catch Dratini.'
+        })
+      })
+      const wait = (ms) => new Promise((r) => setTimeout(r, still ? 0 : ms))
+      throwBtn.addEventListener('click', async () => {
+        throwBtn.disabled = true
+        const wild = document.getElementById('wild').getBoundingClientRect()
+        const from = ballEl.getBoundingClientRect()
+        stage.style.setProperty(
+          '--dx',
+          Math.round(wild.left + wild.width / 2 - from.left - from.width / 2) + 'px',
+        )
+        const caught = Math.random() * 100 < odds
+        const shakes = caught ? 3 : 1 + Math.floor(Math.random() * 2)
+        demoText.textContent = 'You threw a ' + ballName + '!'
+        stage.className = 'stage flying'
+        await wait(700)
+        stage.className = 'stage inball'
+        for (let i = 0; i < shakes; i++) {
+          await wait(250)
+          stage.className = 'stage inball'
+          void ballEl.offsetWidth
+          stage.className = 'stage wobble'
+          demoText.textContent = 'Wobble…'.repeat(i + 1).replace(/…(?=.)/g, '… ')
+          await wait(900)
+        }
+        if (caught) {
+          stage.className = 'stage caught'
+          demoText.textContent = 'Gotcha! Dratini was caught! +5% in the Pokédex.'
+        } else {
+          stage.className = 'stage free'
+          demoText.textContent =
+            shakes === 1
+              ? 'Oh no! It broke free, and it looks angry.'
+              : 'Argh! So close. Try a better ball.'
+          await wait(400)
+          stage.className = 'stage'
+        }
+        throwBtn.disabled = false
+      })
+
+      fetch('https://api.github.com/repos/diegomarty/tokendex')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && typeof d.stargazers_count === 'number')
+            document.getElementById('stars').textContent = '★ ' + d.stargazers_count
+        })
+        .catch(() => {})
+    </script>
+  </body>
+</html>
