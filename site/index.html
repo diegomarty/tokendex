@@ -235,14 +235,14 @@
         height: 36px;
         border-radius: 8px;
       }
-      nav a:not(.brand) {
+      nav a:not(.brand):not(.star) {
         color: #ffe9e6;
         text-decoration: none;
         font-size: 14px;
         font-weight: 600;
         opacity: 0.9;
       }
-      nav a:not(.brand):hover {
+      nav a:not(.brand):not(.star):hover {
         opacity: 1;
         text-decoration: underline;
       }
@@ -989,6 +989,13 @@
         background: #1d2433;
         color: #fff;
         border-color: #3a4a6e;
+        padding: 8px 12px;
+        font-size: 14px;
+        white-space: nowrap;
+        box-shadow: 0 3px 0 var(--casing-edge);
+      }
+      nav .btn.star {
+        animation: rise 0.6s both;
       }
       .btn.star .ball {
         width: 18px;
@@ -1063,7 +1070,8 @@
         nav a:not(.brand):not(.gh) {
           display: none;
         }
-        .float {
+        .float,
+        .btn.star .long {
           display: none;
         }
         .card .sprite {
@@ -1113,7 +1121,19 @@
           <a href="#tools">Works with</a>
           <a href="#tracker">The tracker</a>
           <a href="#faq">FAQ</a>
-          <a class="gh" href="https://github.com/diegomarty/tokendex">GitHub</a>
+          <a
+            class="btn star gh"
+            href="https://github.com/diegomarty/tokendex"
+            aria-label="Star Tokendex on GitHub"
+          >
+            <svg class="ball" viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="10" cy="10" r="9" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
+              <path d="M1 10h18" stroke="#1d2433" stroke-width="1.5" />
+              <path d="M1 10a9 9 0 0 1 18 0Z" fill="#ff6b5e" />
+              <circle cx="10" cy="10" r="3" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
+            </svg>
+            Star<span class="long"> on GitHub</span> <b id="stars" aria-live="polite">★</b>
+          </a>
         </nav>
 
         <div class="hero" id="top">
@@ -1141,19 +1161,6 @@
                 >Open VSX · VSCodium, Cursor, Windsurf</a
               >
               <a class="btn ghost" href="vscode:extension/diegomarty.tokendex">Open in VS Code</a>
-              <a
-                class="btn star"
-                href="https://github.com/diegomarty/tokendex"
-                aria-label="Star Tokendex on GitHub"
-              >
-                <svg class="ball" viewBox="0 0 20 20" aria-hidden="true">
-                  <circle cx="10" cy="10" r="9" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
-                  <path d="M1 10h18" stroke="#1d2433" stroke-width="1.5" />
-                  <path d="M1 10a9 9 0 0 1 18 0Z" fill="#ff6b5e" />
-                  <circle cx="10" cy="10" r="3" fill="#fff" stroke="#1d2433" stroke-width="1.5" />
-                </svg>
-                Star on GitHub <b id="stars" aria-live="polite">★</b>
-              </a>
             </div>
             <div class="install">
               <code id="cmd">code --install-extension diegomarty.tokendex</code>
